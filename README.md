@@ -114,17 +114,32 @@ Would you like to proceed with implementing either:
 
 ## Quick Install (Ubuntu/Debian)
 
-Run the following command on your Ubuntu/Debian server to clone this project, install requirements, and start the app:
+Run the following command on your Ubuntu/Debian server to clone this project, install requirements, and start the app with auto-update:
 
 ```sh
 sudo apt update && sudo apt install -y python3 python3-pip git && \
   git clone https://github.com/manayethas/GEEKS-AD-Plus.git && \
   cd GEEKS-AD-Plus && \
   pip3 install -r requirements.txt && \
-  python3 app.py --host=0.0.0.0 --port=5000
+  python3 run_forever.py
 ```
 
 - The app will be available on port 5000 of your server (http://your-server-ip:5000).
+
+## Versioning & Self-Updating
+
+This app uses a version file (`app/version.py`) and a wrapper script (`run_forever.py`) to keep itself up to date with the latest stable release from GitHub.
+
+- The version is tracked in `app/version.py`.
+- The `run_forever.py` script runs the app, checks for updates every 10 minutes, and updates/restarts if a new version is found on the stable branch.
+
+### To run with auto-update:
+
+```sh
+python3 run_forever.py
+```
+
+The app will only stop if the system is powered off or an update is applied.
 
 
 
