@@ -1,0 +1,283 @@
+name: GEEKS-AD-Plus CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  release:
+    types: [ published ]
+
+jobs:
+  # Test job
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.7, 3.8, 3.9, "3.10", "3.11"]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install flake8 black pytest pytest-cov
+
+    - name: Lint with flake8
+      run: |
+        flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+
+    - name: Format check with black
+      run: |
+        black --check --line-length=120 app/
+
+    - name: Run tests
+      run: |
+        python build.py test
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # Build job
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run full build
+      run: |
+        python build.py
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: geeks-ad-plus-build
+        path: |
+          dist/
+          build/
+          build.log
+          build_config.json
+
+  # Docker build job
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ secrets.DOCKER_USERNAME }}/geeks-ad-plus:latest
+          ${{ secrets.DOCKER_USERNAME }}/geeks-ad-plus:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Windows build job
+  windows-build:
+    runs-on: windows-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+
+    - name: Install Visual Studio Build Tools
+      uses: microsoft/setup-msbuild@v1.1
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run Windows build
+      run: |
+        python build.py
+
+    - name: Upload Windows build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: geeks-ad-plus-windows
+        path: |
+          dist/
+          build/
+          build.log
+          build_config.json
+
+  # Security scan
+  security:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install safety bandit
+
+    - name: Run safety check
+      run: |
+        safety check
+
+    - name: Run bandit security scan
+      run: |
+        bandit -r app/ -f json -o bandit-report.json || true
+
+    - name: Upload security report
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-report
+        path: bandit-report.json
+
+  # Deploy to staging
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [build, docker-build]
+    if: github.ref == 'refs/heads/develop'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Deploy to staging environment
+      run: |
+        echo "Deploying to staging..."
+        # Add your staging deployment commands here
+
+  # Deploy to production
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [build, docker-build]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Deploy to production environment
+      run: |
+        echo "Deploying to production..."
+        # Add your production deployment commands here
+
+  # Create release
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build, docker-build, security]
+    if: github.event_name == 'release'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: geeks-ad-plus-build
+        path: dist/
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.event.release.tag_name }}
+        release_name: Release ${{ github.event.release.tag_name }}
+        body: |
+          GEEKS-AD-Plus Release ${{ github.event.release.tag_name }}
+          
+          ## Changes
+          ${{ github.event.release.body }}
+          
+          ## Installation
+          1. Download the appropriate package for your platform
+          2. Extract and run the installation script
+          3. Configure your Active Directory settings
+          4. Start the application
+          
+          ## Docker
+          ```bash
+          docker pull ${{ secrets.DOCKER_USERNAME }}/geeks-ad-plus:${{ github.event.release.tag_name }}
+          ```
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/GEEKS-AD-Plus-*.zip
+        asset_name: GEEKS-AD-Plus-${{ github.event.release.tag_name }}.zip
+        asset_content_type: application/zip 
