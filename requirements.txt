@@ -1,0 +1,7 @@
+Flask
+Flask-Mail
+python-ldap
+Flask-Login
+Flask-WTF
+Flask-Bootstrap
+Flask-SQLAlchemy 

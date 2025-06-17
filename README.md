@@ -1,5 +1,11 @@
 # GEEKS-AD-Plus
 
+> **Note:** This project is starting from zero and will be built step by step. Planned features include:
+> - Enhanced auditing and logging
+> - Integration with a local email server
+> - Custom branding (logo, colors, organization info)
+> - License key system (to be added after core features)
+
 # Local Active Directory Password Reset Portal with Windows Credential Provider Integration
 
 ## System Overview
