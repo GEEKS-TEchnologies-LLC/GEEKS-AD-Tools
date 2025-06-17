@@ -1,4 +1,0 @@
-#pragma once
-#include <initguid.h>
-// {D1A5B6C7-1234-4E5F-8A9B-1234567890AB} (example GUID)
-DEFINE_GUID(CLSID_ForgotPasswordProvider, 0xd1a5b6c7, 0x1234, 0x4e5f, 0x8a, 0x9b, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab); 

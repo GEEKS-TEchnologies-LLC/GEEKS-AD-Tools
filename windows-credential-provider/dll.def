@@ -1,4 +1,0 @@
-LIBRARY "ForgotPasswordProvider"
-EXPORTS
-    DllGetClassObject
-    DllCanUnloadNow 
