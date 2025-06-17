@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Groups - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>Admin Group Management</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    <h2>Current Admin Groups</h2>
+    <ul>
+      {% for group in groups %}
+        <li>{{ group }}
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="remove_group" value="{{ group }}">
+            <button type="submit">Remove</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+    <h3>Add Admin Group</h3>
+    <form method="post">
+      <input type="text" name="new_group" required>
+      <button type="submit">Add Group</button>
+    </form>
+    <h3>Create AD Group</h3>
+    <form method="post" action="/admin/create_group">
+      <input type="text" name="group_name" required>
+      <button type="submit">Create AD Group</button>
+    </form>
+    <h3>Add User to Group</h3>
+    <form method="post" action="/admin/add_user_to_group">
+      <label>User DN: <input type="text" name="user_dn" required></label><br>
+      <label>Group Name: <input type="text" name="group_name" required></label><br>
+      <button type="submit">Add User to Group</button>
+    </form>
+    <a href="/">Back to Home</a>
+</body>
+</html> 

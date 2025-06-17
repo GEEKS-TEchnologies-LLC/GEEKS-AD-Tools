@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GEEKS-AD-Plus - Setup</title>
+</head>
+<body>
+    <h1>Initial Setup</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    <form method="post">
+        <label>AD Server: <input type="text" name="ad_server" required></label><br>
+        <label>Port: <input type="number" name="ad_port" value="389" required></label><br>
+        <label>Bind DN: <input type="text" name="ad_bind_dn" required></label><br>
+        <label>Password: <input type="password" name="ad_password" required></label><br>
+        <label>Base DN: <input type="text" name="ad_base_dn" required></label><br>
+        <button type="submit">Save & Test</button>
+    </form>
+    <a href="/">Back to Home</a>
+</body>
+</html> 

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GEEKS-AD-Plus - Home</title>
+</head>
+<body>
+    <h1>Welcome to GEEKS-AD-Plus</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    {% if not config %}
+      <p style="color: red;">System is not configured. Please complete <a href="/setup">initial setup</a>.</p>
+    {% endif %}
+    <nav>
+        <a href="/setup">Admin Setup</a> |
+        <a href="/reset">Reset Password</a>
+    </nav>
+    <p>This is the home page.</p>
+</body>
+</html> 
