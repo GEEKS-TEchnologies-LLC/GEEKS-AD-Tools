@@ -4,23 +4,173 @@ A comprehensive Linux-based web application for Active Directory password manage
 
 ## Quick Install
 
-### Stable Branch (Recommended)
+### Automated Build & Install (Recommended)
+
+#### Windows
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+cd GEEKS-AD-Plus
+
+# Run automated build
+build.bat
+
+# Or use Python directly
+python build.py
+```
+
+#### Linux/macOS
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+cd GEEKS-AD-Plus
+
+# Make build script executable and run
+chmod +x build.sh
+./build.sh
+
+# Or use Python directly
+python3 build.py
+```
+
+#### Using Makefile (Cross-platform)
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+cd GEEKS-AD-Plus
+
+# Full build and setup
+make build
+
+# Quick start (install + run)
+make quick-start
+
+# Development setup
+make dev
+```
+
+### Docker Installation
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+cd GEEKS-AD-Plus
+
+# Build and run with Docker Compose
+docker-compose up -d
+
+# Or build Docker image manually
+docker build -t geeks-ad-plus .
+docker run -p 5000:5000 geeks-ad-plus
+```
+
+### Legacy Installation Methods
+
+#### Stable Branch (Manual)
 ```bash
 curl -sSL https://raw.githubusercontent.com/yourusername/GEEKS-AD-Plus/stable/install.sh | bash
 ```
 
-### Development Branch
+#### Development Branch (Manual)
 ```bash
 curl -sSL https://raw.githubusercontent.com/yourusername/GEEKS-AD-Plus/dev/install.sh | bash
 ```
 
-### Manual Installation
+#### Manual Installation (No Build System)
 ```bash
 git clone https://github.com/yourusername/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
 pip install -r requirements.txt
 python app.py
 ```
+
+## Build System
+
+### Available Build Commands
+
+#### Full Build Process
+```bash
+# Complete build (dependencies, database, credential provider)
+python build.py
+
+# Windows-specific
+build.bat
+
+# Linux/macOS-specific
+./build.sh
+
+# Using Makefile
+make build
+```
+
+#### Individual Build Targets
+```bash
+# Clean build artifacts
+python build.py clean
+make clean
+
+# Run tests only
+python build.py test
+make test
+
+# Create distribution package
+python build.py package
+make package
+
+# Install dependencies only
+make install
+
+# Development environment setup
+make dev
+
+# Run the application
+make run
+```
+
+#### Advanced Build Options
+```bash
+# Production build (clean + build + test + package)
+make production
+
+# CI/CD build (clean + install + test + lint)
+make ci
+
+# Code quality checks
+make lint
+make format
+
+# Security audit
+make security-audit
+
+# Performance testing
+make perf-test
+
+# Generate documentation
+make docs
+```
+
+### Build Output
+
+The build system creates:
+- **Virtual Environment**: `venv/` directory with isolated dependencies
+- **Build Artifacts**: `build/` directory with temporary files
+- **Distribution Package**: `dist/GEEKS-AD-Plus-{version}/` with complete application
+- **Windows Credential Provider**: Compiled DLL (when MSBuild available)
+- **Configuration Files**: Default `config.json` and `.env` files
+- **Build Log**: `build.log` with detailed build information
+
+### Platform-Specific Features
+
+#### Windows
+- ✅ **Visual Studio Integration**: Automatic MSBuild detection and compilation
+- ✅ **Credential Provider Build**: Native Windows DLL generation
+- ✅ **PowerShell Scripts**: Deployment and management scripts
+- ✅ **Group Policy Templates**: GPO deployment automation
+
+#### Linux/macOS
+- ✅ **Cross-platform Python**: Works on all Unix-like systems
+- ✅ **Package Management**: Automatic dependency resolution
+- ✅ **Container Support**: Docker and Docker Compose integration
+- ✅ **CI/CD Pipeline**: GitHub Actions automation
 
 ## Features
 
@@ -30,6 +180,7 @@ python app.py
 - ✅ **Self-Updating System** - Automatic updates from GitHub with `run_forever.py`
 - ✅ **Audit Logging** - Comprehensive logging of all actions and events
 - ✅ **Bug Reporting System** - Built-in bug report collection with logs and system info
+- ✅ **Automated Build System** - Complete build automation with cross-platform support
 
 ### Admin Management
 - ✅ **Admin Authentication** - Separate admin login with AD group-based permissions
@@ -71,11 +222,12 @@ python app.py
 
 ## System Requirements
 
-- **Operating System**: Linux (Ubuntu 18.04+, CentOS 7+, RHEL 7+)
+- **Operating System**: Linux (Ubuntu 18.04+, CentOS 7+, RHEL 7+), Windows 10+, macOS 10.14+
 - **Python**: 3.7 or higher
 - **Active Directory**: Windows Server 2012 R2 or higher
 - **Network**: Connectivity to AD domain controller
 - **Permissions**: Domain user with appropriate AD permissions
+- **Build Tools**: Visual Studio Build Tools (Windows, for credential provider)
 
 ## Configuration
 
@@ -98,6 +250,22 @@ GEEKS-AD-Plus/
 │   ├── audit.py         # Audit logging
 │   └── bug_report.py    # Bug reporting system
 ├── windows-credential-provider/  # Windows Credential Provider
+│   ├── credentialprovider.cpp   # Main credential provider code
+│   ├── credentialprovider.h     # Header file
+│   ├── dllmain.cpp             # DLL entry point
+│   ├── dll.def                 # Module definition
+│   ├── guid.h                  # GUID definitions
+│   ├── install.ps1             # Installation script
+│   ├── uninstall.ps1           # Uninstallation script
+│   ├── gpo-deploy.ps1          # GPO deployment script
+│   ├── GEEKS-CredentialProvider.sln  # Visual Studio solution
+│   └── GEEKS-CredentialProvider.vcxproj  # Visual Studio project
+├── build.py              # Main build script
+├── build.bat             # Windows build script
+├── build.sh              # Linux/macOS build script
+├── Makefile              # Build automation
+├── Dockerfile            # Docker container definition
+├── docker-compose.yml    # Docker Compose configuration
 ├── app.py               # Main application entry point
 ├── run_forever.py       # Auto-update script
 └── requirements.txt     # Python dependencies
@@ -109,6 +277,7 @@ GEEKS-AD-Plus/
 - **Bug Reports**: Use the built-in bug reporting system at `/bug-report`
 - **Admin Interface**: Access admin features at `/admin/login`
 - **Logs**: Check `app/logs/` for application logs
+- **Build Logs**: Check `build.log` for build process details
 
 ## License
 
@@ -119,7 +288,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Test thoroughly
+4. Test thoroughly using the build system
 5. Submit a pull request
 
 ## Version History
@@ -128,6 +297,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **v1.1.0** - Added admin management and audit logging
 - **v1.2.0** - Added AD dashboard and Windows Credential Provider
 - **v1.3.0** - Added bug reporting system and enhanced security
+- **v1.4.0** - Added comprehensive automated build system and Docker support
 
 
 
