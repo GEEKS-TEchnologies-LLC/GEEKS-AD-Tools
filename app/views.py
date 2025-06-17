@@ -4,7 +4,8 @@ from .ad import (
     get_admin_groups, set_admin_groups, is_user_in_admin_group,
     create_ad_group, add_user_to_group,
     search_users, get_user_details, create_user, delete_user, disable_user, enable_user, reset_user_password, force_password_change,
-    get_user_groups, remove_user_from_group
+    get_user_groups, remove_user_from_group,
+    get_ad_statistics, get_ad_health_status
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
@@ -12,6 +13,10 @@ from .models import Admin, db
 from werkzeug.security import generate_password_hash
 from functools import wraps
 import os
+from .audit import (
+    log_login, log_password_reset, log_user_action, log_admin_action, log_system_event,
+    get_audit_logs, export_audit_logs_csv, get_audit_stats
+)
 
 main = Blueprint('main', __name__)
 
@@ -59,6 +64,7 @@ def admin_login():
         admin = Admin.query.filter_by(username=username).first()
         if admin and admin.check_password(password):
             login_user(admin)
+            log_login(username, 'success', {'method': 'local'})
             flash('Logged in as local admin.', 'success')
             return redirect(url_for('main.home'))
         # Try AD admin login if AD is configured
@@ -90,19 +96,25 @@ def admin_login():
                     # admin.is_ad_admin = True
                     db.session.commit()
                     login_user(admin)
+                    log_login(username, 'success', {'method': 'ad'})
                     flash('Logged in as AD admin.', 'success')
                     return redirect(url_for('main.home'))
                 else:
+                    log_login(username, 'failure', {'reason': 'not_in_admin_group'})
                     flash('You are not a member of an admin group.', 'danger')
             else:
+                log_login(username, 'failure', {'reason': 'ad_connection_failed', 'error': msg})
                 flash(f'AD connection failed: {msg}', 'danger')
         else:
+            log_login(username, 'failure', {'reason': 'invalid_credentials'})
             flash('Invalid credentials.', 'danger')
     return render_template('admin_login.html')
 
 @main.route('/admin/logout')
 @login_required
 def admin_logout():
+    if current_user.is_authenticated:
+        log_login(current_user.username, 'success', {'action': 'logout'})
     logout_user()
     flash('Logged out.', 'info')
     return redirect(url_for('main.home'))
@@ -223,12 +235,80 @@ def admin_dashboard():
     if os.path.exists(log_path):
         with open(log_path, 'r') as f:
             logs = f.readlines()[-20:]
+    
+    # Get audit statistics
+    audit_stats = get_audit_stats(days=30)
+    
+    # Get AD statistics if configured
+    ad_stats = None
+    ad_health = None
+    config = load_ad_config()
+    if config:
+        ok, stats = get_ad_statistics(
+            config['ad_server'],
+            config['ad_port'],
+            config['ad_bind_dn'],
+            config['ad_password'],
+            config['ad_base_dn']
+        )
+        if ok:
+            ad_stats = stats
+        
+        # Get AD health status
+        ok, health = get_ad_health_status(
+            config['ad_server'],
+            config['ad_port'],
+            config['ad_bind_dn'],
+            config['ad_password'],
+            config['ad_base_dn']
+        )
+        if ok:
+            ad_health = health
+    
     # Example: System status (placeholder)
     status = {
-        'AD Configured': bool(load_ad_config()),
+        'AD Configured': bool(config),
         'Admin Groups': get_admin_groups(),
     }
-    return render_template('admin_dashboard.html', logs=logs, status=status)
+    return render_template('admin_dashboard.html', logs=logs, status=status, audit_stats=audit_stats, ad_stats=ad_stats, ad_health=ad_health)
+
+@main.route('/admin/ad-dashboard')
+@login_required
+@admin_required
+def ad_dashboard():
+    """Detailed AD dashboard with charts and statistics"""
+    config = load_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    # Get AD statistics
+    ok, stats = get_ad_statistics(
+        config['ad_server'],
+        config['ad_port'],
+        config['ad_bind_dn'],
+        config['ad_password'],
+        config['ad_base_dn']
+    )
+    
+    if not ok:
+        flash(f'Failed to get AD statistics: {stats}', 'danger')
+        stats = None
+    
+    # Get AD health status
+    ok, health = get_ad_health_status(
+        config['ad_server'],
+        config['ad_port'],
+        config['ad_bind_dn'],
+        config['ad_password'],
+        config['ad_base_dn']
+    )
+    
+    if not ok:
+        flash(f'Failed to get AD health status: {health}', 'danger')
+        health = None
+    
+    return render_template('ad_dashboard.html', ad_stats=stats, ad_health=health)
 
 @main.route('/admin/users', methods=['GET', 'POST'])
 @login_required
@@ -252,23 +332,33 @@ def user_details(user_dn):
     msg = None
     if request.method == 'POST':
         action = request.form['action']
+        username = details.get('sAMAccountName', ['Unknown'])[0] if details else 'Unknown'
+        
         if action == 'delete':
             ok, msg = delete_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+            log_user_action('delete', username, 'success' if ok else 'failure', {'user_dn': user_dn})
         elif action == 'disable':
             ok, msg = disable_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+            log_user_action('disable', username, 'success' if ok else 'failure', {'user_dn': user_dn})
         elif action == 'enable':
             ok, msg = enable_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+            log_user_action('enable', username, 'success' if ok else 'failure', {'user_dn': user_dn})
         elif action == 'reset_password':
             new_pw = request.form['new_password']
             ok, msg = reset_user_password(user_dn, new_pw, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+            log_user_action('reset_password', username, 'success' if ok else 'failure', {'user_dn': user_dn})
         elif action == 'force_pw_change':
             ok, msg = force_password_change(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+            log_user_action('force_pw_change', username, 'success' if ok else 'failure', {'user_dn': user_dn})
         elif action == 'add_group':
             group_name = request.form['group_name']
             ok, msg = add_user_to_group(user_dn, group_name, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+            log_user_action('add_group', username, 'success' if ok else 'failure', {'user_dn': user_dn, 'group': group_name})
         elif action == 'remove_group':
             group_name = request.form['group_name']
             ok, msg = remove_user_from_group(user_dn, group_name, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+            log_user_action('remove_group', username, 'success' if ok else 'failure', {'user_dn': user_dn, 'group': group_name})
+        
         if ok:
             flash(msg, 'success')
         else:
@@ -287,6 +377,7 @@ def create_user_route():
         mail = request.form['mail']
         config = load_ad_config()
         ok, msg = create_user(username, password, display_name, mail, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+        log_user_action('create', username, 'success' if ok else 'failure', {'display_name': display_name, 'mail': mail})
         if ok:
             flash(msg, 'success')
             return redirect(url_for('main.user_search'))
@@ -357,4 +448,45 @@ Write-Log "Deployment completed successfully"
         from flask import Response
         return Response(script_content, mimetype='text/plain', headers={'Content-Disposition': 'attachment; filename=gpo-deploy.ps1'})
     
-    return render_template('gpo_deployment.html') 
+    return render_template('gpo_deployment.html')
+
+@main.route('/admin/audit', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def audit_logs():
+    if request.method == 'POST':
+        # Handle export request
+        if 'export' in request.form:
+            start_date = request.form.get('start_date')
+            end_date = request.form.get('end_date')
+            user = request.form.get('user')
+            action = request.form.get('action')
+            result = request.form.get('result')
+            
+            # Convert date strings to datetime objects
+            from datetime import datetime
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d') if start_date else None
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d') if end_date else None
+            
+            csv_data = export_audit_logs_csv(start_dt, end_dt, user, action, result)
+            from flask import Response
+            return Response(csv_data, mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=audit_logs.csv'})
+    
+    # Get filter parameters
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    user = request.args.get('user')
+    action = request.args.get('action')
+    result = request.args.get('result')
+    
+    # Convert date strings to datetime objects
+    from datetime import datetime
+    start_dt = datetime.strptime(start_date, '%Y-%m-%d') if start_date else None
+    end_dt = datetime.strptime(end_date, '%Y-%m-%d') if end_date else None
+    
+    # Get filtered logs
+    logs = get_audit_logs(start_dt, end_dt, user, action, result, limit=100)
+    
+    return render_template('audit_logs.html', logs=logs, 
+                         start_date=start_date, end_date=end_date, 
+                         user=user, action=action, result=result) 

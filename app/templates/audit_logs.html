@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Audit Logs - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>Audit Logs</h1>
+    
+    <h2>Search & Filter</h2>
+    <form method="get">
+        <label>Start Date: <input type="date" name="start_date" value="{{ start_date or '' }}"></label><br>
+        <label>End Date: <input type="date" name="end_date" value="{{ end_date or '' }}"></label><br>
+        <label>User: <input type="text" name="user" value="{{ user or '' }}" placeholder="Username"></label><br>
+        <label>Action: <input type="text" name="action" value="{{ action or '' }}" placeholder="Action type"></label><br>
+        <label>Result: 
+            <select name="result">
+                <option value="">All</option>
+                <option value="success" {{ 'selected' if result == 'success' else '' }}>Success</option>
+                <option value="failure" {{ 'selected' if result == 'failure' else '' }}>Failure</option>
+                <option value="error" {{ 'selected' if result == 'error' else '' }}>Error</option>
+            </select>
+        </label><br>
+        <button type="submit">Search</button>
+    </form>
+    
+    <h2>Export</h2>
+    <form method="post">
+        <input type="hidden" name="start_date" value="{{ start_date or '' }}">
+        <input type="hidden" name="end_date" value="{{ end_date or '' }}">
+        <input type="hidden" name="user" value="{{ user or '' }}">
+        <input type="hidden" name="action" value="{{ action or '' }}">
+        <input type="hidden" name="result" value="{{ result or '' }}">
+        <button type="submit" name="export">Export to CSV</button>
+    </form>
+    
+    <h2>Log Entries ({{ logs|length }} results)</h2>
+    {% if logs %}
+    <table border="1" cellpadding="5" style="width: 100%;">
+        <tr>
+            <th>Timestamp</th>
+            <th>User</th>
+            <th>Action</th>
+            <th>Details</th>
+            <th>Result</th>
+            <th>IP Address</th>
+        </tr>
+        {% for log in logs %}
+        <tr>
+            <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ log.user or 'N/A' }}</td>
+            <td>{{ log.action }}</td>
+            <td>{{ log.details or 'N/A' }}</td>
+            <td style="color: {{ 'green' if log.result == 'success' else 'red' if log.result == 'failure' else 'orange' }};">{{ log.result }}</td>
+            <td>{{ log.ip_address or 'N/A' }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p>No logs found matching your criteria.</p>
+    {% endif %}
+    
+    <a href="/admin/dashboard">Back to Dashboard</a>
+</body>
+</html> 

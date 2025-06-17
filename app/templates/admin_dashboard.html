@@ -25,10 +25,55 @@
     <ul>
       <li><a href="/admin/groups">Manage Admin Groups</a></li>
       <li><a href="/admin/users">User Management</a></li>
+      <li><a href="/admin/audit">Audit Logs</a></li>
+      <li><a href="/admin/ad-dashboard">AD Dashboard</a></li>
       <li><a href="/admin/gpo-deployment">Group Policy Deployment</a></li>
       <li><a href="/setup">System Setup</a></li>
       <li><a href="/admin/logout">Logout</a></li>
     </ul>
+    
+    {% if ad_stats %}
+    <h2>AD Overview</h2>
+    <ul>
+      <li><strong>Total Users:</strong> {{ ad_stats.total_users }}</li>
+      <li><strong>Enabled Users:</strong> {{ ad_stats.enabled_users }}</li>
+      <li><strong>Total Computers:</strong> {{ ad_stats.total_computers }}</li>
+      <li><strong>Recent Logins (30d):</strong> {{ ad_stats.recent_logins }}</li>
+      <li><strong>Locked Users:</strong> {{ ad_stats.locked_users }}</li>
+      <li><strong>Expired Passwords:</strong> {{ ad_stats.password_expired }}</li>
+    </ul>
+    <p><a href="/admin/ad-dashboard">View Detailed AD Dashboard with Charts</a></p>
+    {% endif %}
+    
+    {% if ad_health %}
+    <h2>AD Health Status</h2>
+    <div style="padding: 10px; border-radius: 5px; background: {{ 'green' if ad_health.status == 'healthy' else 'orange' if ad_health.status == 'warning' else 'red' }}; color: white;">
+      Status: {{ ad_health.status.title() }}
+    </div>
+    {% if ad_health.warnings %}
+    <ul>
+      {% for warning in ad_health.warnings %}
+      <li>{{ warning }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% endif %}
+    
+    <h2>Audit Statistics (Last 30 Days)</h2>
+    {% if audit_stats %}
+    <ul>
+      <li><strong>Total Events:</strong> {{ audit_stats.total_events }}</li>
+      <li><strong>Successful Events:</strong> {{ audit_stats.success_events }}</li>
+      <li><strong>Failed Events:</strong> {{ audit_stats.failure_events }}</li>
+      <li><strong>Top Actions:</strong>
+        <ul>
+        {% for action, count in audit_stats.top_actions %}
+          <li>{{ action }}: {{ count }}</li>
+        {% endfor %}
+        </ul>
+      </li>
+    </ul>
+    {% endif %}
     <h2>Recent Logs</h2>
     <pre style="background:#eee; padding:1em; max-height:300px; overflow:auto;">{% for line in logs %}{{ line }}{% endfor %}</pre>
     <a href="/">Back to Home</a>
