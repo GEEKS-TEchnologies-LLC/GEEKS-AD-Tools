@@ -112,5 +112,19 @@ Would you like to proceed with implementing either:
 2. The Windows Credential Provider development
 3. The backend API endpoints for the Credential Provider
 
+## Quick Install (Ubuntu/Debian)
+
+Run the following command on your Ubuntu/Debian server to clone this project, install requirements, and start the app:
+
+```sh
+sudo apt update && sudo apt install -y python3 python3-pip git && \
+  git clone https://github.com/manayethas/GEEKS-AD-Plus.git && \
+  cd GEEKS-AD-Plus && \
+  pip3 install -r requirements.txt && \
+  python3 app.py --host=0.0.0.0 --port=5000
+```
+
+- The app will be available on port 5000 of your server (http://your-server-ip:5000).
+
 
 
