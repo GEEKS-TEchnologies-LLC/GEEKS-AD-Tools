@@ -2,7 +2,9 @@ from flask import Blueprint, render_template, redirect, url_for, request, flash
 from .ad import (
     save_ad_config, load_ad_config, test_ad_connection,
     get_admin_groups, set_admin_groups, is_user_in_admin_group,
-    create_ad_group, add_user_to_group
+    create_ad_group, add_user_to_group,
+    search_users, get_user_details, create_user, delete_user, disable_user, enable_user, reset_user_password, force_password_change,
+    get_user_groups, remove_user_from_group
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
@@ -226,4 +228,133 @@ def admin_dashboard():
         'AD Configured': bool(load_ad_config()),
         'Admin Groups': get_admin_groups(),
     }
-    return render_template('admin_dashboard.html', logs=logs, status=status) 
+    return render_template('admin_dashboard.html', logs=logs, status=status)
+
+@main.route('/admin/users', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def user_search():
+    users = []
+    query = ''
+    if request.method == 'POST':
+        query = request.form['query']
+        config = load_ad_config()
+        users = search_users(query, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+    return render_template('user_search.html', users=users, query=query)
+
+@main.route('/admin/user/<path:user_dn>', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def user_details(user_dn):
+    config = load_ad_config()
+    details = get_user_details(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+    groups = get_user_groups(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+    msg = None
+    if request.method == 'POST':
+        action = request.form['action']
+        if action == 'delete':
+            ok, msg = delete_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+        elif action == 'disable':
+            ok, msg = disable_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+        elif action == 'enable':
+            ok, msg = enable_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+        elif action == 'reset_password':
+            new_pw = request.form['new_password']
+            ok, msg = reset_user_password(user_dn, new_pw, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+        elif action == 'force_pw_change':
+            ok, msg = force_password_change(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
+        elif action == 'add_group':
+            group_name = request.form['group_name']
+            ok, msg = add_user_to_group(user_dn, group_name, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+        elif action == 'remove_group':
+            group_name = request.form['group_name']
+            ok, msg = remove_user_from_group(user_dn, group_name, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+        if ok:
+            flash(msg, 'success')
+        else:
+            flash(msg, 'danger')
+        return redirect(url_for('main.user_details', user_dn=user_dn))
+    return render_template('user_details.html', details=details, user_dn=user_dn, msg=msg, groups=groups)
+
+@main.route('/admin/create_user', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def create_user_route():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        display_name = request.form['display_name']
+        mail = request.form['mail']
+        config = load_ad_config()
+        ok, msg = create_user(username, password, display_name, mail, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+        if ok:
+            flash(msg, 'success')
+            return redirect(url_for('main.user_search'))
+        else:
+            flash(msg, 'danger')
+    return render_template('create_user.html')
+
+@main.route('/admin/gpo-deployment', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def gpo_deployment():
+    if request.method == 'POST':
+        # Generate deployment script with custom parameters
+        network_share = request.form.get('network_share', '\\\\your-server\\share\\ForgotPasswordProvider\\')
+        install_path = request.form.get('install_path', 'C:\\Program Files\\ForgotPasswordProvider\\')
+        provider_guid = request.form.get('provider_guid', '{D1A5B6C7-1234-4E5F-8A9B-1234567890AB}')
+        
+        # Generate the deployment script content
+        script_content = f'''# Group Policy Deployment Script for Credential Provider
+# Generated by GEEKS-AD-Plus Admin Portal
+
+param(
+    [string]$NetworkShare = "{network_share}",
+    [string]$InstallPath = "{install_path}",
+    [string]$ProviderGUID = "{provider_guid}"
+)
+
+# Log file for troubleshooting
+$LogFile = "C:\\Windows\\Temp\\CredProviderInstall.log"
+
+function Write-Log {{
+    param([string]$Message)
+    $LogMessage = "$(Get-Date): $Message"
+    Add-Content -Path $LogFile -Value $LogMessage
+    Write-Host $LogMessage
+}}
+
+Write-Log "Starting deployment..."
+
+# Check if DLL exists on network share
+$DllSourcePath = Join-Path $NetworkShare "ForgotPasswordProvider.dll"
+if (!(Test-Path $DllSourcePath)) {{
+    Write-Log "ERROR: DLL not found at $DllSourcePath"
+    exit 1
+}}
+
+# Create installation directory
+if (!(Test-Path $InstallPath)) {{
+    New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
+    Write-Log "Created directory: $InstallPath"
+}}
+
+# Copy DLL to installation directory
+$DllDestPath = Join-Path $InstallPath "ForgotPasswordProvider.dll"
+Copy-Item $DllSourcePath $DllDestPath -Force
+Write-Log "Copied DLL to: $DllDestPath"
+
+# Register in registry
+$RegPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\$ProviderGUID"
+New-Item -Path $RegPath -Force | Out-Null
+Set-ItemProperty -Path $RegPath -Name "(Default)" -Value $DllDestPath
+Write-Log "Registered in registry: $RegPath"
+
+Write-Log "Deployment completed successfully"
+'''
+        
+        # Return the script as a downloadable file
+        from flask import Response
+        return Response(script_content, mimetype='text/plain', headers={'Content-Disposition': 'attachment; filename=gpo-deploy.ps1'})
+    
+    return render_template('gpo_deployment.html') 

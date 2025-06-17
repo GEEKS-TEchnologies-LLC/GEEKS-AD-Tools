@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>User Details - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>User Details</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    <h2>Attributes</h2>
+    <ul>
+      {% for k, v in details.items() %}
+        <li><strong>{{ k }}:</strong> {{ v }}</li>
+      {% endfor %}
+    </ul>
+    <h2>Groups</h2>
+    <ul>
+      {% for group in groups %}
+        <li>{{ group }}
+          <form method="post" style="display:inline;">
+            <input type="hidden" name="group_name" value="{{ group.split(',')[0].replace('CN=','') }}">
+            <button name="action" value="remove_group">Remove</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+    <form method="post">
+      <input type="text" name="group_name" placeholder="Group Name" required>
+      <button name="action" value="add_group">Add to Group</button>
+    </form>
+    <h2>Actions</h2>
+    <form method="post">
+        <button name="action" value="delete" onclick="return confirm('Delete user?')">Delete</button>
+        <button name="action" value="disable">Disable</button>
+        <button name="action" value="enable">Enable</button>
+    </form>
+    <form method="post">
+        <input type="password" name="new_password" placeholder="New Password" required>
+        <button name="action" value="reset_password">Reset Password</button>
+    </form>
+    <form method="post">
+        <button name="action" value="force_pw_change">Force Password Change at Next Login</button>
+    </form>
+    <a href="/admin/users">Back to User Search</a>
+</body>
+</html> 

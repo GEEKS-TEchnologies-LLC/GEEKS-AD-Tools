@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>User Search - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>User Management</h1>
+    <form method="post">
+        <input type="text" name="query" value="{{ query }}" placeholder="Search by username, name, or email" required>
+        <button type="submit">Search</button>
+        <a href="/admin/create_user">Create New User</a>
+    </form>
+    {% if users %}
+    <table border="1" cellpadding="5">
+        <tr><th>Username</th><th>Name</th><th>Email</th><th>Actions</th></tr>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.username }}</td>
+            <td>{{ user.displayName }}</td>
+            <td>{{ user.mail }}</td>
+            <td><a href="/admin/user/{{ user.dn|urlencode }}">Details</a></td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+    <a href="/admin/dashboard">Back to Dashboard</a>
+</body>
+</html> 

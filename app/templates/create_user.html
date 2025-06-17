@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Create User - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>Create New User</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    <form method="post">
+        <label>Username: <input type="text" name="username" required></label><br>
+        <label>Display Name: <input type="text" name="display_name" required></label><br>
+        <label>Email: <input type="email" name="mail" required></label><br>
+        <label>Password: <input type="password" name="password" required></label><br>
+        <button type="submit">Create User</button>
+    </form>
+    <a href="/admin/users">Back to User Search</a>
+</body>
+</html> 
