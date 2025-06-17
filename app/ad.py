@@ -288,4 +288,144 @@ def remove_user_from_group(user_dn, group_name, server, port, bind_dn, password,
         try:
             conn.unbind_s()
         except:
+            pass
+
+def get_ad_statistics(server, port, bind_dn, password, base_dn):
+    """Get comprehensive AD statistics including user and computer counts"""
+    ldap_url = f'ldap://{server}:{port}'
+    stats = {
+        'total_users': 0,
+        'enabled_users': 0,
+        'disabled_users': 0,
+        'locked_users': 0,
+        'total_computers': 0,
+        'enabled_computers': 0,
+        'disabled_computers': 0,
+        'users_by_ou': {},
+        'computers_by_ou': {},
+        'recent_logins': 0,
+        'password_expired': 0
+    }
+    
+    try:
+        conn = ldap.initialize(ldap_url)
+        conn.simple_bind_s(bind_dn, password)
+        
+        # Get user statistics
+        user_filter = '(objectClass=user)'
+        user_attrs = ['sAMAccountName', 'userAccountControl', 'distinguishedName', 'lastLogon', 'pwdLastSet']
+        user_results = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, user_filter, user_attrs)
+        
+        for dn, attrs in user_results:
+            if 'sAMAccountName' in attrs:
+                stats['total_users'] += 1
+                
+                # Check user status
+                uac = int(attrs.get('userAccountControl', [b'0'])[0])
+                if uac & 2:  # ACCOUNTDISABLE
+                    stats['disabled_users'] += 1
+                else:
+                    stats['enabled_users'] += 1
+                
+                if uac & 16:  # LOCKOUT
+                    stats['locked_users'] += 1
+                
+                # Check password status
+                pwd_last_set = attrs.get('pwdLastSet', [b'0'])[0]
+                if pwd_last_set == b'0':
+                    stats['password_expired'] += 1
+                
+                # Check recent login (last 30 days)
+                last_logon = attrs.get('lastLogon', [b'0'])[0]
+                if last_logon != b'0':
+                    from datetime import datetime, timedelta
+                    last_logon_time = datetime.fromtimestamp(int(last_logon) / 10000000 - 11644473600)
+                    if last_logon_time > datetime.now() - timedelta(days=30):
+                        stats['recent_logins'] += 1
+                
+                # Group by OU
+                ou = dn.split(',')[1] if len(dn.split(',')) > 1 else 'Unknown'
+                if ou.startswith('OU='):
+                    ou_name = ou.replace('OU=', '')
+                    stats['users_by_ou'][ou_name] = stats['users_by_ou'].get(ou_name, 0) + 1
+        
+        # Get computer statistics
+        computer_filter = '(objectClass=computer)'
+        computer_attrs = ['sAMAccountName', 'userAccountControl', 'distinguishedName']
+        computer_results = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, computer_filter, computer_attrs)
+        
+        for dn, attrs in computer_results:
+            if 'sAMAccountName' in attrs:
+                stats['total_computers'] += 1
+                
+                # Check computer status
+                uac = int(attrs.get('userAccountControl', [b'0'])[0])
+                if uac & 2:  # ACCOUNTDISABLE
+                    stats['disabled_computers'] += 1
+                else:
+                    stats['enabled_computers'] += 1
+                
+                # Group by OU
+                ou = dn.split(',')[1] if len(dn.split(',')) > 1 else 'Unknown'
+                if ou.startswith('OU='):
+                    ou_name = ou.replace('OU=', '')
+                    stats['computers_by_ou'][ou_name] = stats['computers_by_ou'].get(ou_name, 0) + 1
+        
+        return True, stats
+        
+    except ldap.LDAPError as e:
+        return False, str(e)
+    finally:
+        try:
+            conn.unbind_s()
+        except:
+            pass
+
+def get_ad_health_status(server, port, bind_dn, password, base_dn):
+    """Get AD health status and alerts"""
+    ldap_url = f'ldap://{server}:{port}'
+    health = {
+        'status': 'healthy',
+        'alerts': [],
+        'warnings': []
+    }
+    
+    try:
+        conn = ldap.initialize(ldap_url)
+        conn.simple_bind_s(bind_dn, password)
+        
+        # Check for locked accounts
+        locked_filter = '(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=16))'
+        locked_count = len(conn.search_s(base_dn, ldap.SCOPE_SUBTREE, locked_filter))
+        
+        if locked_count > 10:
+            health['warnings'].append(f'{locked_count} user accounts are locked')
+        
+        # Check for expired passwords
+        expired_filter = '(&(objectClass=user)(pwdLastSet=0))'
+        expired_count = len(conn.search_s(base_dn, ldap.SCOPE_SUBTREE, expired_filter))
+        
+        if expired_count > 5:
+            health['warnings'].append(f'{expired_count} user passwords have expired')
+        
+        # Check for disabled accounts
+        disabled_filter = '(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=2))'
+        disabled_count = len(conn.search_s(base_dn, ldap.SCOPE_SUBTREE, disabled_filter))
+        
+        if disabled_count > 20:
+            health['warnings'].append(f'{disabled_count} user accounts are disabled')
+        
+        if health['warnings']:
+            health['status'] = 'warning'
+        
+        return True, health
+        
+    except ldap.LDAPError as e:
+        health['status'] = 'error'
+        health['alerts'].append(f'AD connection failed: {str(e)}')
+        return False, health
+    finally:
+        try:
+            conn.unbind_s()
+        except:
             pass 
