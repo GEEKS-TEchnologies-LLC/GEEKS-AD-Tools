@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Dashboard - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>Admin Dashboard</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    <h2>System Status</h2>
+    <ul>
+      {% for key, value in status.items() %}
+        <li><strong>{{ key }}:</strong> {{ value }}</li>
+      {% endfor %}
+    </ul>
+    <h2>Admin Features</h2>
+    <ul>
+      <li><a href="/admin/groups">Manage Admin Groups</a></li>
+      <li><a href="/setup">System Setup</a></li>
+      <li><a href="/admin/logout">Logout</a></li>
+    </ul>
+    <h2>Recent Logs</h2>
+    <pre style="background:#eee; padding:1em; max-height:300px; overflow:auto;">{% for line in logs %}{{ line }}{% endfor %}</pre>
+    <a href="/">Back to Home</a>
+</body>
+</html> 

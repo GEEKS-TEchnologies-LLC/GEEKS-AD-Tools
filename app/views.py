@@ -6,9 +6,10 @@ from .ad import (
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
-from .models import Admin
+from .models import Admin, db
 from werkzeug.security import generate_password_hash
 from functools import wraps
+import os
 
 main = Blueprint('main', __name__)
 
@@ -52,11 +53,47 @@ def admin_login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        # Try local admin login first
         admin = Admin.query.filter_by(username=username).first()
         if admin and admin.check_password(password):
             login_user(admin)
-            flash('Logged in as admin.', 'success')
+            flash('Logged in as local admin.', 'success')
             return redirect(url_for('main.home'))
+        # Try AD admin login if AD is configured
+        config = load_ad_config()
+        if config:
+            ok, msg = test_ad_connection(
+                config['ad_server'],
+                config['ad_port'],
+                config['ad_bind_dn'],
+                config['ad_password']
+            )
+            if ok:
+                # Check if user is in admin group
+                if is_user_in_admin_group(
+                    username,
+                    config['ad_server'],
+                    config['ad_port'],
+                    config['ad_bind_dn'],
+                    config['ad_password'],
+                    config['ad_base_dn']
+                ):
+                    # Create or update AD admin record
+                    admin = Admin.query.filter_by(username=username).first()
+                    if not admin:
+                        admin = Admin(username=username)
+                        admin.password_hash = ''  # No local password
+                        db.session.add(admin)
+                    # Optionally, set a flag for AD-based admin
+                    # admin.is_ad_admin = True
+                    db.session.commit()
+                    login_user(admin)
+                    flash('Logged in as AD admin.', 'success')
+                    return redirect(url_for('main.home'))
+                else:
+                    flash('You are not a member of an admin group.', 'danger')
+            else:
+                flash(f'AD connection failed: {msg}', 'danger')
         else:
             flash('Invalid credentials.', 'danger')
     return render_template('admin_login.html')
@@ -172,4 +209,21 @@ def add_user_to_group_route():
         flash(msg, 'success')
     else:
         flash(msg, 'danger')
-    return redirect(url_for('main.admin_groups')) 
+    return redirect(url_for('main.admin_groups'))
+
+@main.route('/admin/dashboard')
+@login_required
+@admin_required
+def admin_dashboard():
+    # Example: Read last 20 log lines
+    log_path = 'app/logs/app.log'
+    logs = []
+    if os.path.exists(log_path):
+        with open(log_path, 'r') as f:
+            logs = f.readlines()[-20:]
+    # Example: System status (placeholder)
+    status = {
+        'AD Configured': bool(load_ad_config()),
+        'Admin Groups': get_admin_groups(),
+    }
+    return render_template('admin_dashboard.html', logs=logs, status=status) 
