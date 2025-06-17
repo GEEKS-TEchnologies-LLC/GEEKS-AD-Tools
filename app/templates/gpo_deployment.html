@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Group Policy Deployment - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>Group Policy Deployment</h1>
+    <p>Generate custom deployment scripts for your Credential Provider.</p>
+    
+    <h2>Deployment Script Generator</h2>
+    <form method="post">
+        <label>Network Share Path: <input type="text" name="network_share" value="\\your-server\share\ForgotPasswordProvider\" required></label><br>
+        <label>Install Path: <input type="text" name="install_path" value="C:\Program Files\ForgotPasswordProvider\" required></label><br>
+        <label>Provider GUID: <input type="text" name="provider_guid" value="{D1A5B6C7-1234-4E5F-8A9B-1234567890AB}" required></label><br>
+        <button type="submit">Generate Deployment Script</button>
+    </form>
+    
+    <h2>Deployment Instructions</h2>
+    <ol>
+        <li>Build your Credential Provider DLL in Visual Studio</li>
+        <li>Copy the DLL to your network share</li>
+        <li>Generate a deployment script using the form above</li>
+        <li>In Group Policy Management:
+            <ul>
+                <li>Create a new GPO for Credential Provider deployment</li>
+                <li>Add the generated script as a startup script</li>
+                <li>Link the GPO to your target OUs</li>
+            </ul>
+        </li>
+        <li>Run <code>gpupdate /force</code> on target machines</li>
+    </ol>
+    
+    <h2>Available Scripts</h2>
+    <ul>
+        <li><a href="/windows-credential-provider/install.ps1">Manual Install Script</a></li>
+        <li><a href="/windows-credential-provider/uninstall.ps1">Uninstall Script</a></li>
+        <li><a href="/windows-credential-provider/gpo-deploy.ps1">Basic GPO Script</a></li>
+    </ul>
+    
+    <a href="/admin/dashboard">Back to Dashboard</a>
+</body>
+</html> 
