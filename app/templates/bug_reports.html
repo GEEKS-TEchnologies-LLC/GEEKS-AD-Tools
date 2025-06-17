@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bug Reports - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>Bug Reports</h1>
+    
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    
+    {% if reports %}
+    <table border="1" cellpadding="5" style="width: 100%;">
+        <tr>
+            <th>Timestamp</th>
+            <th>Description</th>
+            <th>Email</th>
+            <th>Actions</th>
+        </tr>
+        {% for report in reports %}
+        <tr>
+            <td>{{ report.timestamp }}</td>
+            <td>{{ report.description }}</td>
+            <td>{{ report.user_email or 'N/A' }}</td>
+            <td>
+                <a href="/admin/bug-report/{{ report.filename }}">View</a> |
+                <a href="/admin/bug-report/{{ report.filename }}/download">Download</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p>No bug reports found.</p>
+    {% endif %}
+    
+    <a href="/admin/dashboard">Back to Dashboard</a>
+</body>
+</html> 

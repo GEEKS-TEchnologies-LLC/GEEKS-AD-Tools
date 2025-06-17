@@ -2,10 +2,17 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>GEEKS-AD-Plus - Home</title>
+    <title>GEEKS-AD-Plus</title>
 </head>
 <body>
-    <h1>Welcome to GEEKS-AD-Plus</h1>
+    <h1>GEEKS-AD-Plus</h1>
+    <p>Active Directory Password Reset Portal</p>
+    
+    <div>
+      <a href="/reset-password">Reset Password</a> |
+      <a href="/bug-report">Report Bug</a>
+    </div>
+    
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <ul>
@@ -15,13 +22,19 @@
         </ul>
       {% endif %}
     {% endwith %}
-    {% if not config %}
-      <p style="color: red;">System is not configured. Please complete <a href="/setup">initial setup</a>.</p>
-    {% endif %}
-    <nav>
-        <a href="/setup">Admin Setup</a> |
-        <a href="/reset">Reset Password</a>
-    </nav>
-    <p>This is the home page.</p>
+    
+    <h2>Welcome to GEEKS-AD-Plus</h2>
+    <p>This portal allows you to reset your Active Directory password securely.</p>
+    
+    <h3>Features:</h3>
+    <ul>
+        <li>Secure password reset via Active Directory</li>
+        <li>Admin management interface</li>
+        <li>Audit logging</li>
+        <li>Group Policy deployment tools</li>
+        <li>Bug reporting system</li>
+    </ul>
+    
+    <p><a href="/admin/login">Admin Login</a></p>
 </body>
 </html> 

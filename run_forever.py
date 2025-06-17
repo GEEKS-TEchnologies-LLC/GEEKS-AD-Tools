@@ -5,7 +5,7 @@ import os
 import signal
 
 LOCAL_VERSION_FILE = "app/version.py"
-GITHUB_VERSION_URL = "https://raw.githubusercontent.com/manayethas/GEEKS-AD-Plus/stable/app/version.py"
+GITHUB_VERSION_URL = "https://raw.githubusercontent.com/manayethas/GEEKS-AD-Plus/dev/app/version.py"
 
 
 def get_local_version():
@@ -24,7 +24,7 @@ def get_latest_github_version():
     return None
 
 def update_and_restart():
-    subprocess.run(["git", "pull", "origin", "stable"])
+    subprocess.run(["git", "pull", "origin", "dev"])
     subprocess.run(["pip3", "install", "-r", "requirements.txt"])
 
 

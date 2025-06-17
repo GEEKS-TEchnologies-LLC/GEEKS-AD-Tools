@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bug Report Detail - GEEKS-AD-Plus</title>
+    <style>
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .log-section { background: #f5f5f5; font-family: monospace; white-space: pre-wrap; }
+        .config-section { background: #f9f9f9; }
+    </style>
+</head>
+<body>
+    <h1>Bug Report: {{ filename }}</h1>
+    
+    <div class="section">
+        <h2>Issue Description</h2>
+        <p>{{ report.description }}</p>
+        {% if report.user_email %}
+        <p><strong>Contact Email:</strong> {{ report.user_email }}</p>
+        {% endif %}
+    </div>
+    
+    <div class="section">
+        <h2>System Information</h2>
+        <ul>
+            <li><strong>Timestamp:</strong> {{ report.system_info.timestamp }}</li>
+            <li><strong>Platform:</strong> {{ report.system_info.platform }}</li>
+            <li><strong>Python Version:</strong> {{ report.system_info.python_version }}</li>
+            <li><strong>System:</strong> {{ report.system_info.system }}</li>
+            <li><strong>Architecture:</strong> {{ report.system_info.architecture }}</li>
+            <li><strong>Hostname:</strong> {{ report.system_info.hostname }}</li>
+            <li><strong>App Version:</strong> {{ report.system_info.app_version }}</li>
+            <li><strong>AD Configured:</strong> {{ report.system_info.ad_configured }}</li>
+        </ul>
+    </div>
+    
+    <div class="section">
+        <h2>Request Information</h2>
+        <ul>
+            <li><strong>User Agent:</strong> {{ report.request_info.user_agent }}</li>
+            <li><strong>IP Address:</strong> {{ report.request_info.ip_address }}</li>
+            <li><strong>URL:</strong> {{ report.request_info.url }}</li>
+            <li><strong>Method:</strong> {{ report.request_info.method }}</li>
+        </ul>
+    </div>
+    
+    {% if report.config %}
+    <div class="section config-section">
+        <h2>Configuration (Sanitized)</h2>
+        <pre>{{ report.config | tojson(indent=2) }}</pre>
+    </div>
+    {% endif %}
+    
+    {% if report.logs %}
+    <div class="section log-section">
+        <h2>Recent Application Logs</h2>
+        {% for log in report.logs.recent_logs %}
+        {{ log }}
+        {% endfor %}
+    </div>
+    
+    {% if report.logs.error_logs %}
+    <div class="section log-section">
+        <h2>Error Logs</h2>
+        {% for log in report.logs.error_logs %}
+        {{ log }}
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+    
+    <div class="section">
+        <a href="/admin/bug-report/{{ filename }}/download">Download Full Report (JSON)</a> |
+        <a href="/admin/bug-reports">Back to Bug Reports</a> |
+        <a href="/admin/dashboard">Back to Dashboard</a>
+    </div>
+</body>
+</html> 

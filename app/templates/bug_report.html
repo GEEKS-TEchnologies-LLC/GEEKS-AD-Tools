@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bug Report - GEEKS-AD-Plus</title>
+</head>
+<body>
+    <h1>Submit Bug Report</h1>
+    
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    
+    <form method="post">
+        <div>
+            <label for="description"><strong>Description of the Issue:</strong></label><br>
+            <textarea name="description" id="description" rows="6" cols="60" required 
+                      placeholder="Please describe the issue you encountered, including steps to reproduce..."></textarea>
+        </div>
+        <br>
+        <div>
+            <label for="email">Your Email (optional):</label><br>
+            <input type="email" name="email" id="email" placeholder="your.email@example.com">
+        </div>
+        <br>
+        <div>
+            <label>
+                <input type="checkbox" name="include_logs" checked>
+                Include recent logs (recommended for debugging)
+            </label>
+        </div>
+        <div>
+            <label>
+                <input type="checkbox" name="include_config" checked>
+                Include system configuration (sanitized, no passwords)
+            </label>
+        </div>
+        <br>
+        <button type="submit">Submit Bug Report</button>
+    </form>
+    
+    <h3>What's Included in Bug Reports</h3>
+    <ul>
+        <li><strong>System Information:</strong> Platform, Python version, app version</li>
+        <li><strong>Recent Logs:</strong> Application and audit logs (if selected)</li>
+        <li><strong>Configuration:</strong> AD settings and app config (sanitized, if selected)</li>
+        <li><strong>Request Information:</strong> Browser, IP address, URL</li>
+    </ul>
+    
+    <p><em>Bug reports are stored locally and can be viewed by administrators. No sensitive information like passwords is included.</em></p>
+    
+    <a href="/">Back to Home</a>
+</body>
+</html> 

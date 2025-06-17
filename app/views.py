@@ -17,6 +17,7 @@ from .audit import (
     log_login, log_password_reset, log_user_action, log_admin_action, log_system_event,
     get_audit_logs, export_audit_logs_csv, get_audit_stats
 )
+from .bug_report import generate_bug_report, save_bug_report, get_bug_report_summary
 
 main = Blueprint('main', __name__)
 
@@ -489,4 +490,67 @@ def audit_logs():
     
     return render_template('audit_logs.html', logs=logs, 
                          start_date=start_date, end_date=end_date, 
-                         user=user, action=action, result=result) 
+                         user=user, action=action, result=result)
+
+@main.route('/bug-report', methods=['GET', 'POST'])
+def bug_report():
+    if request.method == 'POST':
+        description = request.form.get('description', '')
+        user_email = request.form.get('email', '')
+        include_logs = 'include_logs' in request.form
+        include_config = 'include_config' in request.form
+        
+        if description:
+            report = generate_bug_report(description, user_email, include_logs, include_config)
+            filename = save_bug_report(report)
+            
+            if filename:
+                flash('Bug report submitted successfully!', 'success')
+                # Log the bug report submission
+                log_admin_action('bug_report_submitted', 'success', {'filename': filename, 'description': description[:100]})
+            else:
+                flash('Failed to save bug report.', 'danger')
+                log_admin_action('bug_report_submitted', 'failure', {'description': description[:100]})
+        else:
+            flash('Please provide a description of the issue.', 'danger')
+    
+    return render_template('bug_report.html')
+
+@main.route('/admin/bug-reports')
+@login_required
+@admin_required
+def view_bug_reports():
+    reports = get_bug_report_summary()
+    return render_template('bug_reports.html', reports=reports)
+
+@main.route('/admin/bug-report/<filename>')
+@login_required
+@admin_required
+def view_bug_report(filename):
+    import json
+    try:
+        with open(f'bug_reports/{filename}', 'r') as f:
+            report = json.load(f)
+        return render_template('bug_report_detail.html', report=report, filename=filename)
+    except Exception as e:
+        flash(f'Error reading bug report: {e}', 'danger')
+        return redirect(url_for('main.view_bug_reports'))
+
+@main.route('/admin/bug-report/<filename>/download')
+@login_required
+@admin_required
+def download_bug_report(filename):
+    import json
+    try:
+        with open(f'bug_reports/{filename}', 'r') as f:
+            report = json.load(f)
+        
+        from flask import Response
+        return Response(
+            json.dumps(report, indent=2, default=str),
+            mimetype='application/json',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+    except Exception as e:
+        flash(f'Error downloading bug report: {e}', 'danger')
+        return redirect(url_for('main.view_bug_reports')) 
