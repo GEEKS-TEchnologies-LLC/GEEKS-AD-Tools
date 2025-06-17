@@ -114,24 +114,40 @@ Would you like to proceed with implementing either:
 
 ## Quick Install (Ubuntu/Debian)
 
-Run the following command on your Ubuntu/Debian server to clone this project, install requirements, and start the app with auto-update:
+### Stable Branch (Recommended for Production)
+Run the following command on your Ubuntu/Debian server to clone this project, install requirements, and start the app with auto-update from the stable branch:
 
 ```sh
 sudo apt update && sudo apt install -y python3 python3-pip git && \
   git clone https://github.com/manayethas/GEEKS-AD-Plus.git && \
   cd GEEKS-AD-Plus && \
+  git checkout stable && \
+  pip3 install -r requirements.txt && \
+  python3 run_forever.py
+```
+
+### Development Branch (Latest Features)
+For the latest development features and updates, use the dev branch:
+
+```sh
+sudo apt update && sudo apt install -y python3 python3-pip git && \
+  git clone https://github.com/manayethas/GEEKS-AD-Plus.git && \
+  cd GEEKS-AD-Plus && \
+  git checkout dev && \
   pip3 install -r requirements.txt && \
   python3 run_forever.py
 ```
 
 - The app will be available on port 5000 of your server (http://your-server-ip:5000).
+- The dev branch includes the latest features but may be less stable than the stable branch.
 
 ## Versioning & Self-Updating
 
-This app uses a version file (`app/version.py`) and a wrapper script (`run_forever.py`) to keep itself up to date with the latest stable release from GitHub.
+This app uses a version file (`app/version.py`) and a wrapper script (`run_forever.py`) to keep itself up to date with the latest release from GitHub.
 
 - The version is tracked in `app/version.py`.
-- The `run_forever.py` script runs the app, checks for updates every 10 minutes, and updates/restarts if a new version is found on the stable branch.
+- The `run_forever.py` script runs the app, checks for updates every 10 minutes, and updates/restarts if a new version is found on the dev branch.
+- The app will only stop if the system is powered off or an update is applied.
 
 ### To run with auto-update:
 
@@ -139,7 +155,40 @@ This app uses a version file (`app/version.py`) and a wrapper script (`run_forev
 python3 run_forever.py
 ```
 
-The app will only stop if the system is powered off or an update is applied.
+### Switching Between Branches
+
+To switch from dev to stable branch (or vice versa):
+
+```sh
+git checkout stable  # or 'dev' for development branch
+pip3 install -r requirements.txt
+python3 run_forever.py
+```
+
+The auto-update will then check for updates from the selected branch.
+
+## Features
+
+- **Password Reset Portal**: Web-based interface for users to reset their AD passwords
+- **Admin Management**: Complete admin interface for user and group management
+- **Active Directory Integration**: Direct LDAP integration with AD
+- **Audit Logging**: Comprehensive logging of all actions
+- **Group Policy Deployment**: Automated deployment of Windows Credential Provider
+- **Self-Updating**: Automatic updates from GitHub
+- **Bug Reporting**: Built-in bug report system with log collection
+- **AD Dashboard**: Real-time AD statistics and health monitoring
+
+### Bug Reporting
+
+The system includes a comprehensive bug reporting feature:
+
+- **User Bug Reports**: Users can submit bug reports at `/bug-report`
+- **Log Collection**: Automatically collects recent application logs and audit logs
+- **System Information**: Gathers platform, version, and configuration details
+- **Admin Interface**: Admins can view and download bug reports at `/admin/bug-reports`
+- **Privacy**: Sensitive information like passwords is automatically redacted
+
+Bug reports are stored locally in the `bug_reports/` directory and are excluded from version control.
 
 
 
