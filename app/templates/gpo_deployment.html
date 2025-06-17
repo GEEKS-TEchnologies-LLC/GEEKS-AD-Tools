@@ -6,36 +6,100 @@
 </head>
 <body>
     <h1>Group Policy Deployment</h1>
-    <p>Generate custom deployment scripts for your Credential Provider.</p>
     
-    <h2>Deployment Script Generator</h2>
-    <form method="post">
-        <label>Network Share Path: <input type="text" name="network_share" value="\\your-server\share\ForgotPasswordProvider\" required></label><br>
-        <label>Install Path: <input type="text" name="install_path" value="C:\Program Files\ForgotPasswordProvider\" required></label><br>
-        <label>Provider GUID: <input type="text" name="provider_guid" value="{D1A5B6C7-1234-4E5F-8A9B-1234567890AB}" required></label><br>
-        <button type="submit">Generate Deployment Script</button>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    
+    <h2>GEEKS Credential Provider Deployment</h2>
+    <p>Generate a custom Group Policy deployment script for the Windows Credential Provider.</p>
+    
+    <form method="post" action="/admin/generate-gpo-script">
+        <div>
+            <label for="domain_controller"><strong>Domain Controller:</strong></label><br>
+            <input type="text" name="domain_controller" id="domain_controller" required 
+                   placeholder="dc.yourdomain.com" style="width: 300px;">
+            <br><small>Enter the FQDN of your domain controller</small>
+        </div>
+        <br>
+        <div>
+            <label for="gpo_name"><strong>GPO Name:</strong></label><br>
+            <input type="text" name="gpo_name" id="gpo_name" 
+                   value="GEEKS-CredentialProvider" style="width: 300px;">
+            <br><small>Name for the Group Policy Object</small>
+        </div>
+        <br>
+        <div>
+            <label for="portal_url"><strong>Portal URL:</strong></label><br>
+            <input type="url" name="portal_url" id="portal_url" 
+                   value="http://localhost:5000/reset-password" style="width: 300px;">
+            <br><small>URL where users will be directed for password reset</small>
+        </div>
+        <br>
+        <button type="submit">Generate GPO Deployment Script</button>
     </form>
     
-    <h2>Deployment Instructions</h2>
+    <h3>Deployment Instructions</h3>
     <ol>
-        <li>Build your Credential Provider DLL in Visual Studio</li>
-        <li>Copy the DLL to your network share</li>
-        <li>Generate a deployment script using the form above</li>
-        <li>In Group Policy Management:
+        <li><strong>Build the Credential Provider:</strong>
             <ul>
-                <li>Create a new GPO for Credential Provider deployment</li>
-                <li>Add the generated script as a startup script</li>
-                <li>Link the GPO to your target OUs</li>
+                <li>Open Visual Studio 2019 or later</li>
+                <li>Open the project in <code>windows-credential-provider/</code></li>
+                <li>Build the solution in Release mode</li>
+                <li>Ensure <code>GEEKS-CredentialProvider.dll</code> is generated</li>
             </ul>
         </li>
-        <li>Run <code>gpupdate /force</code> on target machines</li>
+        <li><strong>Generate Deployment Script:</strong>
+            <ul>
+                <li>Fill in the form above with your domain details</li>
+                <li>Click "Generate GPO Deployment Script"</li>
+                <li>Save the downloaded PowerShell script</li>
+            </ul>
+        </li>
+        <li><strong>Deploy via Group Policy:</strong>
+            <ul>
+                <li>Copy the credential provider DLL to the same directory as the script</li>
+                <li>Run the script as Administrator on your domain controller</li>
+                <li>Link the created GPO to target Organizational Units</li>
+                <li>Force a Group Policy update on target computers</li>
+            </ul>
+        </li>
+        <li><strong>Test the Deployment:</strong>
+            <ul>
+                <li>Lock a workstation or restart a computer</li>
+                <li>Look for the "Forgot Password?" option on the lock screen</li>
+                <li>Click it to launch the password reset portal</li>
+            </ul>
+        </li>
     </ol>
     
-    <h2>Available Scripts</h2>
+    <h3>Manual Installation</h3>
+    <p>For individual computers or testing, you can also use the manual installation scripts:</p>
     <ul>
-        <li><a href="/windows-credential-provider/install.ps1">Manual Install Script</a></li>
-        <li><a href="/windows-credential-provider/uninstall.ps1">Uninstall Script</a></li>
-        <li><a href="/windows-credential-provider/gpo-deploy.ps1">Basic GPO Script</a></li>
+        <li><strong>Install:</strong> <code>.\install.ps1 -PortalURL "http://your-portal-url"</code></li>
+        <li><strong>Uninstall:</strong> <code>.\uninstall.ps1</code></li>
+    </ul>
+    
+    <h3>Configuration Options</h3>
+    <p>The credential provider can be configured via registry:</p>
+    <ul>
+        <li><strong>Portal URL:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\PortalURL</code></li>
+        <li><strong>Enable/Disable:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\Enabled</code></li>
+        <li><strong>Debug Mode:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\Debug</code></li>
+    </ul>
+    
+    <h3>Troubleshooting</h3>
+    <ul>
+        <li>Check Windows Event Logs for credential provider errors</li>
+        <li>Verify the portal URL is accessible from target computers</li>
+        <li>Ensure the DLL is properly registered and signed</li>
+        <li>Test browser launch permissions on the lock screen</li>
     </ul>
     
     <a href="/admin/dashboard">Back to Dashboard</a>

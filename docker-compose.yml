@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  # GEEKS-AD-Plus Web Application
+  geeks-ad-plus:
+    build: .
+    container_name: geeks-ad-plus
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - DEBUG=False
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./app/logs:/app/app/logs
+      - ./bug_reports:/app/bug_reports
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - geeks-network
+
+  # PostgreSQL Database (optional - can use SQLite instead)
+  db:
+    image: postgres:13
+    container_name: geeks-postgres
+    environment:
+      - POSTGRES_DB=geeks_ad_plus
+      - POSTGRES_USER=geeks
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-geeks_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - geeks-network
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:6-alpine
+    container_name: geeks-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - geeks-network
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: geeks-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - geeks-ad-plus
+    restart: unless-stopped
+    networks:
+      - geeks-network
+
+  # Monitoring with Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: geeks-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - geeks-network
+
+  # Grafana for visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: geeks-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - geeks-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  geeks-network:
+    driver: bridge 
