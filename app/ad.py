@@ -332,90 +332,51 @@ def remove_user_from_group(user_dn, group_name, server, port, bind_dn, password,
             pass
 
 def get_ad_statistics(server, port, bind_dn, password, base_dn):
-    """Get comprehensive AD statistics including user and computer counts"""
     ldap_url = f'ldap://{server}:{port}'
-    stats = {
-        'total_users': 0,
-        'enabled_users': 0,
-        'disabled_users': 0,
-        'locked_users': 0,
-        'total_computers': 0,
-        'enabled_computers': 0,
-        'disabled_computers': 0,
-        'users_by_ou': {},
-        'computers_by_ou': {},
-        'recent_logins': 0,
-        'password_expired': 0
-    }
-    
     try:
         conn = ldap.initialize(ldap_url)
         conn.simple_bind_s(bind_dn, password)
+
+        # Search for all users, computers, groups, and OUs
+        users = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=user)', ['userAccountControl', 'pwdLastSet'])
+        computers = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=computer)', ['operatingSystem', 'userAccountControl'])
+        groups = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=group)', ['groupType'])
+        ous = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=organizationalUnit)')
+
+        total_users = len(users)
+        enabled_users = sum(1 for dn, attrs in users if not int(attrs.get('userAccountControl', [b'0'])[0]) & 2)
+        locked_users = sum(1 for dn, attrs in users if int(attrs.get('userAccountControl', [b'0'])[0]) & 16)
+        password_expired = sum(1 for dn, attrs in users if attrs.get('pwdLastSet', [b'1'])[0] == b'0')
         
-        # Get user statistics
-        user_filter = '(objectClass=user)'
-        user_attrs = ['sAMAccountName', 'userAccountControl', 'distinguishedName', 'lastLogon', 'pwdLastSet']
-        user_results = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, user_filter, user_attrs)
-        
-        for dn, attrs in user_results:
-            if 'sAMAccountName' in attrs:
-                stats['total_users'] += 1
-                
-                # Check user status
-                uac = int(attrs.get('userAccountControl', [b'0'])[0])
-                if uac & 2:  # ACCOUNTDISABLE
-                    stats['disabled_users'] += 1
-                else:
-                    stats['enabled_users'] += 1
-                
-                if uac & 16:  # LOCKOUT
-                    stats['locked_users'] += 1
-                
-                # Check password status
-                pwd_last_set = attrs.get('pwdLastSet', [b'0'])[0]
-                if pwd_last_set == b'0':
-                    stats['password_expired'] += 1
-                
-                # Check recent login (last 30 days)
-                last_logon = attrs.get('lastLogon', [b'0'])[0]
-                if last_logon != b'0':
-                    from datetime import datetime, timedelta
-                    last_logon_time = datetime.fromtimestamp(int(last_logon) / 10000000 - 11644473600)
-                    if last_logon_time > datetime.now() - timedelta(days=30):
-                        stats['recent_logins'] += 1
-                
-                # Group by OU
-                ou = dn.split(',')[1] if len(dn.split(',')) > 1 else 'Unknown'
-                if ou.startswith('OU='):
-                    ou_name = ou.replace('OU=', '')
-                    stats['users_by_ou'][ou_name] = stats['users_by_ou'].get(ou_name, 0) + 1
-        
-        # Get computer statistics
-        computer_filter = '(objectClass=computer)'
-        computer_attrs = ['sAMAccountName', 'userAccountControl', 'distinguishedName']
-        computer_results = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, computer_filter, computer_attrs)
-        
-        for dn, attrs in computer_results:
-            if 'sAMAccountName' in attrs:
-                stats['total_computers'] += 1
-                
-                # Check computer status
-                uac = int(attrs.get('userAccountControl', [b'0'])[0])
-                if uac & 2:  # ACCOUNTDISABLE
-                    stats['disabled_computers'] += 1
-                else:
-                    stats['enabled_computers'] += 1
-                
-                # Group by OU
-                ou = dn.split(',')[1] if len(dn.split(',')) > 1 else 'Unknown'
-                if ou.startswith('OU='):
-                    ou_name = ou.replace('OU=', '')
-                    stats['computers_by_ou'][ou_name] = stats['computers_by_ou'].get(ou_name, 0) + 1
-        
+        total_computers = len(computers)
+        os_breakdown = {}
+        for dn, attrs in computers:
+            os = attrs.get('operatingSystem', [b'Unknown'])[0].decode()
+            os_breakdown[os] = os_breakdown.get(os, 0) + 1
+            
+        total_groups = len(groups)
+        group_types = {'Security': 0, 'Distribution': 0}
+        for dn, attrs in groups:
+            group_type = int(attrs.get('groupType', [b'0'])[0])
+            if group_type & 0x80000000:
+                group_types['Security'] += 1
+            else:
+                group_types['Distribution'] += 1
+
+        stats = {
+            'total_users': total_users,
+            'enabled_users': enabled_users,
+            'locked_users': locked_users,
+            'password_expired': password_expired,
+            'total_computers': total_computers,
+            'os_breakdown': os_breakdown,
+            'total_groups': total_groups,
+            'group_types': group_types,
+            'total_ous': len(ous),
+        }
         return True, stats
-        
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()

@@ -2,220 +2,298 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AD Dashboard - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 20px 0;
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .main-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            padding: 2rem;
+            margin: 2rem auto;
+            max-width: 1600px;
         }
         .stat-card {
-            background: #f5f5f5;
-            padding: 20px;
-            border-radius: 8px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            border-left: 4px solid #667eea;
             text-align: center;
         }
-        .stat-number {
-            font-size: 2em;
-            font-weight: bold;
-            color: #333;
-        }
-        .chart-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin: 20px 0;
-        }
-        .chart-card {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
         .health-status {
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
+            padding: 1.5rem;
+            border-radius: 10px;
+            color: white;
+            font-weight: bold;
+            text-align: center;
         }
-        .health-healthy { background: #d4edda; color: #155724; }
-        .health-warning { background: #fff3cd; color: #856404; }
-        .health-error { background: #f8d7da; color: #721c24; }
+        .health-healthy { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); }
+        .health-warning { background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); }
+        .health-error { background: linear-gradient(135deg, #dc3545 0%, #e83e8c 100%); }
     </style>
 </head>
 <body>
-    <h1>Active Directory Dashboard</h1>
-    
-    {% if ad_health %}
-    <div class="health-status health-{{ ad_health.status }}">
-        <h3>AD Health Status: {{ ad_health.status.title() }}</h3>
-        {% if ad_health.alerts %}
-        <h4>Alerts:</h4>
-        <ul>
-            {% for alert in ad_health.alerts %}
-            <li>{{ alert }}</li>
+    <div class="main-container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-chart-line text-primary"></i> Active Directory Dashboard</h1>
+            <a href="/admin/dashboard" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Admin Dashboard
+            </a>
+        </div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
             {% endfor %}
-        </ul>
+          {% endif %}
+        {% endwith %}
+        
+        {% if ad_stats %}
+        <div class="row">
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <h5><i class="fas fa-users text-primary"></i> Total Users</h5>
+                    <h2 class="display-5">{{ ad_stats.total_users }}</h2>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <h5><i class="fas fa-desktop text-info"></i> Total Computers</h5>
+                    <h2 class="display-5">{{ ad_stats.total_computers }}</h2>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <h5><i class="fas fa-users-cog text-success"></i> Total Groups</h5>
+                    <h2 class="display-5">{{ ad_stats.total_groups }}</h2>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <h5><i class="fas fa-sitemap text-warning"></i> Total OUs</h5>
+                    <h2 class="display-5">{{ ad_stats.total_ous }}</h2>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mt-4">
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="fas fa-user-friends"></i> User Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="userStatusChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="fas fa-desktop"></i> Computer OS Breakdown</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="osChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="fas fa-users-cog"></i> Group Types</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="groupTypeChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if ad_health %}
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-warning text-white">
+                        <h5 class="mb-0"><i class="fas fa-heartbeat"></i> AD Health Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="health-status health-{{ ad_health.status }}">
+                            <i class="fas fa-{{ 'check-circle' if ad_health.status == 'healthy' else 'exclamation-triangle' if ad_health.status == 'warning' else 'times-circle' }} fa-2x mb-2"></i>
+                            <h4 class="mb-0">Status: {{ ad_health.status.title() }}</h4>
+                        </div>
+                        {% if ad_health.warnings %}
+                        <div class="mt-3">
+                            <h6>Warnings:</h6>
+                            <ul class="list-group">
+                                {% for warning in ad_health.warnings %}
+                                <li class="list-group-item list-group-item-warning">
+                                    <i class="fas fa-exclamation-triangle"></i> {{ warning }}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
         {% endif %}
-        {% if ad_health.warnings %}
-        <h4>Warnings:</h4>
-        <ul>
-            {% for warning in ad_health.warnings %}
-            <li>{{ warning }}</li>
-            {% endfor %}
-        </ul>
+
+        {% else %}
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <i class="fas fa-exclamation-triangle fa-3x text-danger mb-3"></i>
+                <h5 class="text-danger">Could not load Active Directory statistics.</h5>
+                <p class="text-muted">Please check your configuration and ensure the AD server is reachable.</p>
+                <a href="/setup" class="btn btn-primary">Configure AD</a>
+            </div>
+        </div>
         {% endif %}
     </div>
-    {% endif %}
-    
-    {% if ad_stats %}
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-number">{{ ad_stats.total_users }}</div>
-            <div>Total Users</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ ad_stats.enabled_users }}</div>
-            <div>Enabled Users</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ ad_stats.disabled_users }}</div>
-            <div>Disabled Users</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ ad_stats.locked_users }}</div>
-            <div>Locked Users</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ ad_stats.total_computers }}</div>
-            <div>Total Computers</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ ad_stats.enabled_computers }}</div>
-            <div>Enabled Computers</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ ad_stats.recent_logins }}</div>
-            <div>Recent Logins (30d)</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{{ ad_stats.password_expired }}</div>
-            <div>Expired Passwords</div>
-        </div>
-    </div>
-    
-    <div class="chart-container">
-        <div class="chart-card">
-            <h3>User Status Distribution</h3>
-            <canvas id="userStatusChart" width="400" height="300"></canvas>
-        </div>
-        <div class="chart-card">
-            <h3>Computer Status Distribution</h3>
-            <canvas id="computerStatusChart" width="400" height="300"></canvas>
-        </div>
-    </div>
-    
-    <div class="chart-container">
-        <div class="chart-card">
-            <h3>Users by Organizational Unit</h3>
-            <canvas id="usersByOUChart" width="400" height="300"></canvas>
-        </div>
-        <div class="chart-card">
-            <h3>Computers by Organizational Unit</h3>
-            <canvas id="computersByOUChart" width="400" height="300"></canvas>
-        </div>
-    </div>
-    
+
     <script>
+    {% if ad_stats %}
         // User Status Chart
-        const userCtx = document.getElementById('userStatusChart').getContext('2d');
-        new Chart(userCtx, {
+        const userStatusCtx = document.getElementById('userStatusChart').getContext('2d');
+        new Chart(userStatusCtx, {
             type: 'doughnut',
             data: {
-                labels: ['Enabled', 'Disabled', 'Locked'],
+                labels: ['Enabled', 'Disabled', 'Locked', 'Expired Password'],
                 datasets: [{
-                    data: [{{ ad_stats.enabled_users }}, {{ ad_stats.disabled_users }}, {{ ad_stats.locked_users }}],
-                    backgroundColor: ['#28a745', '#dc3545', '#ffc107']
+                    label: 'User Status',
+                    data: [
+                        {{ ad_stats.enabled_users }}, 
+                        {{ ad_stats.total_users - ad_stats.enabled_users }}, 
+                        {{ ad_stats.locked_users }}, 
+                        {{ ad_stats.password_expired }}
+                    ],
+                    backgroundColor: [
+                        'rgba(40, 167, 69, 0.7)',
+                        'rgba(255, 193, 7, 0.7)',
+                        'rgba(220, 53, 69, 0.7)',
+                        'rgba(253, 126, 20, 0.7)'
+                    ],
+                    borderColor: [
+                        'rgba(40, 167, 69, 1)',
+                        'rgba(255, 193, 7, 1)',
+                        'rgba(220, 53, 69, 1)',
+                        'rgba(253, 126, 20, 1)'
+                    ],
+                    borderWidth: 1
                 }]
             },
             options: {
                 responsive: true,
                 plugins: {
-                    legend: { position: 'bottom' }
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: true,
+                        text: 'User Account Status'
+                    }
                 }
             }
         });
-        
-        // Computer Status Chart
-        const computerCtx = document.getElementById('computerStatusChart').getContext('2d');
-        new Chart(computerCtx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Enabled', 'Disabled'],
-                datasets: [{
-                    data: [{{ ad_stats.enabled_computers }}, {{ ad_stats.disabled_computers }}],
-                    backgroundColor: ['#17a2b8', '#6c757d']
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: { position: 'bottom' }
-                }
-            }
-        });
-        
-        // Users by OU Chart
-        const usersOUCtx = document.getElementById('usersByOUChart').getContext('2d');
-        new Chart(usersOUCtx, {
+
+        // OS Breakdown Chart
+        const osCtx = document.getElementById('osChart').getContext('2d');
+        const osData = {{ ad_stats.os_breakdown | tojson }};
+        new Chart(osCtx, {
             type: 'bar',
             data: {
-                labels: [{% for ou, count in ad_stats.users_by_ou.items() %}'{{ ou }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+                labels: Object.keys(osData),
                 datasets: [{
-                    label: 'Users',
-                    data: [{% for ou, count in ad_stats.users_by_ou.items() %}{{ count }}{% if not loop.last %}, {% endif %}{% endfor %}],
-                    backgroundColor: '#007bff'
+                    label: 'Number of Computers',
+                    data: Object.values(osData),
+                    backgroundColor: [
+                        'rgba(0, 123, 255, 0.7)',
+                        'rgba(23, 162, 184, 0.7)',
+                        'rgba(40, 167, 69, 0.7)',
+                        'rgba(255, 193, 7, 0.7)',
+                        'rgba(220, 53, 69, 0.7)'
+                    ],
+                    borderColor: [
+                        'rgba(0, 123, 255, 1)',
+                        'rgba(23, 162, 184, 1)',
+                        'rgba(40, 167, 69, 1)',
+                        'rgba(255, 193, 7, 1)',
+                        'rgba(220, 53, 69, 1)'
+                    ],
+                    borderWidth: 1
                 }]
             },
             options: {
                 responsive: true,
                 plugins: {
-                    legend: { display: false }
+                    legend: {
+                        display: false
+                    },
+                    title: {
+                        display: true,
+                        text: 'Computer Operating Systems'
+                    }
                 },
                 scales: {
-                    y: { beginAtZero: true }
+                    y: {
+                        beginAtZero: true
+                    }
                 }
             }
         });
-        
-        // Computers by OU Chart
-        const computersOUCtx = document.getElementById('computersByOUChart').getContext('2d');
-        new Chart(computersOUCtx, {
-            type: 'bar',
+
+        // Group Type Chart
+        const groupTypeCtx = document.getElementById('groupTypeChart').getContext('2d');
+        const groupTypeData = {{ ad_stats.group_types | tojson }};
+        new Chart(groupTypeCtx, {
+            type: 'pie',
             data: {
-                labels: [{% for ou, count in ad_stats.computers_by_ou.items() %}'{{ ou }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+                labels: Object.keys(groupTypeData),
                 datasets: [{
-                    label: 'Computers',
-                    data: [{% for ou, count in ad_stats.computers_by_ou.items() %}{{ count }}{% if not loop.last %}, {% endif %}{% endfor %}],
-                    backgroundColor: '#6f42c1'
+                    label: 'Group Types',
+                    data: Object.values(groupTypeData),
+                    backgroundColor: [
+                        'rgba(102, 126, 234, 0.7)',
+                        'rgba(118, 75, 162, 0.7)',
+                        'rgba(23, 162, 184, 0.7)',
+                        'rgba(255, 193, 7, 0.7)'
+                    ],
+                    borderColor: [
+                        'rgba(102, 126, 234, 1)',
+                        'rgba(118, 75, 162, 1)',
+                        'rgba(23, 162, 184, 1)',
+                        'rgba(255, 193, 7, 1)'
+                    ],
+                    borderWidth: 1
                 }]
             },
             options: {
                 responsive: true,
                 plugins: {
-                    legend: { display: false }
-                },
-                scales: {
-                    y: { beginAtZero: true }
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: true,
+                        text: 'AD Group Types'
+                    }
                 }
             }
         });
-    </script>
-    {% else %}
-    <p>Unable to load AD statistics. Please check your AD configuration.</p>
     {% endif %}
-    
-    <a href="/admin/dashboard">Back to Dashboard</a>
+    </script>
 </body>
 </html> 
