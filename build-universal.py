@@ -182,19 +182,22 @@ def handle_database_migrations():
 
 def main():
     parser = argparse.ArgumentParser(description="GEEKS-AD-Plus Universal Build Script")
-    parser.add_argument('action', nargs='?', default='build', choices=['build', 'update', 'clean'], help="Action to perform.")
+    parser.add_argument('--build', action='store_true', help="Run the full build process (default action).")
+    parser.add_argument('--update', action='store_true', help="Pull the latest changes from Git.")
+    parser.add_argument('--clean', action='store_true', help="Clean up build artifacts.")
     args = parser.parse_args()
 
     print_header()
 
-    if args.action == 'update':
+    if args.update:
         update_from_git()
         return
     
-    if args.action == 'clean':
+    if args.clean:
         clean()
         return
 
+    # Default to build if no other action is specified
     log.info("Starting GEEKS-AD-Plus build process...")
     log.info(f"Build version: {get_version()}")
 
