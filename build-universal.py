@@ -11,6 +11,16 @@ import platform
 from pathlib import Path
 import argparse
 
+def print_header():
+    """Prints the build script header."""
+    print("==================================================")
+    print("GEEKS-AD-Plus Universal Build Script")
+    print("==================================================")
+    print(f"Python command: {get_python_command()}")
+    print(f"Current branch: {get_current_branch()}")
+    print(f"Platform: {get_platform()}")
+    print("==================================================")
+
 def detect_python_command():
     """Detect the correct Python command for the system"""
     if platform.system() == "Windows":
@@ -98,6 +108,13 @@ def install_python_dependencies():
 def setup_database():
     log.info("Setting up database...")
     db_setup_command = f'{get_python_command()} -c "from app import create_app, db; app = create_app(); app.app_context().push(); db.create_all()"'
+
+def get_python_command():
+    """Detects the python command to use."""
+    try:
+        return detect_python_command()
+    except Exception:
+        return "python3"  # Default fallback
 
 if __name__ == "__main__":
     main() 
