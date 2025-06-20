@@ -2,6 +2,7 @@ import os
 import json
 import ldap
 import ldap3
+from collections import namedtuple
 
 CONFIG_PATH = 'app/ad_config.json'
 
@@ -118,22 +119,13 @@ def create_ad_group(group_name, server, port, bind_dn, password, base_dn):
         except:
             pass
 
-def add_user_to_group(user_dn, group_name, server, port, bind_dn, password, base_dn):
-    ldap_url = f'ldap://{server}:{port}'
-    group_dn = f'CN={group_name},{base_dn}'
-    try:
-        conn = ldap.initialize(ldap_url)
-        conn.simple_bind_s(bind_dn, password)
-        mod = [(ldap.MOD_ADD, 'member', [user_dn.encode()])]
-        conn.modify_s(group_dn, mod)
-        return True, f'User added to group {group_name}.'
-    except ldap.LDAPError as e:
-        return False, parse_ldap_error(e)
-    finally:
-        try:
-            conn.unbind_s()
-        except:
-            pass
+def add_user_to_group(user_dn, group_dn, **ad_args):
+    """Add a user to a group in AD."""
+    with ad_connection(**ad_args) as conn:
+        result = conn.modify(group_dn, {'member': [(ldap3.MODIFY_ADD, [user_dn])]})
+        if not result:
+            return False, f"Failed to add user to group. Error: {conn.result['description']}"
+        return True, "User added to group successfully."
 
 def search_users(query, server, port, bind_dn, password, base_dn):
     ldap_url = f'ldap://{server}:{port}'
@@ -322,22 +314,13 @@ def get_user_groups(user_dn, server, port, bind_dn, password):
         except:
             pass
 
-def remove_user_from_group(user_dn, group_name, server, port, bind_dn, password, base_dn):
-    ldap_url = f'ldap://{server}:{port}'
-    group_dn = f'CN={group_name},{base_dn}'
-    try:
-        conn = ldap.initialize(ldap_url)
-        conn.simple_bind_s(bind_dn, password)
-        mod = [(ldap.MOD_DELETE, 'member', [user_dn.encode()])]
-        conn.modify_s(group_dn, mod)
-        return True, f'User removed from group {group_name}.'
-    except ldap.LDAPError as e:
-        return False, str(e)
-    finally:
-        try:
-            conn.unbind_s()
-        except:
-            pass
+def remove_user_from_group(user_dn, group_dn, **ad_args):
+    """Remove a user from a group in AD."""
+    with ad_connection(**ad_args) as conn:
+        result = conn.modify(group_dn, {'member': [(ldap3.MODIFY_DELETE, [user_dn])]})
+        if not result:
+            return False, f"Failed to remove user from group. Error: {conn.result['description']}"
+        return True, "User removed from group successfully."
 
 def get_ad_statistics(server, port, bind_dn, password, base_dn):
     ldap_url = f'ldap://{server}:{port}'
@@ -508,6 +491,39 @@ def get_user_groups(user_dn, **ad_args):
     with ad_connection(**ad_args) as conn:
         if conn.search(user_dn, '(objectclass=user)', attributes=['memberOf']):
             entry = conn.entries[0]
-            groups = [g.decode() for g in entry.entry_attributes_as_dict.get('memberOf', [])]
+            groups = [g for g in entry.entry_attributes_as_dict.get('memberOf', [])]
             return groups
-    return [] 
+    return []
+
+Group = namedtuple('Group', ['dn', 'name'])
+
+def get_all_groups(**ad_args):
+    """Get all groups from AD."""
+    groups = []
+    config = get_ad_config()
+    if not config:
+        return []
+
+    base_dn = config.get('base_dn')
+    groups_ou = config.get('groups_ou')
+    search_base = groups_ou if groups_ou else base_dn
+
+    with ad_connection(**ad_args) as conn:
+        try:
+            conn.search(search_base, '(objectClass=group)', attributes=['distinguishedName', 'sAMAccountName', 'cn'])
+            for entry in conn.entries:
+                # Some groups might not have a cn, fallback to sAMAccountName
+                name = None
+                if entry.cn:
+                    name = entry.cn.value
+                elif entry.sAMAccountName:
+                    name = entry.sAMAccountName.value
+
+                if name:
+                    groups.append(Group(dn=entry.distinguishedName.value, name=name))
+        except ldap3.LDAPException as e:
+            # Handle potential exceptions during search
+            print(f"LDAP search for groups failed: {e}")
+            return []
+    
+    return sorted(groups, key=lambda g: g.name.lower()) 
