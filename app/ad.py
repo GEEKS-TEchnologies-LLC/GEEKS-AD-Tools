@@ -134,11 +134,19 @@ def add_user_to_group(user_dn, group_name, server, port, bind_dn, password, base
 
 def search_users(query, server, port, bind_dn, password, base_dn):
     ldap_url = f'ldap://{server}:{port}'
-    filter_str = f'(|(sAMAccountName=*{query}*)(displayName=*{query}*)(mail=*{query}*))'
+    if query:
+        filter_str = f'(|(sAMAccountName=*{query}*)(displayName=*{query}*)(mail=*{query}*))'
+    else:
+        # If query is empty, find all user objects
+        filter_str = '(objectClass=user)'
+        
     try:
         conn = ldap.initialize(ldap_url)
         conn.simple_bind_s(bind_dn, password)
-        results = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, filter_str, ['sAMAccountName', 'displayName', 'mail', 'distinguishedName'])
+        
+        # Search for users and filter out referrals
+        results = [r for r in conn.search_s(base_dn, ldap.SCOPE_SUBTREE, filter_str, ['sAMAccountName', 'displayName', 'mail', 'distinguishedName']) if r[0] is not None]
+        
         users = []
         for dn, attrs in results:
             users.append({
