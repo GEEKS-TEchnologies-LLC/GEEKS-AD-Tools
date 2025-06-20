@@ -9,6 +9,7 @@ import sys
 import subprocess
 import platform
 from pathlib import Path
+import argparse
 
 def detect_python_command():
     """Detect the correct Python command for the system"""
@@ -53,58 +54,44 @@ def detect_branch():
     return "unknown"
 
 def main():
-    """Main entry point"""
-    python_cmd = detect_python_command()
-    current_branch = detect_branch()
+    parser = argparse.ArgumentParser(description="GEEKS-AD-Plus Universal Build Script")
+    parser.add_argument('action', nargs='?', default='build', choices=['build', 'update', 'clean'], help="Action to perform.")
+    args = parser.parse_args()
+
+    print_header()
+
+    if args.action == 'update':
+        update_from_git()
+        return
     
-    print("=" * 50)
-    print("GEEKS-AD-Plus Universal Build Script")
-    print("=" * 50)
-    print(f"Python command: {python_cmd}")
-    print(f"Current branch: {current_branch}")
-    print(f"Platform: {platform.system()}")
-    print("=" * 50)
-    
-    # Check if build.py exists
-    build_script = Path("build.py")
-    if not build_script.exists():
-        print("ERROR: build.py not found in current directory")
-        print("Please run this script from the GEEKS-AD-Plus project root")
-        sys.exit(1)
-    
-    # Run the build script
-    print("Starting build process...")
-    print()
-    
-    try:
-        # Pass all arguments to the build script
-        cmd = [python_cmd, "build.py"] + sys.argv[1:]
-        result = subprocess.run(cmd, check=False)
-        
-        if result.returncode == 0:
-            print()
-            print("=" * 50)
-            print("Build completed successfully!")
-            print("=" * 50)
-        else:
-            print()
-            print("=" * 50)
-            print("Build failed!")
-            print("=" * 50)
-            sys.exit(result.returncode)
-            
-    except KeyboardInterrupt:
-        print("\nBuild interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Build error: {e}")
-        sys.exit(1)
+    if args.action == 'clean':
+        clean()
+        return
+
+    log.info("Starting GEEKS-AD-Plus build process...")
+    log.info(f"Build version: {get_version()}")
+    log.info(f"Platform: {get_platform()}")
+    log.info(f"Branch: {get_current_branch()}")
+
+    check_prerequisites()
+    create_directories()
+    install_system_dependencies()
+    install_python_dependencies()
+    setup_database()
+
+    log.info("Build process completed successfully.")
+    print("\n==================================================")
+    print("Build successful!")
+    print("==================================================")
 
 def upgrade_pip():
     log.info("Upgrading pip...")
     run_command(f"{get_pip_command()} install --upgrade pip", "Pip upgrade failed")
 
 def install_python_dependencies():
+    log.info("Installing Python dependencies...")
+    python_command = get_python_command()
+    run_command(f"{python_command} -m pip install --upgrade pip", "Pip upgrade failed")
     log.info("Installing requirements...")
     run_command(f"{get_pip_command()} install --upgrade -r requirements.txt", "Failed to install requirements")
 
