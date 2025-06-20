@@ -2,81 +2,271 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .main-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            padding: 2rem;
+            margin: 2rem auto;
+            max-width: 1400px;
+        }
+        .btn-custom {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            margin: 5px;
+            transition: all 0.3s ease;
+        }
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            color: white;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            border-left: 4px solid #667eea;
+        }
+        .health-status {
+            padding: 1rem;
+            border-radius: 10px;
+            color: white;
+            font-weight: bold;
+        }
+        .health-healthy { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); }
+        .health-warning { background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); }
+        .health-error { background: linear-gradient(135deg, #dc3545 0%, #e83e8c 100%); }
+    </style>
 </head>
 <body>
-    <h1>Admin Dashboard</h1>
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <ul>
-        {% for category, message in messages %}
-          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
-        {% endfor %}
-        </ul>
-      {% endif %}
-    {% endwith %}
-    <h2>System Status</h2>
-    <ul>
-      {% for key, value in status.items() %}
-        <li><strong>{{ key }}:</strong> {{ value }}</li>
-      {% endfor %}
-    </ul>
-    <h2>Admin Features</h2>
-    <ul>
-      <li><a href="/admin/groups">Manage Admin Groups</a></li>
-      <li><a href="/admin/users">User Management</a></li>
-      <li><a href="/admin/audit">Audit Logs</a></li>
-      <li><a href="/admin/ad-dashboard">AD Dashboard</a></li>
-      <li><a href="/admin/bug-reports">Bug Reports</a></li>
-      <li><a href="/admin/gpo-deployment">Group Policy Deployment</a></li>
-      <li><a href="/setup">System Setup</a></li>
-      <li><a href="/admin/logout">Logout</a></li>
-    </ul>
-    
-    {% if ad_stats %}
-    <h2>AD Overview</h2>
-    <ul>
-      <li><strong>Total Users:</strong> {{ ad_stats.total_users }}</li>
-      <li><strong>Enabled Users:</strong> {{ ad_stats.enabled_users }}</li>
-      <li><strong>Total Computers:</strong> {{ ad_stats.total_computers }}</li>
-      <li><strong>Recent Logins (30d):</strong> {{ ad_stats.recent_logins }}</li>
-      <li><strong>Locked Users:</strong> {{ ad_stats.locked_users }}</li>
-      <li><strong>Expired Passwords:</strong> {{ ad_stats.password_expired }}</li>
-    </ul>
-    <p><a href="/admin/ad-dashboard">View Detailed AD Dashboard with Charts</a></p>
-    {% endif %}
-    
-    {% if ad_health %}
-    <h2>AD Health Status</h2>
-    <div style="padding: 10px; border-radius: 5px; background: {{ 'green' if ad_health.status == 'healthy' else 'orange' if ad_health.status == 'warning' else 'red' }}; color: white;">
-      Status: {{ ad_health.status.title() }}
+    <div class="main-container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-tachometer-alt text-primary"></i> Admin Dashboard</h1>
+            <a href="{{ url_for('main.home') }}" class="btn btn-outline-secondary">
+                <i class="fas fa-home"></i> Back to Home
+            </a>
+        </div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="fas fa-server"></i> System Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            {% for key, value in status.items() %}
+                            <div class="col-md-6 mb-2">
+                                <strong>{{ key }}:</strong> {{ value }}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                
+                {% if ad_stats %}
+                <div class="card mb-4">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="fas fa-users"></i> AD Overview</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-user text-primary"></i> Total Users</h6>
+                                    <h3 class="text-primary">{{ ad_stats.total_users }}</h3>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-user-check text-success"></i> Enabled Users</h6>
+                                    <h3 class="text-success">{{ ad_stats.enabled_users }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-desktop text-info"></i> Total Computers</h6>
+                                    <h3 class="text-info">{{ ad_stats.total_computers }}</h3>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-clock text-warning"></i> Recent Logins (30d)</h6>
+                                    <h3 class="text-warning">{{ ad_stats.recent_logins }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-lock text-danger"></i> Locked Users</h6>
+                                    <h3 class="text-danger">{{ ad_stats.locked_users }}</h3>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-exclamation-triangle text-warning"></i> Expired Passwords</h6>
+                                    <h3 class="text-warning">{{ ad_stats.password_expired }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-center mt-3">
+                            <a href="/admin/ad-dashboard" class="btn btn-custom">
+                                <i class="fas fa-chart-line"></i> View Detailed AD Dashboard
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if ad_health %}
+                <div class="card mb-4">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="fas fa-heartbeat"></i> AD Health Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="health-status health-{{ ad_health.status }}">
+                            <i class="fas fa-{{ 'check-circle' if ad_health.status == 'healthy' else 'exclamation-triangle' if ad_health.status == 'warning' else 'times-circle' }}"></i>
+                            Status: {{ ad_health.status.title() }}
+                        </div>
+                        {% if ad_health.warnings %}
+                        <div class="mt-3">
+                            <h6>Warnings:</h6>
+                            <ul class="list-group">
+                                {% for warning in ad_health.warnings %}
+                                <li class="list-group-item list-group-item-warning">
+                                    <i class="fas fa-exclamation-triangle"></i> {{ warning }}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if audit_stats %}
+                <div class="card mb-4">
+                    <div class="card-header bg-warning text-white">
+                        <h5 class="mb-0"><i class="fas fa-clipboard-list"></i> Audit Statistics (Last 30 Days)</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-list text-primary"></i> Total Events</h6>
+                                    <h3 class="text-primary">{{ audit_stats.total_events }}</h3>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-check text-success"></i> Successful Events</h6>
+                                    <h3 class="text-success">{{ audit_stats.success_events }}</h3>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="stat-card">
+                                    <h6><i class="fas fa-times text-danger"></i> Failed Events</h6>
+                                    <h3 class="text-danger">{{ audit_stats.failure_events }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        {% if audit_stats.top_actions %}
+                        <div class="mt-3">
+                            <h6>Top Actions:</h6>
+                            <div class="row">
+                                {% for action, count in audit_stats.top_actions %}
+                                <div class="col-md-6">
+                                    <div class="d-flex justify-content-between">
+                                        <span>{{ action }}</span>
+                                        <span class="badge bg-primary">{{ count }}</span>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header bg-dark text-white">
+                        <h5 class="mb-0"><i class="fas fa-cogs"></i> Admin Features</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-2">
+                            <a href="/admin/groups" class="btn btn-custom">
+                                <i class="fas fa-users-cog"></i> Manage Admin Groups
+                            </a>
+                            <a href="/admin/users" class="btn btn-custom">
+                                <i class="fas fa-user-edit"></i> User Management
+                            </a>
+                            <a href="/admin/audit" class="btn btn-custom">
+                                <i class="fas fa-clipboard-list"></i> Audit Logs
+                            </a>
+                            <a href="/admin/ad-dashboard" class="btn btn-custom">
+                                <i class="fas fa-chart-line"></i> AD Dashboard
+                            </a>
+                            <a href="/admin/bug-reports" class="btn btn-custom">
+                                <i class="fas fa-bug"></i> Bug Reports
+                            </a>
+                            <a href="/admin/gpo-deployment" class="btn btn-custom">
+                                <i class="fas fa-download"></i> Group Policy Deployment
+                            </a>
+                            <a href="/setup" class="btn btn-custom">
+                                <i class="fas fa-cog"></i> System Setup
+                            </a>
+                            <a href="/admin/logout" class="btn btn-outline-danger">
+                                <i class="fas fa-sign-out-alt"></i> Logout
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-3">
+                    <div class="card-header bg-secondary text-white">
+                        <h6 class="mb-0"><i class="fas fa-file-alt"></i> Recent Logs</h6>
+                    </div>
+                    <div class="card-body">
+                        <div style="max-height: 300px; overflow-y: auto; background: #f8f9fa; padding: 1rem; border-radius: 5px; font-family: monospace; font-size: 0.8rem;">
+                            {% for line in logs %}{{ line }}{% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-    {% if ad_health.warnings %}
-    <ul>
-      {% for warning in ad_health.warnings %}
-      <li>{{ warning }}</li>
-      {% endfor %}
-    </ul>
-    {% endif %}
-    {% endif %}
-    
-    <h2>Audit Statistics (Last 30 Days)</h2>
-    {% if audit_stats %}
-    <ul>
-      <li><strong>Total Events:</strong> {{ audit_stats.total_events }}</li>
-      <li><strong>Successful Events:</strong> {{ audit_stats.success_events }}</li>
-      <li><strong>Failed Events:</strong> {{ audit_stats.failure_events }}</li>
-      <li><strong>Top Actions:</strong>
-        <ul>
-        {% for action, count in audit_stats.top_actions %}
-          <li>{{ action }}: {{ count }}</li>
-        {% endfor %}
-        </ul>
-      </li>
-    </ul>
-    {% endif %}
-    <h2>Recent Logs</h2>
-    <pre style="background:#eee; padding:1em; max-height:300px; overflow:auto;">{% for line in logs %}{{ line }}{% endfor %}</pre>
-    <a href="/">Back to Home</a>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html> 
