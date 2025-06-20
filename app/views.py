@@ -381,8 +381,21 @@ def user_details(user_dn):
 
     user = get_user_details(user_dn, **ad_args)
     user_groups = get_user_groups(user_dn, **ad_args) if user else []
+    
+    is_disabled = False
+    is_locked = False
+    if user:
+        uac = int(user.get('userAccountControl', ['0'])[0])
+        is_disabled = bool(uac & 2)
+        is_locked = bool(uac & 16)
 
-    return render_template('user_details.html', user=user, user_groups=user_groups)
+    return render_template(
+        'user_details.html', 
+        user=user, 
+        user_groups=user_groups,
+        is_disabled=is_disabled,
+        is_locked=is_locked
+    )
 
 @main.route('/admin/create_user', methods=['GET', 'POST'])
 @login_required
