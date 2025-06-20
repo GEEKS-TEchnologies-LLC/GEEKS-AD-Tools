@@ -9,7 +9,7 @@ A comprehensive Linux-based web application for Active Directory password manage
 #### Windows
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
 
 # Run automated build
@@ -22,7 +22,7 @@ python build.py
 #### Linux/macOS
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
 
 # Make build script executable and run
@@ -36,7 +36,7 @@ python3 build.py
 #### Using Makefile (Cross-platform)
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
 
 # Full build and setup
@@ -52,7 +52,7 @@ make dev
 ### Docker Installation
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
 
 # Build and run with Docker Compose
@@ -67,17 +67,17 @@ docker run -p 5000:5000 geeks-ad-plus
 
 #### Stable Branch (Manual)
 ```bash
-curl -sSL https://raw.githubusercontent.com/yourusername/GEEKS-AD-Plus/stable/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/manayethas/GEEKS-AD-Plus/stable/install.sh | bash
 ```
 
 #### Development Branch (Manual)
 ```bash
-curl -sSL https://raw.githubusercontent.com/yourusername/GEEKS-AD-Plus/dev/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/manayethas/GEEKS-AD-Plus/dev/install.sh | bash
 ```
 
 #### Manual Installation (No Build System)
 ```bash
-git clone https://github.com/yourusername/GEEKS-AD-Plus.git
+git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
 pip install -r requirements.txt
 python app.py
