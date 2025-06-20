@@ -22,7 +22,37 @@ def test_ad_connection(server, port, bind_dn, password):
         conn.unbind_s()
         return True, 'Connection successful.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
+
+def parse_ldap_error(error_string):
+    """
+    Parses an ldap.LDAPError string and returns a user-friendly message.
+    """
+    error_string = str(error_string) 
+    
+    if 'Invalid credentials' in error_string:
+        return 'Invalid credentials. Please check the Bind DN and password.'
+    if "Can't contact LDAP server" in error_string:
+        return 'Could not connect to the LDAP server. Please check the server address and port.'
+    if 'SERVER_DOWN' in error_string:
+        return 'The LDAP server is down or unreachable.'
+    if 'NO_SUCH_OBJECT' in error_string:
+        return 'The Base DN could not be found. Please check your Base DN setting.'
+    if 'INAPPROPRIATE_AUTH' in error_string:
+        return 'Inappropriate authentication. The server may require a different authentication method (e.g., SASL).'
+    
+    # Fallback for other errors
+    try:
+        # The error is often a dictionary string, try to parse it
+        import ast
+        error_dict = ast.literal_eval(error_string)
+        if 'desc' in error_dict:
+            return f"An LDAP error occurred: {error_dict['desc']}"
+    except (ValueError, SyntaxError):
+        # Not a dict string, return the raw error
+        pass
+        
+    return f'An unexpected LDAP error occurred: {error_string}'
 
 def get_admin_groups():
     config = load_ad_config()
@@ -61,8 +91,10 @@ def is_user_in_admin_group(username, server, port, bind_dn, password, base_dn):
             pass
 
 def create_ad_group(group_name, server, port, bind_dn, password, base_dn):
+    config = load_ad_config()
+    groups_ou = config.get('groups_ou') if config and config.get('groups_ou') else base_dn
     ldap_url = f'ldap://{server}:{port}'
-    group_dn = f'CN={group_name},{base_dn}'
+    group_dn = f'CN={group_name},{groups_ou}'
     attrs = {
         'objectClass': [b'top', b'group'],
         'sAMAccountName': [group_name.encode()]
@@ -76,7 +108,7 @@ def create_ad_group(group_name, server, port, bind_dn, password, base_dn):
     except ldap.ALREADY_EXISTS:
         return False, 'Group already exists.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()
@@ -93,7 +125,7 @@ def add_user_to_group(user_dn, group_name, server, port, bind_dn, password, base
         conn.modify_s(group_dn, mod)
         return True, f'User added to group {group_name}.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()
@@ -145,27 +177,36 @@ def get_user_details(user_dn, server, port, bind_dn, password):
             pass
 
 def create_user(username, password, display_name, mail, server, port, bind_dn, bind_pw, base_dn):
+    config = load_ad_config()
+    users_ou = config.get('users_ou') if config and config.get('users_ou') else base_dn
     ldap_url = f'ldap://{server}:{port}'
-    user_dn = f'CN={display_name},{base_dn}'
+    user_dn = f'CN={username},{users_ou}'
+    
     attrs = {
         'objectClass': [b'top', b'person', b'organizationalPerson', b'user'],
         'sAMAccountName': [username.encode()],
         'userPrincipalName': [mail.encode()],
         'displayName': [display_name.encode()],
         'mail': [mail.encode()],
-        'userPassword': [password.encode()]
     }
     ldif = [(k, v) for k, v in attrs.items()]
+    
     try:
         conn = ldap.initialize(ldap_url)
         conn.simple_bind_s(bind_dn, bind_pw)
         conn.add_s(user_dn, ldif)
-        # Enable the user (set userAccountControl)
+        
+        # Set password
+        password_mod = [(ldap.MOD_REPLACE, 'unicodePwd', [f'"{password}"'.encode('utf-16-le')])]
+        conn.modify_s(user_dn, password_mod)
+        
+        # Enable the user (set userAccountControl to 512 for normal account)
         mod = [(ldap.MOD_REPLACE, 'userAccountControl', [b'512'])]
         conn.modify_s(user_dn, mod)
+        
         return True, f'User {username} created.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()
@@ -180,7 +221,7 @@ def delete_user(user_dn, server, port, bind_dn, password):
         conn.delete_s(user_dn)
         return True, 'User deleted.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()
@@ -197,7 +238,7 @@ def disable_user(user_dn, server, port, bind_dn, password):
         conn.modify_s(user_dn, mod)
         return True, 'User disabled.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()
@@ -214,7 +255,7 @@ def enable_user(user_dn, server, port, bind_dn, password):
         conn.modify_s(user_dn, mod)
         return True, 'User enabled.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()
@@ -230,7 +271,7 @@ def reset_user_password(user_dn, new_password, server, port, bind_dn, password):
         conn.modify_s(user_dn, mod)
         return True, 'Password reset.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()
@@ -247,7 +288,7 @@ def force_password_change(user_dn, server, port, bind_dn, password):
         conn.modify_s(user_dn, mod)
         return True, 'User must change password at next login.'
     except ldap.LDAPError as e:
-        return False, str(e)
+        return False, parse_ldap_error(e)
     finally:
         try:
             conn.unbind_s()
