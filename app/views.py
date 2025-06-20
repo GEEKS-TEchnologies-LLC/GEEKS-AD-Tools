@@ -24,10 +24,10 @@ main = Blueprint('main', __name__)
 
 @main.before_app_request
 def enforce_setup():
-    # Allow access to setup, admin_register, admin_login, and static files without AD config
-    allowed_endpoints = ('main.setup', 'main.admin_register', 'main.admin_login', 'static', 'main.home')
+    # Allow access to setup, admin_register, admin_login, welcome, and static files without AD config
+    allowed_endpoints = ('main.setup', 'main.admin_register', 'main.admin_login', 'main.welcome', 'main.home', 'static')
     if not load_ad_config() and request.endpoint not in allowed_endpoints:
-        return redirect(url_for('main.setup'))
+        return redirect(url_for('main.home'))
 
 @main.route('/')
 def home():
