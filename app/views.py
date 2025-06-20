@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, redirect, url_for, request, flash
 from .ad import (
-    save_ad_config, load_ad_config, test_ad_connection,
+    save_ad_config, get_ad_config, test_ad_connection,
     get_admin_groups, set_admin_groups, is_user_in_admin_group,
     create_ad_group, add_user_to_group,
     search_users, get_user_details, create_user, delete_user, disable_user, enable_user, reset_user_password, force_password_change,
@@ -34,12 +34,12 @@ main = Blueprint('main', __name__)
 def enforce_setup():
     # Allow access to setup, admin_register, admin_login, welcome, and static files without AD config
     allowed_endpoints = ('main.setup', 'main.admin_register', 'main.admin_login', 'main.welcome', 'main.home', 'static')
-    if not load_ad_config() and request.endpoint not in allowed_endpoints:
+    if not get_ad_config() and request.endpoint not in allowed_endpoints:
         return redirect(url_for('main.home'))
 
 @main.route('/')
 def home():
-    config = load_ad_config()
+    config = get_ad_config()
     if not config:
         return render_template('welcome.html')
     return render_template('home.html', config=config)
@@ -88,7 +88,7 @@ def admin_login():
             flash('Logged in as local admin.', 'success')
             return redirect(url_for('main.home'))
         # Try AD admin login if AD is configured
-        config = load_ad_config()
+        config = get_ad_config()
         if config:
             # Authenticate with AD using the new robust function
             ok, msg = authenticate_user(username, password)
@@ -131,7 +131,7 @@ def admin_logout():
 
 @main.route('/setup', methods=['GET', 'POST'])
 def setup():
-    config = load_ad_config()
+    config = get_ad_config()
     if config and not current_user.is_authenticated:
         flash('You must be an administrator to change the configuration.', 'danger')
         return redirect(url_for('main.admin_login'))
@@ -159,12 +159,12 @@ def setup():
         else:
             flash(f'AD connection failed: {msg}', 'danger')
     
-    config = load_ad_config()
+    config = get_ad_config()
     return render_template('setup.html', config=config)
 
 @main.route('/ad_test', methods=['POST'])
 def ad_test():
-    config = load_ad_config()
+    config = get_ad_config()
     if not config:
         return {'status': 'error', 'message': 'Not configured'}, 400
     ok, msg = test_ad_connection(
@@ -205,7 +205,7 @@ def admin_groups():
 @admin_required
 def create_group():
     group_name = request.form['group_name']
-    config = load_ad_config()
+    config = get_ad_config()
     ok, msg = create_ad_group(
         group_name,
         config['ad_server'],
@@ -226,7 +226,7 @@ def create_group():
 def add_user_to_group_route():
     user_dn = request.form['user_dn']
     group_name = request.form['group_name']
-    config = load_ad_config()
+    config = get_ad_config()
     ok, msg = add_user_to_group(
         user_dn,
         group_name,
@@ -259,7 +259,7 @@ def admin_dashboard():
     # Get AD statistics if configured
     ad_stats = None
     ad_health = None
-    config = load_ad_config()
+    config = get_ad_config()
     if config:
         ok, stats = get_ad_statistics(
             config['ad_server'],
@@ -294,7 +294,7 @@ def admin_dashboard():
 @admin_required
 def ad_dashboard():
     """Detailed AD dashboard with charts and statistics"""
-    config = load_ad_config()
+    config = get_ad_config()
     if not config:
         flash('AD not configured. Please complete setup first.', 'warning')
         return redirect(url_for('main.setup'))
@@ -331,7 +331,7 @@ def ad_dashboard():
 @login_required
 @admin_required
 def user_search():
-    config = load_ad_config()
+    config = get_ad_config()
     if not config:
         flash('AD not configured. Please complete setup first.', 'warning')
         return redirect(url_for('main.setup'))
@@ -449,7 +449,7 @@ def create_user_route():
         password = request.form['password']
         display_name = request.form['display_name']
         mail = request.form['mail']
-        config = load_ad_config()
+        config = get_ad_config()
         ok, msg = ad_create_user(username, password, display_name, mail, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
         log_user_action('create', username, 'success' if ok else 'failure', {'display_name': display_name, 'mail': mail})
         if ok:
