@@ -31,8 +31,8 @@ def update_and_restart():
 def main():
     while True:
         # Start the Flask app
-        flask_proc = subprocess.Popen(["python3", "app.py", "--host=0.0.0.0", "--port=5000"])
-        print("App started. Checking for updates every 10 minutes.")
+        flask_proc = subprocess.Popen(["python3", "app.py"])
+        print("App started on http://0.0.0.0:5000. Checking for updates every 10 minutes.")
         try:
             while True:
                 time.sleep(600)  # 10 minutes

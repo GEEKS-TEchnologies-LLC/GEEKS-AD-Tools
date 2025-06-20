@@ -476,5 +476,86 @@ source venv/bin/activate
 pip install python-ldap
 ```
 
+## Starting the System
+
+After a successful build, you can start the GEEKS-AD-Plus system in several ways:
+
+### Quick Start (Development)
+```bash
+# Activate virtual environment and start
+source venv/bin/activate
+python3 app.py
+
+# Or use the Makefile
+make run
+```
+
+### Production Start (Auto-updating)
+```bash
+# Start with auto-update functionality
+python3 run_forever.py
+
+# This will:
+# - Start the web application on http://localhost:5000
+# - Check for updates every 10 minutes
+# - Automatically restart when updates are found
+```
+
+### Manual Start Options
+```bash
+# Basic start (development mode) - binds to 0.0.0.0:5000
+python3 app.py
+
+# Start with specific host/port
+python3 app.py --host=0.0.0.0 --port=5000
+
+# Start with debug mode
+python3 app.py --debug
+
+# Start using the virtual environment
+venv/bin/python app.py
+```
+
+### Accessing the System
+Once started, you can access the system at:
+- **Local Access**: http://localhost:5000
+- **Network Access**: http://YOUR_SERVER_IP:5000
+- **Admin Login**: http://YOUR_SERVER_IP:5000/admin/login
+- **Setup Page**: http://YOUR_SERVER_IP:5000/setup
+
+**Note**: The application binds to `0.0.0.0:5000` by default, making it accessible from any network interface.
+
+### First-Time Setup
+1. **Start the system** using one of the methods above
+2. **Access the setup page** at http://localhost:5000/setup
+3. **Configure Active Directory** settings
+4. **Create admin account** or configure AD admin groups
+5. **Test the connection** to your AD server
+
+### System Management
+```bash
+# Stop the application
+# Press Ctrl+C in the terminal where it's running
+
+# Restart the application
+python3 app.py
+
+# Check if the application is running
+curl http://localhost:5000
+# or
+curl http://YOUR_SERVER_IP:5000
+
+# View application logs
+tail -f app/logs/app.log
+
+# Check what IP the server is bound to
+netstat -tlnp | grep :5000
+
+# Show network access information
+python3 get-ip.py
+# or
+make network-info
+```
+
 
 
