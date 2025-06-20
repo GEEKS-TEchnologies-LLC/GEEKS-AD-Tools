@@ -7,4 +7,5 @@ Flask-Bootstrap
 Flask-SQLAlchemy
 psutil
 gunicorn
-ldap3 
+ldap3
+Flask-Migrate 

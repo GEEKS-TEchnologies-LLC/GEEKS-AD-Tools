@@ -49,4 +49,35 @@ bug_reports/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Egg directories
+*.egg-info/
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+
+# Instance Folder
+instance/
+.web-env/
+
+# Database
+app/database.db
+app/ad_config.json
+
+# Logs
+app/logs/*.log
+bug_reports/*.json
+
+# Build artifacts
+build/
+dist/
+*.spec 
