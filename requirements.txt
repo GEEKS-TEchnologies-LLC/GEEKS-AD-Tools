@@ -1,7 +1,11 @@
-Flask
+Flask==2.0.1
 Flask-Mail
 python-ldap
-Flask-Login
+Flask-Login==0.5.0
 Flask-WTF
 Flask-Bootstrap
-Flask-SQLAlchemy 
+Flask-SQLAlchemy==2.5.1
+psutil
+Werkzeug==2.0.2
+gunicorn
+ldap3 
