@@ -16,6 +16,9 @@ help:
 	@echo "  install    - Install dependencies only"
 	@echo "  dev        - Setup development environment"
 	@echo "  run        - Run the application"
+	@echo "  start      - Start with virtual environment"
+	@echo "  start-auto - Start with auto-update functionality"
+	@echo "  network-info - Show network access information"
 	@echo "  update     - Update files from git repository"
 	@echo "  system-deps - Install system dependencies"
 	@echo "  docker-build - Build Docker image"
@@ -69,8 +72,28 @@ dev: install
 
 # Run application
 run:
-	@echo "Starting GEEKS-AD-Plus..."
+	@echo "Starting GEEKS-AD-Plus on http://0.0.0.0:5000..."
 	$(PYTHON) app.py
+
+# Start with virtual environment activation
+start:
+	@echo "Starting GEEKS-AD-Plus with virtual environment on http://0.0.0.0:5000..."
+	@if [ -d "venv" ]; then \
+		venv/bin/python app.py; \
+	else \
+		echo "Virtual environment not found. Run 'make build' first."; \
+		exit 1; \
+	fi
+
+# Start with auto-update functionality
+start-auto:
+	@echo "Starting GEEKS-AD-Plus with auto-update on http://0.0.0.0:5000..."
+	$(PYTHON) run_forever.py
+
+# Show network access information
+network-info:
+	@echo "GEEKS-AD-Plus Network Access Information"
+	$(PYTHON) get-ip.py
 
 # Update from git repository
 update:
