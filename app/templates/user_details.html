@@ -2,53 +2,229 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>User Details - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .main-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            padding: 2rem;
+            margin: 2rem auto;
+            max-width: 1200px;
+        }
+        .btn-custom {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            margin: 5px;
+            transition: all 0.3s ease;
+        }
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            color: white;
+        }
+        .user-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .user-avatar {
+            font-size: 4rem;
+            color: #667eea;
+            margin-bottom: 1rem;
+        }
+        .status-badge {
+            font-size: 1rem;
+            padding: 0.5em 1em;
+        }
+        .group-item {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 0.5rem 1rem;
+            margin-bottom: 0.5rem;
+            border-left: 4px solid #667eea;
+        }
+    </style>
 </head>
 <body>
-    <h1>User Details</h1>
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <ul>
-        {% for category, message in messages %}
-          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
-        {% endfor %}
-        </ul>
-      {% endif %}
-    {% endwith %}
-    <h2>Attributes</h2>
-    <ul>
-      {% for k, v in details.items() %}
-        <li><strong>{{ k }}:</strong> {{ v }}</li>
-      {% endfor %}
-    </ul>
-    <h2>Groups</h2>
-    <ul>
-      {% for group in groups %}
-        <li>{{ group }}
-          <form method="post" style="display:inline;">
-            <input type="hidden" name="group_name" value="{{ group.split(',')[0].replace('CN=','') }}">
-            <button name="action" value="remove_group">Remove</button>
-          </form>
-        </li>
-      {% endfor %}
-    </ul>
-    <form method="post">
-      <input type="text" name="group_name" placeholder="Group Name" required>
-      <button name="action" value="add_group">Add to Group</button>
-    </form>
-    <h2>Actions</h2>
-    <form method="post">
-        <button name="action" value="delete" onclick="return confirm('Delete user?')">Delete</button>
-        <button name="action" value="disable">Disable</button>
-        <button name="action" value="enable">Enable</button>
-    </form>
-    <form method="post">
-        <input type="password" name="new_password" placeholder="New Password" required>
-        <button name="action" value="reset_password">Reset Password</button>
-    </form>
-    <form method="post">
-        <button name="action" value="force_pw_change">Force Password Change at Next Login</button>
-    </form>
-    <a href="/admin/users">Back to User Search</a>
+    <div class="main-container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-user-edit text-primary"></i> User Details</h1>
+            <a href="/admin/users" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to User Search
+            </a>
+        </div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        
+        {% if user %}
+        <div class="user-header">
+            <div class="user-avatar">
+                <i class="fas fa-user-circle"></i>
+            </div>
+            <h2>{{ user.displayName[0] if user.displayName else 'N/A' }}</h2>
+            <p class="text-muted">{{ user.sAMAccountName[0] if user.sAMAccountName else 'N/A' }}</p>
+            {% set uac = user.userAccountControl[0] | int %}
+            {% if uac & 2 %}
+                <span class="badge bg-danger status-badge">Disabled</span>
+            {% elif uac & 16 %}
+                <span class="badge bg-warning status-badge">Locked</span>
+            {% else %}
+                <span class="badge bg-success status-badge">Enabled</span>
+            {% endif %}
+        </div>
+
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="fas fa-info-circle"></i> Key Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <dl class="row">
+                            <dt class="col-sm-3">Distinguished Name</dt>
+                            <dd class="col-sm-9"><code>{{ user.dn }}</code></dd>
+                            
+                            <dt class="col-sm-3">Email</dt>
+                            <dd class="col-sm-9">{{ user.mail[0] if user.mail else 'N/A' }}</dd>
+                            
+                            <dt class="col-sm-3">Last Logon</dt>
+                            <dd class="col-sm-9">{{ user.lastLogon[0] if user.lastLogon else 'N/A' }}</dd>
+
+                            <dt class="col-sm-3">When Created</dt>
+                            <dd class="col-sm-9">{{ user.whenCreated[0] if user.whenCreated else 'N/A' }}</dd>
+                        </dl>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="fas fa-users-cog"></i> Group Membership</h5>
+                    </div>
+                    <div class="card-body">
+                        <h6>Current Groups:</h6>
+                        {% if user_groups %}
+                            {% for group in user_groups %}
+                            <div class="group-item d-flex justify-content-between align-items-center">
+                                <span><i class="fas fa-users text-primary"></i> {{ group }}</span>
+                                <form method="post" action="/admin/remove_user_from_group" style="display:inline;">
+                                    <input type="hidden" name="user_dn" value="{{ user.dn }}">
+                                    <input type="hidden" name="group_name" value="{{ group }}">
+                                    <button type="submit" class="btn btn-danger btn-sm">
+                                        <i class="fas fa-trash"></i> Remove
+                                    </button>
+                                </form>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <p class="text-muted">This user is not a member of any groups.</p>
+                        {% endif %}
+                        
+                        <hr>
+                        <h6>Add to Group:</h6>
+                        <form method="post" action="/admin/add_user_to_group" class="d-flex">
+                            <input type="hidden" name="user_dn" value="{{ user.dn }}">
+                            <input type="text" class="form-control me-2" name="group_name" placeholder="Enter group name" required>
+                            <button type="submit" class="btn btn-custom">Add</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header bg-warning text-white">
+                        <h5 class="mb-0"><i class="fas fa-cogs"></i> Actions</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="post">
+                            <div class="d-grid gap-2">
+                                <button type="submit" name="action" value="reset_password" class="btn btn-custom">
+                                    <i class="fas fa-key"></i> Reset Password
+                                </button>
+                                <input type="password" name="password" class="form-control mb-2" placeholder="New Password">
+
+                                <button type="submit" name="action" value="force_password_change" class="btn btn-custom">
+                                    <i class="fas fa-history"></i> Force Password Change on Login
+                                </button>
+                                
+                                {% if uac & 2 %}
+                                <button type="submit" name="action" value="enable" class="btn btn-success">
+                                    <i class="fas fa-check-circle"></i> Enable User
+                                </button>
+                                {% else %}
+                                <button type="submit" name="action" value="disable" class="btn btn-warning">
+                                    <i class="fas fa-ban"></i> Disable User
+                                </button>
+                                {% endif %}
+                                
+                                <button type="submit" name="action" value="delete" class="btn btn-danger" 
+                                        onclick="return confirm('Are you sure you want to delete this user? This cannot be undone.');">
+                                    <i class="fas fa-trash"></i> Delete User
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="accordion mt-4" id="adAttributesAccordion">
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingOne">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne">
+                        <i class="fas fa-list me-2"></i> Full AD Attributes
+                    </button>
+                </h2>
+                <div id="collapseOne" class="accordion-collapse collapse">
+                    <div class="accordion-body">
+                        <table class="table table-bordered table-striped">
+                            <thead>
+                                <tr><th>Attribute</th><th>Value</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for key, value in user.items() %}
+                                <tr>
+                                    <td><strong>{{ key }}</strong></td>
+                                    <td>{{ value | join(', ') }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <i class="fas fa-user-slash fa-3x text-muted mb-3"></i>
+                <h5 class="text-muted">User not found.</h5>
+                <p class="text-muted">The user may have been deleted or the Distinguished Name is incorrect.</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html> 

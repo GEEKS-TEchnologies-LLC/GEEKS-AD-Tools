@@ -19,6 +19,7 @@ from .audit import (
     get_audit_logs, export_audit_logs_csv, get_audit_stats
 )
 from .bug_report import generate_bug_report, save_bug_report, get_bug_report_summary
+from urllib.parse import unquote
 
 main = Blueprint('main', __name__)
 
@@ -342,44 +343,38 @@ def user_search():
 @admin_required
 def user_details(user_dn):
     config = load_ad_config()
-    details = get_user_details(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
-    groups = get_user_groups(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
-    msg = None
+    if not config:
+        flash('AD not configured.', 'warning')
+        return redirect(url_for('main.setup'))
+
     if request.method == 'POST':
-        action = request.form['action']
-        username = details.get('sAMAccountName', ['Unknown'])[0] if details else 'Unknown'
+        action = request.form.get('action')
+        user_dn = unquote(user_dn)
         
         if action == 'delete':
-            ok, msg = delete_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
-            log_user_action('delete', username, 'success' if ok else 'failure', {'user_dn': user_dn})
+            ok, msg = delete_user(user_dn, **config)
         elif action == 'disable':
-            ok, msg = disable_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
-            log_user_action('disable', username, 'success' if ok else 'failure', {'user_dn': user_dn})
+            ok, msg = disable_user(user_dn, **config)
         elif action == 'enable':
-            ok, msg = enable_user(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
-            log_user_action('enable', username, 'success' if ok else 'failure', {'user_dn': user_dn})
+            ok, msg = enable_user(user_dn, **config)
         elif action == 'reset_password':
-            new_pw = request.form['new_password']
-            ok, msg = reset_user_password(user_dn, new_pw, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
-            log_user_action('reset_password', username, 'success' if ok else 'failure', {'user_dn': user_dn})
-        elif action == 'force_pw_change':
-            ok, msg = force_password_change(user_dn, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'])
-            log_user_action('force_pw_change', username, 'success' if ok else 'failure', {'user_dn': user_dn})
-        elif action == 'add_group':
-            group_name = request.form['group_name']
-            ok, msg = add_user_to_group(user_dn, group_name, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
-            log_user_action('add_group', username, 'success' if ok else 'failure', {'user_dn': user_dn, 'group': group_name})
-        elif action == 'remove_group':
-            group_name = request.form['group_name']
-            ok, msg = remove_user_from_group(user_dn, group_name, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
-            log_user_action('remove_group', username, 'success' if ok else 'failure', {'user_dn': user_dn, 'group': group_name})
-        
-        if ok:
-            flash(msg, 'success')
+            password = request.form.get('password')
+            if not password:
+                flash('Password is required.', 'danger')
+                return redirect(url_for('main.user_details', user_dn=user_dn))
+            ok, msg = reset_user_password(user_dn, password, **config)
+        elif action == 'force_password_change':
+            ok, msg = force_password_change(user_dn, **config)
         else:
-            flash(msg, 'danger')
+            ok, msg = False, 'Invalid action.'
+            
+        flash(msg, 'success' if ok else 'danger')
         return redirect(url_for('main.user_details', user_dn=user_dn))
-    return render_template('user_details.html', details=details, user_dn=user_dn, msg=msg, groups=groups)
+
+    user = get_user_details(user_dn, **config)
+    user_groups = get_user_groups(user_dn, **config) if user else []
+
+    return render_template('user_details.html', user=user, user_groups=user_groups)
 
 @main.route('/admin/create_user', methods=['GET', 'POST'])
 @login_required
