@@ -5,7 +5,7 @@ from .ad import (
     create_ad_group, add_user_to_group,
     search_users, get_user_details, create_user, delete_user, disable_user, enable_user, reset_user_password, force_password_change,
     get_user_groups, remove_user_from_group,
-    get_ad_statistics, get_ad_health_status
+    get_ad_statistics, get_ad_health_status, authenticate_user
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
@@ -51,9 +51,11 @@ def admin_required(f):
 
 @main.route('/admin/register', methods=['GET', 'POST'])
 def admin_register():
-    if Admin.query.first():
-        flash('Admin already registered. Please log in.', 'info')
+    # If there's already an admin, redirect to login
+    if Admin.query.count() > 0:
+        flash('Admin registration is disabled. Please log in.', 'info')
         return redirect(url_for('main.admin_login'))
+
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -80,22 +82,12 @@ def admin_login():
         # Try AD admin login if AD is configured
         config = load_ad_config()
         if config:
-            ok, msg = test_ad_connection(
-                config['ad_server'],
-                config['ad_port'],
-                config['ad_bind_dn'],
-                config['ad_password']
-            )
+            # Authenticate with AD using the new robust function
+            ok, msg = authenticate_user(username, password)
+
             if ok:
-                # Check if user is in admin group
-                if is_user_in_admin_group(
-                    username,
-                    config['ad_server'],
-                    config['ad_port'],
-                    config['ad_bind_dn'],
-                    config['ad_password'],
-                    config['ad_base_dn']
-                ):
+                # Check if user is in an admin group
+                if is_user_in_admin_group(username, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn']):
                     # Create or update AD admin record
                     admin = Admin.query.filter_by(username=username).first()
                     if not admin:
@@ -107,14 +99,14 @@ def admin_login():
                     db.session.commit()
                     login_user(admin)
                     log_login(username, 'success', {'method': 'ad'})
-                    flash('Logged in as AD admin.', 'success')
-                    return redirect(url_for('main.home'))
+                    flash('Logged in successfully.', 'success')
+                    return redirect(url_for('main.admin_dashboard'))
                 else:
                     log_login(username, 'failure', {'reason': 'not_in_admin_group'})
-                    flash('You are not a member of an admin group.', 'danger')
+                    flash('User is not in an admin group.', 'danger')
             else:
-                log_login(username, 'failure', {'reason': 'ad_connection_failed', 'error': msg})
-                flash(f'AD connection failed: {msg}', 'danger')
+                log_login(username, 'failure', {'reason': 'invalid_credentials'})
+                flash(msg, 'danger')
         else:
             log_login(username, 'failure', {'reason': 'invalid_credentials'})
             flash('Invalid credentials.', 'danger')
@@ -131,8 +123,13 @@ def admin_logout():
 
 @main.route('/setup', methods=['GET', 'POST'])
 def setup():
+    config = load_ad_config()
+    if config and not current_user.is_authenticated:
+        flash('You must be an administrator to change the configuration.', 'danger')
+        return redirect(url_for('main.admin_login'))
+
     if request.method == 'POST':
-        config = {
+        config_data = {
             'ad_server': request.form['ad_server'],
             'ad_port': request.form['ad_port'],
             'ad_bind_dn': request.form['ad_bind_dn'],
@@ -141,12 +138,12 @@ def setup():
             'users_ou': request.form.get('users_ou'),
             'groups_ou': request.form.get('groups_ou')
         }
-        save_ad_config(config)
+        save_ad_config(config_data)
         ok, msg = test_ad_connection(
-            config['ad_server'],
-            config['ad_port'],
-            config['ad_bind_dn'],
-            config['ad_password']
+            config_data['ad_server'],
+            config_data['ad_port'],
+            config_data['ad_bind_dn'],
+            config_data['ad_password']
         )
         if ok:
             flash('Setup saved and AD connection successful!', 'success')
