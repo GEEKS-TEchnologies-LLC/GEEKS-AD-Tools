@@ -62,6 +62,13 @@ if errorlevel 1 (
     echo.
     echo Build completed successfully!
     echo.
+    echo Available commands:
+    echo   build.py          - Full build
+    echo   build.py clean    - Clean build artifacts
+    echo   build.py test     - Run tests only
+    echo   build.py package  - Create package only
+    echo   build.py update   - Update files from git repository
+    echo.
     echo Next steps:
     echo 1. Configure your Active Directory settings in config.json
     echo 2. Set up your environment variables in .env

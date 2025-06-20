@@ -2,6 +2,7 @@
 """
 GEEKS-AD-Plus Automated Build Script
 Builds and configures the complete GEEKS-AD-Plus system
+Supports both dev and stable branches
 """
 
 import os
@@ -21,12 +22,16 @@ class GEEKSBuildSystem:
         self.log_file = self.project_root / "build.log"
         self.config_file = self.project_root / "build_config.json"
         
+        # Detect current branch
+        self.current_branch = self.detect_branch()
+        
         # Build configuration
         self.config = {
             "version": "1.3.0",
             "python_version": "3.7+",
             "platform": platform.system(),
             "build_date": datetime.now().isoformat(),
+            "branch": self.current_branch,
             "components": {
                 "web_app": True,
                 "credential_provider": True,
@@ -47,6 +52,34 @@ class GEEKSBuildSystem:
             "bold": "\033[1m",
             "end": "\033[0m"
         }
+    
+    def detect_branch(self):
+        """Detect the current git branch"""
+        try:
+            result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                capture_output=True,
+                text=True,
+                cwd=self.project_root,
+                check=False
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            else:
+                # Fallback method
+                result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    cwd=self.project_root,
+                    check=False
+                )
+                if result.returncode == 0:
+                    return result.stdout.strip()
+        except Exception:
+            pass
+        
+        return "unknown"
     
     def log(self, message, level="INFO", color="white"):
         """Log a message with timestamp and color"""
@@ -147,11 +180,53 @@ class GEEKSBuildSystem:
         """Install Python dependencies"""
         self.log("Installing Python dependencies...", "INFO", "blue")
         
+        # Determine the correct Python command
+        python_cmd = "python3"  # Default to python3
+        if platform.system() == "Windows":
+            python_cmd = "python"
+        else:
+            # Check if python3 is available, fallback to python
+            result = self.run_command("python3 --version", check=False)
+            if result.returncode != 0:
+                result = self.run_command("python --version", check=False)
+                if result.returncode == 0:
+                    python_cmd = "python"
+        
         # Check if virtual environment exists
         venv_path = self.project_root / "venv"
         if not venv_path.exists():
             self.log("Creating virtual environment...", "INFO", "blue")
-            self.run_command("python -m venv venv")
+            
+            # Try to create venv, if it fails, install python3-venv
+            result = self.run_command(f"{python_cmd} -m venv venv", check=False)
+            if result.returncode != 0:
+                self.log("venv module not found, attempting to install python3-venv...", "WARNING", "yellow")
+                
+                # Try to install python3-venv
+                if platform.system() == "Linux":
+                    # Try different package managers
+                    install_commands = [
+                        "sudo apt-get update && sudo apt-get install -y python3-venv",
+                        "sudo yum install -y python3-venv",
+                        "sudo dnf install -y python3-venv",
+                        "sudo zypper install -y python3-venv"
+                    ]
+                    
+                    for cmd in install_commands:
+                        result = self.run_command(cmd, check=False)
+                        if result.returncode == 0:
+                            self.log("python3-venv installed successfully", "INFO", "green")
+                            break
+                    else:
+                        self.log("Could not install python3-venv automatically", "ERROR", "red")
+                        self.log("Please install it manually: sudo apt-get install python3-venv", "ERROR", "red")
+                        return False
+                
+                # Try creating venv again
+                result = self.run_command(f"{python_cmd} -m venv venv", check=False)
+                if result.returncode != 0:
+                    self.log("Failed to create virtual environment", "ERROR", "red")
+                    return False
         
         # Determine pip command based on platform
         if platform.system() == "Windows":
@@ -366,6 +441,7 @@ except Exception as e:
             "build_date": self.config["build_date"],
             "version": self.config["version"],
             "platform": self.config["platform"],
+            "branch": self.current_branch,
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         }
         
@@ -417,11 +493,59 @@ if __name__ == "__main__":
             json.dump(self.config, f, indent=2)
         self.log(f"Build configuration saved: {self.config_file}", "INFO", "green")
     
+    def git_update(self):
+        """Update files from git repository"""
+        self.log("Updating files from git repository...", "INFO", "blue")
+        
+        try:
+            # Check if we're in a git repository
+            if not (self.project_root / ".git").exists():
+                self.log("Not a git repository", "ERROR", "red")
+                return False
+            
+            # Get current branch
+            current_branch = self.current_branch
+            self.log(f"Current branch: {current_branch}", "INFO", "blue")
+            
+            # Fetch latest changes
+            self.log("Fetching latest changes from remote...", "INFO", "blue")
+            result = self.run_command("git fetch origin", check=False)
+            if result.returncode != 0:
+                self.log("Failed to fetch from remote", "ERROR", "red")
+                return False
+            
+            # Check if there are local changes
+            result = self.run_command("git status --porcelain", check=False)
+            if result.stdout.strip():
+                self.log("Local changes detected. Stashing changes...", "WARNING", "yellow")
+                self.run_command("git stash")
+            
+            # Pull latest changes
+            self.log(f"Pulling latest changes from {current_branch}...", "INFO", "blue")
+            result = self.run_command(f"git pull origin {current_branch}", check=False)
+            if result.returncode != 0:
+                self.log("Failed to pull latest changes", "ERROR", "red")
+                return False
+            
+            # Restore stashed changes if any
+            result = self.run_command("git stash list", check=False)
+            if "stash@{0}" in result.stdout:
+                self.log("Restoring stashed changes...", "INFO", "blue")
+                self.run_command("git stash pop", check=False)
+            
+            self.log("Git update completed successfully", "INFO", "green")
+            return True
+            
+        except Exception as e:
+            self.log(f"Git update failed: {e}", "ERROR", "red")
+            return False
+    
     def build(self):
         """Main build process"""
         self.log("Starting GEEKS-AD-Plus build process...", "INFO", "bold")
         self.log(f"Build version: {self.config['version']}", "INFO", "blue")
         self.log(f"Platform: {self.config['platform']}", "INFO", "blue")
+        self.log(f"Branch: {self.current_branch}", "INFO", "purple")
         
         # Clear previous build log
         if self.log_file.exists():
@@ -499,9 +623,13 @@ def main():
             builder.create_directories()
             builder.create_package()
             
+        elif command == "update":
+            # Update files from git repository
+            builder.git_update()
+            
         else:
             print(f"Unknown command: {command}")
-            print("Available commands: clean, test, package")
+            print("Available commands: clean, test, package, update")
     else:
         # Full build
         success = builder.build()
