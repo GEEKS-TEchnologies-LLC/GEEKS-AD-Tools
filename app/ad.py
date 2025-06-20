@@ -192,33 +192,55 @@ def remove_user_from_group(user_dn, group_dn, **ad_args):
 
 # --- Admin & Authentication ---
 
+def get_admin_groups():
+    config = get_ad_config()
+    return config.get('admin_groups', ['Domain Admins']) if config else ['Domain Admins']
+
+def set_admin_groups(groups):
+    config = get_ad_config() or {}
+    config['admin_groups'] = groups
+    save_ad_config(config)
+
 def is_user_in_admin_group(username, **ad_args):
-    user_dn = f"CN={username},{ad_args['base_dn']}" # This is a simplification and might need adjustment
-    admin_groups = get_admin_groups()
-    try:
-        member_of = get_user_groups(user_dn, **ad_args)
-        for group_dn in member_of:
-            for admin_group in admin_groups:
-                if admin_group.lower() in group_dn.lower():
+    # This function needs to find the user's DN first
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], f'(sAMAccountName={username})', attributes=['memberOf'])
+        if not conn.entries:
+            return False
+        
+        user_groups = conn.entries[0].memberOf.value if conn.entries[0].memberOf else []
+        admin_groups = get_admin_groups()
+        
+        for group_dn in user_groups:
+            for admin_group_cn in admin_groups:
+                # Check if the admin group's CN is in the user's group DN
+                if f"CN={admin_group_cn}".lower() in group_dn.lower():
                     return True
-    except LDAPException:
-        return False
     return False
 
 def authenticate_user(username, password):
     config = get_ad_config()
     if not config: return False, "AD not configured."
     
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'base_dn': config['ad_base_dn'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password']
+    }
+
     # Step 1: Bind with service account to find the user's DN
-    with ad_connection(**config) as conn:
-        conn.search(config['base_dn'], f'(sAMAccountName={username})', attributes=['distinguishedName'])
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], f'(sAMAccountName={username})', attributes=['distinguishedName'])
         if not conn.entries:
             return False, "User not found."
         user_dn = conn.entries[0].distinguishedName.value
 
     # Step 2: Try to bind as the user with their password
     try:
-        with ad_connection(server=config['ad_server'], bind_user=user_dn, bind_password=password):
+        # Use a new connection with the user's real credentials
+        with ldap3.Connection(conn.server, user=user_dn, password=password, auto_bind=True, raise_exceptions=True):
             return True, "Authentication successful."
     except LDAPBindError:
         return False, "Invalid credentials."
@@ -229,12 +251,13 @@ def authenticate_user(username, password):
 
 def get_ad_statistics(**ad_args):
     stats = {
-        'total_users': 0, 'enabled_users': 0, 'locked_users': 0, 'total_computers': 0, 'total_groups': 0
+        'total_users': 0, 'enabled_users': 0, 'locked_users': 0, 
+        'total_computers': 0, 'total_groups': 0, 'total_ous': 0
     }
     with ad_connection(**ad_args) as conn:
         # Get users
         conn.search(ad_args['base_dn'], '(objectClass=user)', attributes=['userAccountControl'])
-        user_entries = [e for e in conn.entries if 'user' in e.objectClass.value]
+        user_entries = [e for e in conn.entries if 'user' in e.objectClass.value and 'computer' not in e.objectClass.value]
         stats['total_users'] = len(user_entries)
         for entry in user_entries:
             uac = entry.userAccountControl.value if entry.userAccountControl else 0
@@ -248,21 +271,24 @@ def get_ad_statistics(**ad_args):
         # Get groups
         conn.search(ad_args['base_dn'], '(objectClass=group)', attributes=['distinguishedName'])
         stats['total_groups'] = len(conn.entries)
+        
+        # Get OUs
+        conn.search(ad_args['base_dn'], '(objectClass=organizationalUnit)', attributes=['distinguishedName'])
+        stats['total_ous'] = len(conn.entries)
+
     return True, stats
 
 def get_ad_health_status(**ad_args):
-    return True, {'status': 'healthy', 'alerts': [], 'warnings': []}
-
-def get_admin_groups():
-    config = get_ad_config()
-    if config and 'admin_groups' in config:
-        return config['admin_groups']
-    return ['Domain Admins']
-
-def set_admin_groups(groups):
-    config = get_ad_config() or {}
-    config['admin_groups'] = groups
-    save_ad_config(config)
+    health = {'status': 'healthy', 'alerts': [], 'warnings': []}
+    # This is a placeholder. A real health check would be more complex.
+    try:
+        with ad_connection(**ad_args):
+            pass # Connection success is our basic health check for now
+    except Exception as e:
+        health['status'] = 'error'
+        health['alerts'].append(parse_ldap_error(e))
+        return False, health
+    return True, health
 
 def create_ad_group(group_name, server, port, bind_dn, password, base_dn):
     config = get_ad_config()
