@@ -337,28 +337,28 @@ def get_ad_statistics(server, port, bind_dn, password, base_dn):
         conn = ldap.initialize(ldap_url)
         conn.simple_bind_s(bind_dn, password)
 
-        # Search for all users, computers, groups, and OUs
-        users = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=user)', ['userAccountControl', 'pwdLastSet'])
-        computers = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=computer)', ['operatingSystem', 'userAccountControl'])
-        groups = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=group)', ['groupType'])
-        ous = conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=organizationalUnit)')
+        # Search for all users, computers, groups, and OUs, filtering out referrals
+        user_results = [r for r in conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=user)', ['userAccountControl', 'pwdLastSet']) if r[0] is not None]
+        computer_results = [r for r in conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=computer)', ['operatingSystem', 'userAccountControl']) if r[0] is not None]
+        group_results = [r for r in conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=group)', ['groupType']) if r[0] is not None]
+        ou_results = [r for r in conn.search_s(base_dn, ldap.SCOPE_SUBTREE, '(objectClass=organizationalUnit)') if r[0] is not None]
 
-        total_users = len(users)
-        enabled_users = sum(1 for dn, attrs in users if not int(attrs.get('userAccountControl', [b'0'])[0]) & 2)
-        locked_users = sum(1 for dn, attrs in users if int(attrs.get('userAccountControl', [b'0'])[0]) & 16)
-        password_expired = sum(1 for dn, attrs in users if attrs.get('pwdLastSet', [b'1'])[0] == b'0')
+        total_users = len(user_results)
+        enabled_users = sum(1 for _, attrs in user_results if not int(attrs.get('userAccountControl', [b'0'])[0]) & 2)
+        locked_users = sum(1 for _, attrs in user_results if int(attrs.get('userAccountControl', [b'0'])[0]) & 16)
+        password_expired = sum(1 for _, attrs in user_results if attrs.get('pwdLastSet', [b'1'])[0] == b'0')
         
-        total_computers = len(computers)
+        total_computers = len(computer_results)
         os_breakdown = {}
-        for dn, attrs in computers:
+        for _, attrs in computer_results:
             os = attrs.get('operatingSystem', [b'Unknown'])[0].decode()
             os_breakdown[os] = os_breakdown.get(os, 0) + 1
             
-        total_groups = len(groups)
+        total_groups = len(group_results)
         group_types = {'Security': 0, 'Distribution': 0}
-        for dn, attrs in groups:
+        for _, attrs in group_results:
             group_type = int(attrs.get('groupType', [b'0'])[0])
-            if group_type & 0x80000000:
+            if group_type & 0x80000000: # Security group flag
                 group_types['Security'] += 1
             else:
                 group_types['Distribution'] += 1
@@ -372,7 +372,7 @@ def get_ad_statistics(server, port, bind_dn, password, base_dn):
             'os_breakdown': os_breakdown,
             'total_groups': total_groups,
             'group_types': group_types,
-            'total_ous': len(ous),
+            'total_ous': len(ou_results),
         }
         return True, stats
     except ldap.LDAPError as e:
