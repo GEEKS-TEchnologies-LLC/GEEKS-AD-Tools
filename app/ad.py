@@ -469,4 +469,51 @@ def get_ad_health_status(server, port, bind_dn, password, base_dn):
         try:
             conn.unbind_s()
         except:
-            pass 
+            pass
+
+def authenticate_user(username, password):
+    """
+    Authenticates a user against AD.
+    First finds the user's DN, then attempts to bind with it.
+    """
+    config = load_ad_config()
+    if not config:
+        return False, "AD not configured."
+        
+    ldap_url = f"ldap://{config['ad_server']}:{config['ad_port']}"
+    
+    # Step 1: Bind with service account to find the user's DN
+    try:
+        conn = ldap.initialize(ldap_url)
+        conn.simple_bind_s(config['ad_bind_dn'], config['ad_password'])
+    except ldap.LDAPError as e:
+        # Cannot proceed if service account bind fails
+        return False, f"Could not bind with service account: {parse_ldap_error(e)}"
+
+    # Step 2: Search for the user to get their DN
+    search_filter = f'(sAMAccountName={username})'
+    user_dn = None
+    try:
+        result = conn.search_s(config['ad_base_dn'], ldap.SCOPE_SUBTREE, search_filter, ['dn'])
+        if not result:
+            conn.unbind_s()
+            return False, "User not found."
+        user_dn = result[0][0]
+    except ldap.LDAPError as e:
+        conn.unbind_s()
+        return False, f"Error searching for user: {parse_ldap_error(e)}"
+    finally:
+        # Unbind the service account connection
+        conn.unbind_s()
+
+    # Step 3: Try to bind as the user with their password and the found DN
+    if user_dn:
+        try:
+            user_conn = ldap.initialize(ldap_url)
+            user_conn.simple_bind_s(user_dn, password)
+            user_conn.unbind_s()
+            return True, "Authentication successful."
+        except ldap.LDAPError as e:
+            return False, parse_ldap_error(e)
+    
+    return False, "Could not find user DN to authenticate." 
