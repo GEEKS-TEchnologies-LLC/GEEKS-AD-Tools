@@ -475,7 +475,6 @@ def update_user_attributes(user_dn, changes, **ad_args):
     with ad_connection(**ad_args) as conn:
         ldap_changes = {}
         for key, value in changes.items():
-            # If value is provided, replace the attribute. If empty, clear it.
             if value:
                 ldap_changes[key] = [(ldap3.MODIFY_REPLACE, [value])]
             else:
@@ -485,6 +484,70 @@ def update_user_attributes(user_dn, changes, **ad_args):
         if not result:
             return False, f"Failed to update user. Error: {conn.result['description']}"
         return True, "User updated successfully."
+
+def set_password(user_dn, new_password, **ad_args):
+    """Set or reset a user's password."""
+    with ad_connection(**ad_args) as conn:
+        unicode_pwd = f'"{new_password}"'.encode('utf-16-le')
+        result = conn.modify(user_dn, {'unicodePwd': [(ldap3.MODIFY_REPLACE, [unicode_pwd])]})
+        if not result:
+            return False, f"Failed to set password. Error: {conn.result['description']}"
+        return True, "Password has been reset successfully."
+
+def _get_uac(conn, user_dn):
+    """Helper to get userAccountControl value."""
+    if conn.search(user_dn, '(objectclass=user)', search_scope=ldap3.BASE, attributes=['userAccountControl']):
+        if conn.entries:
+            return int(conn.entries[0].userAccountControl.value)
+    return None
+
+def enable_user(user_dn, **ad_args):
+    """Enable a user account."""
+    with ad_connection(**ad_args) as conn:
+        uac = _get_uac(conn, user_dn)
+        if uac is None:
+            return False, "Could not retrieve user account control."
+        new_uac = uac & ~2  # Remove the ACCOUNTDISABLE flag
+        result = conn.modify(user_dn, {'userAccountControl': [(ldap3.MODIFY_REPLACE, [str(new_uac)])]})
+        if not result:
+            return False, f"Failed to enable user. Error: {conn.result['description']}"
+        return True, "User enabled successfully."
+
+def disable_user(user_dn, **ad_args):
+    """Disable a user account."""
+    with ad_connection(**ad_args) as conn:
+        uac = _get_uac(conn, user_dn)
+        if uac is None:
+            return False, "Could not retrieve user account control."
+        new_uac = uac | 2  # Add the ACCOUNTDISABLE flag
+        result = conn.modify(user_dn, {'userAccountControl': [(ldap3.MODIFY_REPLACE, [str(new_uac)])]})
+        if not result:
+            return False, f"Failed to disable user. Error: {conn.result['description']}"
+        return True, "User disabled successfully."
+
+def unlock_user(user_dn, **ad_args):
+    """Unlock a user account by setting lockoutTime to 0."""
+    with ad_connection(**ad_args) as conn:
+        result = conn.modify(user_dn, {'lockoutTime': [(ldap3.MODIFY_REPLACE, ['0'])]})
+        if not result:
+            return False, f"Failed to unlock user. Error: {conn.result['description']}"
+        return True, "User account unlocked successfully."
+
+def force_password_change(user_dn, **ad_args):
+    """Force user to change password at next logon."""
+    with ad_connection(**ad_args) as conn:
+        result = conn.modify(user_dn, {'pwdLastSet': [(ldap3.MODIFY_REPLACE, ['0'])]})
+        if not result:
+            return False, f"Failed to force password change. Error: {conn.result['description']}"
+        return True, "User will be required to change password at next logon."
+
+def delete_user(user_dn, **ad_args):
+    """Deletes a user from Active Directory."""
+    with ad_connection(**ad_args) as conn:
+        result = conn.delete(user_dn)
+        if not result:
+            return False, f"Failed to delete user. Error: {conn.result['description']}"
+        return True, "User deleted successfully."
 
 def get_user_groups(user_dn, **ad_args):
     """Get the groups a user is a member of."""
