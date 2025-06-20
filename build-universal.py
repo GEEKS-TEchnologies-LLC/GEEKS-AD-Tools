@@ -100,5 +100,17 @@ def main():
         print(f"Build error: {e}")
         sys.exit(1)
 
+def upgrade_pip():
+    log.info("Upgrading pip...")
+    run_command(f"{get_pip_command()} install --upgrade pip", "Pip upgrade failed")
+
+def install_python_dependencies():
+    log.info("Installing requirements...")
+    run_command(f"{get_pip_command()} install --upgrade -r requirements.txt", "Failed to install requirements")
+
+def setup_database():
+    log.info("Setting up database...")
+    db_setup_command = f'{get_python_command()} -c "from app import create_app, db; app = create_app(); app.app_context().push(); db.create_all()"'
+
 if __name__ == "__main__":
     main() 
