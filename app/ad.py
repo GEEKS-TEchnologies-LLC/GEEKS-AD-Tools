@@ -1,6 +1,7 @@
 import os
 import json
 import ldap
+import ldap3
 
 CONFIG_PATH = 'app/ad_config.json'
 
@@ -164,36 +165,22 @@ def search_users(query, server, port, bind_dn, password, base_dn):
         except:
             pass
 
-def get_user_details(user_dn, server, port, bind_dn, password):
-    ldap_url = f'ldap://{server}:{port}'
-    try:
-        conn = ldap.initialize(ldap_url)
-        conn.simple_bind_s(bind_dn, password)
-        result = conn.search_s(user_dn, ldap.SCOPE_BASE)
-        if not result:
-            return None
-            
-        dn, attrs = result[0]
-        details = {}
-        for k, vals in attrs.items():
-            decoded_vals = []
-            for v in vals:
-                try:
-                    decoded_vals.append(v.decode('utf-8'))
-                except UnicodeDecodeError:
-                    # If it's not decodable, show as hex
-                    decoded_vals.append(v.hex())
-            details[k] = decoded_vals
-        
-        details['dn'] = dn
-        return details
-    except ldap.LDAPError:
-        return None
-    finally:
-        try:
-            conn.unbind_s()
-        except:
-            pass
+def get_user_details(user_dn, **ad_args):
+    """Get all details for a specific user from AD."""
+    with ad_connection(**ad_args) as conn:
+        if conn.search(user_dn, '(objectclass=user)', search_scope=ldap3.BASE, attributes=ldap3.ALL_ATTRIBUTES):
+            entry = conn.entries[0]
+            safe_attributes = {}
+            for attr_name, attr_value in entry.entry_attributes_as_dict.items():
+                if isinstance(attr_value, list) and len(attr_value) > 0 and isinstance(attr_value[0], bytes):
+                    try:
+                        safe_attributes[attr_name] = [v.decode('utf-8') for v in attr_value]
+                    except UnicodeDecodeError:
+                        safe_attributes[attr_name] = [v.hex() for v in attr_value]
+                else:
+                    safe_attributes[attr_name] = attr_value
+            return safe_attributes
+    return None
 
 def create_user(username, password, display_name, mail, server, port, bind_dn, bind_pw, base_dn):
     config = load_ad_config()
@@ -496,4 +483,29 @@ def authenticate_user(username, password):
         except ldap.LDAPError as e:
             return False, parse_ldap_error(e)
     
-    return False, "Could not find user DN to authenticate." 
+    return False, "Could not find user DN to authenticate."
+
+def update_user_attributes(user_dn, changes, **ad_args):
+    """Update a user's attributes in AD."""
+    with ad_connection(**ad_args) as conn:
+        ldap_changes = {}
+        for key, value in changes.items():
+            # If value is provided, replace the attribute. If empty, clear it.
+            if value:
+                ldap_changes[key] = [(ldap3.MODIFY_REPLACE, [value])]
+            else:
+                ldap_changes[key] = [(ldap3.MODIFY_DELETE, [])]
+        
+        result = conn.modify(user_dn, ldap_changes)
+        if not result:
+            return False, f"Failed to update user. Error: {conn.result['description']}"
+        return True, "User updated successfully."
+
+def get_user_groups(user_dn, **ad_args):
+    """Get the groups a user is a member of."""
+    with ad_connection(**ad_args) as conn:
+        if conn.search(user_dn, '(objectclass=user)', attributes=['memberOf']):
+            entry = conn.entries[0]
+            groups = [g.decode() for g in entry.entry_attributes_as_dict.get('memberOf', [])]
+            return groups
+    return [] 
