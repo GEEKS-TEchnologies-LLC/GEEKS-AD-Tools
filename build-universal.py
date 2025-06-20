@@ -28,6 +28,7 @@ def run_command(command, error_message, capture_output=False):
     """Runs a shell command and exits on failure."""
     log.debug(f"Running: {command}")
     try:
+        # Using capture_output=True for all to get stdout/stderr
         result = subprocess.run(command, shell=True, check=True, text=True, capture_output=True)
         if capture_output:
             log.debug(f"Output: {result.stdout.strip()}")
@@ -42,16 +43,12 @@ def run_command(command, error_message, capture_output=False):
 
 def get_python_command():
     """Detects the python command to use."""
-    try:
-        subprocess.run(["python3", "--version"], check=True, capture_output=True)
+    if shutil.which("python3"):
         return "python3"
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        try:
-            subprocess.run(["python", "--version"], check=True, capture_output=True)
-            return "python"
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            log.error("Could not find a valid Python 3 installation.")
-            sys.exit(1)
+    if shutil.which("python"):
+        return "python"
+    log.error("Could not find a valid Python 3 installation.")
+    sys.exit(1)
 
 def get_pip_command():
     return f"{get_python_command()} -m pip"
@@ -101,7 +98,6 @@ def update_from_git():
     log.info(f"Pulling latest changes from {branch}...")
     run_command(f"git pull origin {branch}", "Failed to pull changes")
     
-    run_command("git stash list", "Failed to list stashes", capture_output=True)
     log.info("Git update completed successfully")
 
 def clean():
@@ -116,7 +112,7 @@ def check_prerequisites():
     log.info("Checking prerequisites...")
     python_command = get_python_command()
     log.info(f"Python version: {run_command(f'{python_command} --version', 'Failed to get python version', True)}")
-    run_command(f"{get_pip_command()} --version", "pip is not available")
+    run_command(f"{get_pip_command()} --version", "pip is not available", capture_output=True)
     log.info("pip is available")
     run_command(f"{python_command} -m venv --help", "venv module is not available", True)
     log.info("venv module is available")
@@ -131,17 +127,23 @@ def create_directories():
 def install_system_dependencies():
     if get_platform() == 'Linux':
         log.info("Installing system dependencies...")
-        package_manager = "apt-get" # Assuming Debian-based
-        if run_command("which dnf", "dnf not found", True):
-             package_manager = "dnf"
+        package_manager = None
+        if shutil.which("apt-get"):
+            package_manager = "apt-get"
+        elif shutil.which("dnf"):
+            package_manager = "dnf"
         
+        if not package_manager:
+            log.warning("Could not detect 'apt-get' or 'dnf'. Skipping system dependency installation.")
+            return
+
         log.info(f"Using {package_manager} package manager")
         if package_manager == "apt-get":
             run_command("sudo apt-get update", "apt-get update failed")
             run_command("sudo apt-get install -y python3-dev libldap2-dev libsasl2-dev libssl-dev", "Failed to install dev packages")
         elif package_manager == "dnf":
+            run_command("sudo dnf check-update", "dnf check-update failed")
             run_command("sudo dnf install -y python3-devel openldap-devel cyrus-sasl-devel openssl-devel", "Failed to install dev packages")
-
 
 def install_python_dependencies():
     log.info("Installing Python dependencies...")
