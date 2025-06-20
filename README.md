@@ -232,11 +232,10 @@ python build.py package
 make package
 
 # Update files from git repository
-python build.py update
-make update
+python3 build.py update
 
-# Install dependencies only
-make install
+# Install system dependencies only
+python3 build.py system-deps
 
 # Development environment setup
 make dev
@@ -467,6 +466,14 @@ cat build.log
 
 # Verify installation
 python3 build.py test
+
+# Install system dependencies manually
+python3 build.py system-deps
+
+# If python-ldap fails to install
+sudo apt-get install python3-dev libldap2-dev libsasl2-dev libssl-dev
+source venv/bin/activate
+pip install python-ldap
 ```
 
 

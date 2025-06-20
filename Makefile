@@ -1,7 +1,7 @@
 # GEEKS-AD-Plus Makefile
 # Provides additional build targets and automation
 
-.PHONY: help build clean test package install dev run docker-build docker-run docs lint format update
+.PHONY: help build clean test package install dev run docker-build docker-run docs lint format update system-deps
 
 # Default target
 help:
@@ -17,6 +17,7 @@ help:
 	@echo "  dev        - Setup development environment"
 	@echo "  run        - Run the application"
 	@echo "  update     - Update files from git repository"
+	@echo "  system-deps - Install system dependencies"
 	@echo "  docker-build - Build Docker image"
 	@echo "  docker-run   - Run with Docker"
 	@echo "  docs       - Generate documentation"
@@ -75,6 +76,11 @@ run:
 update:
 	@echo "Updating from git repository..."
 	$(PYTHON) build.py update
+
+# Install system dependencies
+system-deps:
+	@echo "Installing system dependencies..."
+	$(PYTHON) build.py system-deps
 
 # Docker build
 docker-build:
