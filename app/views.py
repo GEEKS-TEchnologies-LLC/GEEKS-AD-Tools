@@ -347,32 +347,40 @@ def user_details(user_dn):
         flash('AD not configured.', 'warning')
         return redirect(url_for('main.setup'))
 
+    # Prepare args for AD functions to match their signatures
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_dn': config['ad_bind_dn'],
+        'password': config['ad_password']
+    }
+
     if request.method == 'POST':
         action = request.form.get('action')
         user_dn = unquote(user_dn)
         
         if action == 'delete':
-            ok, msg = delete_user(user_dn, **config)
+            ok, msg = delete_user(user_dn, **ad_args)
         elif action == 'disable':
-            ok, msg = disable_user(user_dn, **config)
+            ok, msg = disable_user(user_dn, **ad_args)
         elif action == 'enable':
-            ok, msg = enable_user(user_dn, **config)
+            ok, msg = enable_user(user_dn, **ad_args)
         elif action == 'reset_password':
             password = request.form.get('password')
             if not password:
                 flash('Password is required.', 'danger')
                 return redirect(url_for('main.user_details', user_dn=user_dn))
-            ok, msg = reset_user_password(user_dn, password, **config)
+            ok, msg = reset_user_password(user_dn, password, **ad_args)
         elif action == 'force_password_change':
-            ok, msg = force_password_change(user_dn, **config)
+            ok, msg = force_password_change(user_dn, **ad_args)
         else:
             ok, msg = False, 'Invalid action.'
             
         flash(msg, 'success' if ok else 'danger')
         return redirect(url_for('main.user_details', user_dn=user_dn))
 
-    user = get_user_details(user_dn, **config)
-    user_groups = get_user_groups(user_dn, **config) if user else []
+    user = get_user_details(user_dn, **ad_args)
+    user_groups = get_user_groups(user_dn, **ad_args) if user else []
 
     return render_template('user_details.html', user=user, user_groups=user_groups)
 
