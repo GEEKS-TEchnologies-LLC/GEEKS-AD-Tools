@@ -5,11 +5,17 @@ from .ad import (
     create_ad_group, add_user_to_group,
     search_users, get_user_details, create_user, delete_user, disable_user, enable_user, reset_user_password, force_password_change,
     get_user_groups, remove_user_from_group,
-    get_ad_statistics, get_ad_health_status, authenticate_user
+    get_ad_statistics, get_ad_health_status, authenticate_user,
+    get_ad_config, get_user_groups, add_user_to_group, 
+    remove_user_from_group, get_all_groups, create_user as ad_create_user, 
+    delete_user as ad_delete_user, set_password as ad_set_password,
+    enable_user as ad_enable_user, disable_user as ad_disable_user,
+    unlock_user as ad_unlock_user, force_password_change as ad_force_password_change,
+    update_user_attributes
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
-from .models import Admin
+from .models import Admin, User
 from . import db
 from werkzeug.security import generate_password_hash
 from functools import wraps
@@ -20,6 +26,7 @@ from .audit import (
 )
 from .bug_report import generate_bug_report, save_bug_report, get_bug_report_summary
 from urllib.parse import unquote
+from .version import __version__
 
 main = Blueprint('main', __name__)
 
@@ -338,61 +345,97 @@ def user_search():
     
     return render_template('user_search.html', users=users, query=query)
 
-@main.route('/admin/user/<path:user_dn>', methods=['GET', 'POST'])
+@main.route('/user_details/<path:user_dn>', methods=['GET', 'POST'])
 @login_required
-@admin_required
 def user_details(user_dn):
-    config = load_ad_config()
-    if not config:
-        flash('AD not configured.', 'warning')
-        return redirect(url_for('main.setup'))
-
-    # Prepare args for AD functions to match their signatures
-    ad_args = {
-        'server': config['ad_server'],
-        'port': config['ad_port'],
-        'bind_dn': config['ad_bind_dn'],
-        'password': config['ad_password']
-    }
+    ad_args = get_ad_config()
 
     if request.method == 'POST':
         action = request.form.get('action')
-        user_dn = unquote(user_dn)
         
-        if action == 'delete':
-            ok, msg = delete_user(user_dn, **ad_args)
-        elif action == 'disable':
-            ok, msg = disable_user(user_dn, **ad_args)
-        elif action == 'enable':
-            ok, msg = enable_user(user_dn, **ad_args)
+        # Actions that don't depend on user details form
+        if action == 'add_to_group':
+            group_dn = request.form.get('group_dn')
+            ok, msg = add_user_to_group(user_dn, group_dn, **ad_args)
+            flash(msg, 'success' if ok else 'danger')
+            return redirect(url_for('main.user_details', user_dn=user_dn))
+        elif action == 'remove_from_group':
+            group_dn = request.form.get('group_dn')
+            ok, msg = remove_user_from_group(user_dn, group_dn, **ad_args)
+            flash(msg, 'success' if ok else 'danger')
+            return redirect(url_for('main.user_details', user_dn=user_dn))
+
+        # Handle user attribute updates from the main form
+        if 'update_attributes' in request.form:
+            # Collect attributes from form
+            attributes_to_update = {
+                'givenName': request.form.get('givenName'),
+                'initials': request.form.get('initials'),
+                'sn': request.form.get('sn'),
+                'displayName': request.form.get('displayName'),
+                'description': request.form.get('description'),
+                'physicalDeliveryOfficeName': request.form.get('physicalDeliveryOfficeName'),
+                'telephoneNumber': request.form.get('telephoneNumber'),
+                'mail': request.form.get('mail'),
+                'wWWHomePage': request.form.get('wWWHomePage'),
+                'title': request.form.get('title'),
+                'department': request.form.get('department'),
+                'company': request.form.get('company'),
+                'employeeID': request.form.get('employeeID'),
+                'streetAddress': request.form.get('streetAddress'),
+                'l': request.form.get('l'),
+                'st': request.form.get('st'),
+                'postalCode': request.form.get('postalCode'),
+                'co': request.form.get('co'),
+            }
+            ok, msg = update_user_attributes(user_dn, attributes_to_update, **ad_args)
+            flash(msg, 'success' if ok else 'danger')
+        
+        # Handle other actions like password reset, enable/disable, etc.
         elif action == 'reset_password':
-            password = request.form.get('password')
-            if not password:
-                flash('Password is required.', 'danger')
-                return redirect(url_for('main.user_details', user_dn=user_dn))
-            ok, msg = reset_user_password(user_dn, password, **ad_args)
+            new_password = request.form.get('new_password')
+            ok, msg = ad_set_password(user_dn, new_password, **ad_args)
+            flash(msg, 'success' if ok else 'danger')
+        elif action == 'unlock':
+            ok, msg = ad_unlock_user(user_dn, **ad_args)
+            flash(msg, 'success' if ok else 'danger')
+        elif action == 'enable':
+            ok, msg = ad_enable_user(user_dn, **ad_args)
+            flash(msg, 'success' if ok else 'danger')
+        elif action == 'disable':
+            ok, msg = ad_disable_user(user_dn, **ad_args)
+            flash(msg, 'success' if ok else 'danger')
         elif action == 'force_password_change':
-            ok, msg = force_password_change(user_dn, **ad_args)
-        else:
-            ok, msg = False, 'Invalid action.'
-            
-        flash(msg, 'success' if ok else 'danger')
+            ok, msg = ad_force_password_change(user_dn, **ad_args)
+            flash(msg, 'success' if ok else 'danger')
+        elif action == 'delete':
+            ok, msg = ad_delete_user(user_dn, **ad_args)
+            if ok:
+                flash(msg, 'success')
+                return redirect(url_for('main.user_search'))
+            else:
+                flash(msg, 'danger')
+
         return redirect(url_for('main.user_details', user_dn=user_dn))
 
+    # GET request logic
     user = get_user_details(user_dn, **ad_args)
-    user_groups = get_user_groups(user_dn, **ad_args) if user else []
+    if not user:
+        flash(f"User with DN '{user_dn}' not found.", 'danger')
+        return redirect(url_for('main.user_search'))
+        
+    user_groups = get_user_groups(user_dn, **ad_args)
+    all_groups = get_all_groups(**ad_args)
     
-    is_disabled = False
-    is_locked = False
-    if user:
-        uac = int(user.get('userAccountControl', ['0'])[0])
-        is_disabled = bool(uac & 2)
-        is_locked = bool(uac & 16)
+    uac = int(user.get('userAccountControl', ['0'])[0])
+    is_disabled = bool(uac & 2)
+    is_locked = bool(uac & 16) # LOCKOUT bit
 
     return render_template(
         'user_details.html', 
         user=user, 
         user_groups=user_groups,
+        all_groups=all_groups,
         is_disabled=is_disabled,
         is_locked=is_locked
     )
@@ -407,7 +450,7 @@ def create_user_route():
         display_name = request.form['display_name']
         mail = request.form['mail']
         config = load_ad_config()
-        ok, msg = create_user(username, password, display_name, mail, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+        ok, msg = ad_create_user(username, password, display_name, mail, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
         log_user_action('create', username, 'success' if ok else 'failure', {'display_name': display_name, 'mail': mail})
         if ok:
             flash(msg, 'success')
