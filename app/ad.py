@@ -9,11 +9,13 @@ def save_ad_config(config):
     with open(CONFIG_PATH, 'w') as f:
         json.dump(config, f)
 
-def load_ad_config():
-    if not os.path.exists(CONFIG_PATH):
+def get_ad_config():
+    """Load AD configuration from the JSON file."""
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
         return None
-    with open(CONFIG_PATH, 'r') as f:
-        return json.load(f)
 
 def test_ad_connection(server, port, bind_dn, password):
     ldap_url = f'ldap://{server}:{port}'
@@ -56,13 +58,13 @@ def parse_ldap_error(error_string):
     return f'An unexpected LDAP error occurred: {error_string}'
 
 def get_admin_groups():
-    config = load_ad_config()
+    config = get_ad_config()
     if config and 'admin_groups' in config:
         return config['admin_groups']
     return ['Domain Admins']
 
 def set_admin_groups(groups):
-    config = load_ad_config() or {}
+    config = get_ad_config() or {}
     config['admin_groups'] = groups
     save_ad_config(config)
 
@@ -92,7 +94,7 @@ def is_user_in_admin_group(username, server, port, bind_dn, password, base_dn):
             pass
 
 def create_ad_group(group_name, server, port, bind_dn, password, base_dn):
-    config = load_ad_config()
+    config = get_ad_config()
     groups_ou = config.get('groups_ou') if config and config.get('groups_ou') else base_dn
     ldap_url = f'ldap://{server}:{port}'
     group_dn = f'CN={group_name},{groups_ou}'
@@ -183,7 +185,7 @@ def get_user_details(user_dn, **ad_args):
     return None
 
 def create_user(username, password, display_name, mail, server, port, bind_dn, bind_pw, base_dn):
-    config = load_ad_config()
+    config = get_ad_config()
     users_ou = config.get('users_ou') if config and config.get('users_ou') else base_dn
     ldap_url = f'ldap://{server}:{port}'
     user_dn = f'CN={username},{users_ou}'
@@ -443,7 +445,7 @@ def authenticate_user(username, password):
     Authenticates a user against AD.
     First finds the user's DN, then attempts to bind with it.
     """
-    config = load_ad_config()
+    config = get_ad_config()
     if not config:
         return False, "AD not configured."
         
