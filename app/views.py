@@ -24,13 +24,21 @@ main = Blueprint('main', __name__)
 
 @main.before_app_request
 def enforce_setup():
-    if not load_ad_config() and request.endpoint not in ('main.setup', 'static'):
+    # Allow access to setup, admin_register, admin_login, and static files without AD config
+    allowed_endpoints = ('main.setup', 'main.admin_register', 'main.admin_login', 'static', 'main.home')
+    if not load_ad_config() and request.endpoint not in allowed_endpoints:
         return redirect(url_for('main.setup'))
 
 @main.route('/')
 def home():
     config = load_ad_config()
+    if not config:
+        return render_template('welcome.html')
     return render_template('home.html', config=config)
+
+@main.route('/welcome')
+def welcome():
+    return render_template('welcome.html')
 
 def admin_required(f):
     @wraps(f)
@@ -122,8 +130,6 @@ def admin_logout():
     return redirect(url_for('main.home'))
 
 @main.route('/setup', methods=['GET', 'POST'])
-@login_required
-@admin_required
 def setup():
     if request.method == 'POST':
         config = {
@@ -881,4 +887,17 @@ def download_bug_report(filename):
         )
     except Exception as e:
         flash(f'Error downloading bug report: {e}', 'danger')
-        return redirect(url_for('main.view_bug_reports')) 
+        return redirect(url_for('main.view_bug_reports'))
+
+@main.route('/reset-config', methods=['POST'])
+def reset_config():
+    """Reset AD configuration (for troubleshooting)"""
+    try:
+        import os
+        config_file = 'app/ad_config.json'
+        if os.path.exists(config_file):
+            os.remove(config_file)
+        flash('AD configuration has been reset. Please reconfigure.', 'info')
+    except Exception as e:
+        flash(f'Error resetting configuration: {e}', 'danger')
+    return redirect(url_for('main.welcome')) 
