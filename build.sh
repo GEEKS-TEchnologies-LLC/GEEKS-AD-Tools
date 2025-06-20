@@ -55,14 +55,19 @@ if [ "$(printf '%s\n' "$required_version" "$python_version" | sort -V | head -n1
 fi
 
 # Check if pip is available
-if ! command -v pip3 &> /dev/null; then
-    print_error "pip3 is not available"
-    echo "Please ensure pip3 is installed with Python"
+PIP_CMD=""
+if command -v pip3 &> /dev/null; then
+    PIP_CMD="pip3"
+elif command -v pip &> /dev/null; then
+    PIP_CMD="pip"
+else
+    print_error "Neither pip3 nor pip is available"
+    echo "Please ensure pip is installed with Python"
     exit 1
 fi
 
-print_success "pip3 found:"
-pip3 --version
+print_success "pip found:"
+$PIP_CMD --version
 echo
 
 # Check if virtual environment tools are available
