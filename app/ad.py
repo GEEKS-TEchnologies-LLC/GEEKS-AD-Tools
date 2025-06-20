@@ -172,8 +172,19 @@ def get_user_details(user_dn, server, port, bind_dn, password):
         result = conn.search_s(user_dn, ldap.SCOPE_BASE)
         if not result:
             return None
+            
         dn, attrs = result[0]
-        details = {k: [v.decode() for v in vals] for k, vals in attrs.items()}
+        details = {}
+        for k, vals in attrs.items():
+            decoded_vals = []
+            for v in vals:
+                try:
+                    decoded_vals.append(v.decode('utf-8'))
+                except UnicodeDecodeError:
+                    # If it's not decodable, show as hex
+                    decoded_vals.append(v.hex())
+            details[k] = decoded_vals
+        
         details['dn'] = dn
         return details
     except ldap.LDAPError:
