@@ -137,7 +137,9 @@ def setup():
             'ad_port': request.form['ad_port'],
             'ad_bind_dn': request.form['ad_bind_dn'],
             'ad_password': request.form['ad_password'],
-            'ad_base_dn': request.form['ad_base_dn']
+            'ad_base_dn': request.form['ad_base_dn'],
+            'users_ou': request.form.get('users_ou'),
+            'groups_ou': request.form.get('groups_ou')
         }
         save_ad_config(config)
         ok, msg = test_ad_connection(
@@ -151,7 +153,9 @@ def setup():
             return redirect(url_for('main.home'))
         else:
             flash(f'AD connection failed: {msg}', 'danger')
-    return render_template('setup.html')
+    
+    config = load_ad_config()
+    return render_template('setup.html', config=config)
 
 @main.route('/ad_test', methods=['POST'])
 def ad_test():

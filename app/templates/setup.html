@@ -73,31 +73,53 @@
                 <div class="col-md-6 mb-3">
                     <label for="ad_server" class="form-label">AD Server</label>
                     <input type="text" class="form-control" id="ad_server" name="ad_server" 
+                           value="{{ config.ad_server if config else '' }}"
                            placeholder="e.g., dc01.yourdomain.com" required>
                 </div>
                 <div class="col-md-6 mb-3">
                     <label for="ad_port" class="form-label">Port</label>
                     <input type="number" class="form-control" id="ad_port" name="ad_port" 
-                           value="389" placeholder="389 for LDAP, 636 for LDAPS" required>
+                           value="{{ config.ad_port if config else '389' }}" 
+                           placeholder="389 for LDAP, 636 for LDAPS" required>
                 </div>
             </div>
             
             <div class="mb-3">
                 <label for="ad_bind_dn" class="form-label">Bind DN</label>
                 <input type="text" class="form-control" id="ad_bind_dn" name="ad_bind_dn" 
+                       value="{{ config.ad_bind_dn if config else '' }}"
                        placeholder="e.g., CN=Administrator,DC=yourdomain,DC=com" required>
             </div>
             
             <div class="mb-3">
                 <label for="ad_password" class="form-label">Password</label>
                 <input type="password" class="form-control" id="ad_password" name="ad_password" 
+                       value="{{ config.ad_password if config else '' }}"
                        placeholder="Enter the password for the bind DN" required>
             </div>
             
             <div class="mb-3">
                 <label for="ad_base_dn" class="form-label">Base DN</label>
                 <input type="text" class="form-control" id="ad_base_dn" name="ad_base_dn" 
+                       value="{{ config.ad_base_dn if config else '' }}"
                        placeholder="e.g., DC=yourdomain,DC=com" required>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="users_ou" class="form-label">Users OU DN (Optional)</label>
+                    <input type="text" class="form-control" id="users_ou" name="users_ou" 
+                           value="{{ config.users_ou if config else '' }}"
+                           placeholder="e.g., OU=Users,DC=yourdomain,DC=com">
+                    <div class="form-text">If blank, Base DN will be used.</div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label for="groups_ou" class="form-label">Groups OU DN (Optional)</label>
+                    <input type="text" class="form-control" id="groups_ou" name="groups_ou" 
+                           value="{{ config.groups_ou if config else '' }}"
+                           placeholder="e.g., OU=Groups,DC=yourdomain,DC=com">
+                    <div class="form-text">If blank, Base DN will be used.</div>
+                </div>
             </div>
             
             <div class="text-center">
