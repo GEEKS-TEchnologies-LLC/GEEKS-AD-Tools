@@ -6,14 +6,37 @@ A comprehensive Linux-based web application for Active Directory password manage
 
 ### Automated Build & Install (Recommended)
 
+#### Universal Build (Works on all branches)
+```bash
+# Clone the repository
+git clone https://github.com/manayethas/GEEKS-AD-Plus.git
+cd GEEKS-AD-Plus
+
+# Switch to desired branch
+git checkout Dev      # For development version
+# OR
+git checkout Stable   # For stable version
+
+# Run universal build (handles Python detection automatically)
+python3 build-universal.py
+
+# Or use the main build script directly
+python3 build.py
+```
+
 #### Windows
 ```bash
 # Clone the repository
 git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
 
+# Switch to desired branch
+git checkout Dev      # For development version
+# OR
+git checkout Stable   # For stable version
+
 # Run automated build
-build.bat
+.\build.bat
 
 # Or use Python directly
 python build.py
@@ -24,6 +47,11 @@ python build.py
 # Clone the repository
 git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
+
+# Switch to desired branch
+git checkout Dev      # For development version
+# OR
+git checkout Stable   # For stable version
 
 # Make build script executable and run
 chmod +x build.sh
@@ -39,6 +67,11 @@ python3 build.py
 git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
 
+# Switch to desired branch
+git checkout Dev      # For development version
+# OR
+git checkout Stable   # For stable version
+
 # Full build and setup
 make build
 
@@ -49,11 +82,93 @@ make quick-start
 make dev
 ```
 
+### Building from Different Branches
+
+The build system automatically detects which branch you're on and provides branch-specific information. You can build from either the `Dev` or `Stable` branch:
+
+#### Development Branch (Latest Features)
+```bash
+git checkout Dev
+python3 build.py
+```
+
+#### Stable Branch (Production Ready)
+```bash
+git checkout Stable
+python3 build.py
+```
+
+#### Branch-Specific Build Commands
+```bash
+# Build from current branch (auto-detected)
+python3 build-universal.py
+
+# Build with specific options
+python3 build.py clean    # Clean build artifacts
+python3 build.py test     # Run tests only
+python3 build.py package  # Create package only
+
+# Cross-platform build
+make build               # Full build
+make clean              # Clean artifacts
+make test               # Run tests
+make package            # Create package
+```
+
+### In-Place Updates
+
+The build system includes an update command that allows you to update your local files to the latest version from the git repository:
+
+#### Update Commands
+```bash
+# Update files from git repository (current branch)
+python3 build.py update
+
+# Using Makefile
+make update
+
+# Using universal build script
+python3 build-universal.py update
+
+# Windows
+.\build.bat update
+
+# Linux/macOS
+./build.sh update
+```
+
+#### Update Process
+The update command will:
+1. **Fetch** latest changes from the remote repository
+2. **Stash** any local changes to prevent conflicts
+3. **Pull** the latest changes from your current branch
+4. **Restore** any stashed changes (if any existed)
+
+#### Update Examples
+```bash
+# Update development branch
+git checkout Dev
+python3 build.py update
+
+# Update stable branch
+git checkout Stable
+python3 build.py update
+
+# Update and rebuild
+python3 build.py update
+python3 build.py
+```
+
 ### Docker Installation
 ```bash
 # Clone the repository
 git clone https://github.com/manayethas/GEEKS-AD-Plus.git
 cd GEEKS-AD-Plus
+
+# Switch to desired branch
+git checkout Dev      # For development version
+# OR
+git checkout Stable   # For stable version
 
 # Build and run with Docker Compose
 docker-compose up -d
@@ -115,6 +230,10 @@ make test
 # Create distribution package
 python build.py package
 make package
+
+# Update files from git repository
+python build.py update
+make update
 
 # Install dependencies only
 make install
@@ -298,6 +417,57 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **v1.2.0** - Added AD dashboard and Windows Credential Provider
 - **v1.3.0** - Added bug reporting system and enhanced security
 - **v1.4.0** - Added comprehensive automated build system and Docker support
+
+## Quick Reference
+
+### Common Build Commands
+```bash
+# Full build (recommended for first time)
+python3 build.py
+
+# Update and rebuild
+python3 build.py update && python3 build.py
+
+# Clean and rebuild
+python3 build.py clean && python3 build.py
+
+# Development setup
+make dev
+
+# Quick start (install + run)
+make quick-start
+
+# Update from git
+python3 build.py update
+```
+
+### Branch Management
+```bash
+# Switch to development branch
+git checkout Dev
+python3 build.py update
+
+# Switch to stable branch  
+git checkout Stable
+python3 build.py update
+
+# Check current branch
+git branch --show-current
+```
+
+### Troubleshooting
+```bash
+# Clean everything and start fresh
+python3 build.py clean
+rm -rf venv/
+python3 build.py
+
+# Check build logs
+cat build.log
+
+# Verify installation
+python3 build.py test
+```
 
 
 
