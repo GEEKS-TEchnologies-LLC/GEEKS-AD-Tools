@@ -9,7 +9,8 @@ from .ad import (
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
-from .models import Admin, db
+from .models import Admin
+from . import db
 from werkzeug.security import generate_password_hash
 from functools import wraps
 import os
