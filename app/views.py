@@ -323,12 +323,18 @@ def ad_dashboard():
 @login_required
 @admin_required
 def user_search():
-    users = []
-    query = ''
+    config = load_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    query = ""
     if request.method == 'POST':
-        query = request.form['query']
-        config = load_ad_config()
-        users = search_users(query, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+        query = request.form.get('query', '')
+    
+    # On a GET request, the query will be empty, and search_users will return all users.
+    users = search_users(query, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+    
     return render_template('user_search.html', users=users, query=query)
 
 @main.route('/admin/user/<path:user_dn>', methods=['GET', 'POST'])
