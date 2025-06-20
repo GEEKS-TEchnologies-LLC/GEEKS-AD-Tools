@@ -4,10 +4,14 @@ from flask_mail import Mail
 import logging
 import os
 from flask_login import LoginManager
+from logging.handlers import RotatingFileHandler
+from .ad import get_ad_config, is_user_in_admin_group
+from flask_migrate import Migrate
 
 # Initialize extensions
 mail = Mail()
 db = SQLAlchemy()
+migrate = Migrate()
 login_manager = LoginManager()
 login_manager.login_view = 'main.admin_login'
 
@@ -16,7 +20,7 @@ def create_app():
     
     # Basic config (to be expanded)
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev')
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///../app.db'
+    app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(base_dir, 'database.db')}"
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MAIL_SERVER'] = 'localhost'
     app.config['MAIL_PORT'] = 25
@@ -28,6 +32,7 @@ def create_app():
     db.init_app(app)
     mail.init_app(app)
     login_manager.init_app(app)
+    migrate.init_app(app, db)
 
     # Logging setup
     if not os.path.exists('app/logs'):

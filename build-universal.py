@@ -24,22 +24,31 @@ log.addHandler(handler)
 
 # --- Helper Functions ---
 
-def run_command(command, error_message, capture_output=False):
-    """Runs a shell command and exits on failure."""
+def run_command(command, error_message, capture_output=False, can_fail=False):
+    """Runs a shell command and handles success/failure."""
     log.debug(f"Running: {command}")
     try:
-        # Using capture_output=True for all to get stdout/stderr
-        result = subprocess.run(command, shell=True, check=True, text=True, capture_output=True)
-        if capture_output:
+        result = subprocess.run(
+            command,
+            shell=True,
+            check=not can_fail, # check=True will raise CalledProcessError on non-zero exit codes
+            text=True,
+            capture_output=True
+        )
+        if result.stdout and capture_output:
             log.debug(f"Output: {result.stdout.strip()}")
+        if result.stderr and not can_fail:
+             log.debug(f"Stderr: {result.stderr.strip()}")
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         log.error(f"{error_message}: {e}")
         log.error(f"Error output: {e.stderr.strip()}")
-        sys.exit(1)
+        if not can_fail:
+            sys.exit(1)
     except Exception as e:
         log.error(f"An unexpected error occurred: {e}")
-        sys.exit(1)
+        if not can_fail:
+            sys.exit(1)
 
 def get_python_command():
     """Detects the python command to use."""
@@ -150,10 +159,26 @@ def install_python_dependencies():
     run_command(f"{get_pip_command()} install --upgrade pip", "Pip upgrade failed")
     run_command(f"{get_pip_command()} install --upgrade -r requirements.txt", "Failed to install requirements")
 
-def setup_database():
-    log.info("Setting up database...")
-    db_setup_command = f'{get_python_command()} -c "from app import create_app, db; app = create_app(); app.app_context().push(); db.create_all()"'
-    run_command(db_setup_command, "Database setup failed")
+def handle_database_migrations():
+    log.info("Handling database setup and migrations...")
+    python_command = get_python_command()
+    # Set the FLASK_APP environment variable for the flask commands
+    env_prefix = f"FLASK_APP=app.py "
+    flask_command = f"{env_prefix} {python_command} -m flask"
+
+    # Check if the migrations directory exists
+    if not os.path.exists('migrations'):
+        log.info("Migrations directory not found. Initializing database migrations...")
+        run_command(f"{flask_command} db init", "Failed to initialize migrations")
+    
+    # Generate an initial migration if none exist
+    # This is safer than stamping and handles the very first run gracefully
+    if not os.listdir('migrations/versions'):
+        log.info("No migration versions found. Creating initial migration...")
+        run_command(f"{flask_command} db migrate -m 'Initial database setup'", "Failed to create initial migration.")
+
+    log.info("Applying database migrations...")
+    run_command(f"{flask_command} db upgrade", "Failed to apply migrations")
 
 def main():
     parser = argparse.ArgumentParser(description="GEEKS-AD-Plus Universal Build Script")
@@ -177,7 +202,7 @@ def main():
     create_directories()
     install_system_dependencies()
     install_python_dependencies()
-    setup_database()
+    handle_database_migrations()
 
     log.info("Build process completed successfully.")
     print("\n==================================================")
