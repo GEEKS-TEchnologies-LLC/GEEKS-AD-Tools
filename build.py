@@ -176,6 +176,54 @@ class GEEKSBuildSystem:
             directory.mkdir(parents=True, exist_ok=True)
             self.log(f"Created directory: {directory}", "DEBUG", "cyan")
     
+    def install_system_dependencies(self):
+        """Install system-level dependencies required for Python packages"""
+        self.log("Installing system dependencies...", "INFO", "blue")
+        
+        if platform.system() == "Linux":
+            # Detect package manager and install required packages
+            package_managers = [
+                ("apt-get", [
+                    "sudo apt-get update",
+                    "sudo apt-get install -y python3-dev libldap2-dev libsasl2-dev libssl-dev"
+                ]),
+                ("yum", [
+                    "sudo yum install -y python3-devel openldap-devel cyrus-sasl-devel openssl-devel"
+                ]),
+                ("dnf", [
+                    "sudo dnf install -y python3-devel openldap-devel cyrus-sasl-devel openssl-devel"
+                ]),
+                ("zypper", [
+                    "sudo zypper install -y python3-devel openldap2-devel cyrus-sasl-devel libopenssl-devel"
+                ])
+            ]
+            
+            for manager, commands in package_managers:
+                result = self.run_command(f"which {manager}", check=False)
+                if result.returncode == 0:
+                    self.log(f"Using {manager} package manager", "INFO", "blue")
+                    for cmd in commands:
+                        self.log(f"Running: {cmd}", "DEBUG", "cyan")
+                        result = self.run_command(cmd, check=False)
+                        if result.returncode != 0:
+                            self.log(f"Warning: {cmd} failed", "WARNING", "yellow")
+                    break
+            else:
+                self.log("Could not detect package manager", "WARNING", "yellow")
+                self.log("Please install manually: python3-dev libldap2-dev libsasl2-dev libssl-dev", "WARNING", "yellow")
+        
+        elif platform.system() == "Windows":
+            # Windows doesn't need system dependencies for these packages
+            pass
+        else:
+            # macOS - use Homebrew if available
+            result = self.run_command("which brew", check=False)
+            if result.returncode == 0:
+                self.log("Using Homebrew package manager", "INFO", "blue")
+                self.run_command("brew install openldap cyrus-sasl openssl", check=False)
+            else:
+                self.log("Homebrew not found, please install manually", "WARNING", "yellow")
+    
     def install_dependencies(self):
         """Install Python dependencies"""
         self.log("Installing Python dependencies...", "INFO", "blue")
@@ -242,7 +290,31 @@ class GEEKSBuildSystem:
         requirements_file = self.project_root / "requirements.txt"
         if requirements_file.exists():
             self.log("Installing requirements...", "INFO", "blue")
-            self.run_command(f"{pip_cmd} install -r requirements.txt")
+            result = self.run_command(f"{pip_cmd} install -r requirements.txt", check=False)
+            if result.returncode != 0:
+                self.log("Failed to install requirements, trying individual packages...", "WARNING", "yellow")
+                
+                # Try installing packages individually, skipping problematic ones
+                packages = [
+                    "flask",
+                    "flask-mail", 
+                    "flask-login",
+                    "flask-wtf",
+                    "flask-bootstrap",
+                    "flask-sqlalchemy"
+                ]
+                
+                for package in packages:
+                    self.log(f"Installing {package}...", "INFO", "blue")
+                    self.run_command(f"{pip_cmd} install {package}", check=False)
+                
+                # Try python-ldap separately with more detailed error handling
+                self.log("Attempting to install python-ldap...", "INFO", "blue")
+                ldap_result = self.run_command(f"{pip_cmd} install python-ldap", check=False)
+                if ldap_result.returncode != 0:
+                    self.log("python-ldap installation failed. This may require system dependencies.", "WARNING", "yellow")
+                    self.log("Please install manually: sudo apt-get install python3-dev libldap2-dev libsasl2-dev libssl-dev", "WARNING", "yellow")
+                    self.log("Then run: pip install python-ldap", "WARNING", "yellow")
         else:
             self.log("requirements.txt not found, installing basic dependencies", "WARNING", "yellow")
             basic_deps = [
@@ -560,6 +632,9 @@ if __name__ == "__main__":
             # Create directories
             self.create_directories()
             
+            # Install system dependencies
+            self.install_system_dependencies()
+            
             # Install dependencies
             self.install_dependencies()
             
@@ -627,9 +702,13 @@ def main():
             # Update files from git repository
             builder.git_update()
             
+        elif command == "system-deps":
+            # Install system dependencies only
+            builder.install_system_dependencies()
+            
         else:
             print(f"Unknown command: {command}")
-            print("Available commands: clean, test, package, update")
+            print("Available commands: clean, test, package, update, system-deps")
     else:
         # Full build
         success = builder.build()
