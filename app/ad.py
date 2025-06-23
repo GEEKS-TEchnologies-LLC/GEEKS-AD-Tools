@@ -56,9 +56,19 @@ def search_users(query, **ad_args):
     
     with ad_connection(**ad_args) as conn:
         try:
-            conn.search(ad_args['base_dn'], filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName'])
+            conn.search(ad_args['base_dn'], filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass'])
+            
             for entry in conn.entries:
-                if 'user' in entry.objectClass.value: # Filter out non-user objects
+                # Check if this is a user object
+                is_user = False
+                if hasattr(entry, 'objectClass') and entry.objectClass.value:
+                    object_classes = entry.objectClass.value
+                    if isinstance(object_classes, list):
+                        is_user = 'user' in object_classes and 'computer' not in object_classes
+                    else:
+                        is_user = 'user' in str(object_classes) and 'computer' not in str(object_classes)
+                
+                if is_user:
                     users.append({
                         'dn': entry.distinguishedName.value,
                         'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
@@ -68,6 +78,7 @@ def search_users(query, **ad_args):
         except LDAPException as e:
             print(f"Error searching users: {e}") # Log error
             return []
+    
     return users
 
 def get_user_details(user_dn, **ad_args):
@@ -86,26 +97,55 @@ def get_user_details(user_dn, **ad_args):
             return safe_attributes
     return None
 
-def create_user(username, password, display_name, mail, **ad_args):
+def create_user(username, password, display_name, mail, target_ou=None, **ad_args):
     config = get_ad_config()
-    users_ou = config.get('users_ou') if config and config.get('users_ou') else ad_args['base_dn']
-    user_dn = f'CN={username},{users_ou}'
     
+    # Use specified OU or default to base_dn
+    if target_ou:
+        user_dn = f'CN={username},{target_ou}'
+    else:
+        user_dn = f'CN={username},{ad_args["base_dn"]}'
+    
+    # Try without userPrincipalName first
     attrs = {
         'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
         'sAMAccountName': username,
-        'userPrincipalName': mail,
-        'displayName': display_name,
-        'mail': mail,
-        'unicodePwd': f'"{password}"'.encode('utf-16-le'),
-        'userAccountControl': 512 # Enabled account
+        'displayName': display_name
     }
+    
+    # Only add mail attribute if email is provided
+    if mail and mail.strip():
+        attrs['mail'] = mail
 
     with ad_connection(**ad_args) as conn:
-        result = conn.add(user_dn, attributes=attrs)
-        if not result:
-            return False, f"Failed to create user: {conn.result['description']}"
-        return True, f'User {username} created successfully.'
+        try:
+            # Step 1: Create user with minimal attributes (no userPrincipalName)
+            result = conn.add(user_dn, attributes=attrs)
+            if not result:
+                error_msg = f"Failed to create user: {conn.result['description']}"
+                return False, error_msg
+            
+            # Step 2: Try to set password (optional)
+            if password:
+                try:
+                    password_result = set_password(user_dn, password, **ad_args)
+                    if not password_result[0]:
+                        print(f"Warning: Password set failed: {password_result[1]}")
+                except Exception as e:
+                    print(f"Warning: Password set exception: {str(e)}")
+            
+            # Step 3: Try to enable the account (optional)
+            try:
+                enable_result = enable_user(user_dn, **ad_args)
+                if not enable_result[0]:
+                    print(f"Warning: Account enable failed: {enable_result[1]}")
+            except Exception as e:
+                print(f"Warning: Account enable exception: {str(e)}")
+            
+            return True, f'User {username} created successfully.'
+        except Exception as e:
+            error_msg = f"Exception during user creation: {str(e)}"
+            return False, error_msg
 
 def update_user_attributes(user_dn, changes, **ad_args):
     with ad_connection(**ad_args) as conn:
@@ -256,8 +296,11 @@ def get_ad_statistics(**ad_args):
     }
     with ad_connection(**ad_args) as conn:
         # Get users
-        conn.search(ad_args['base_dn'], '(objectClass=user)', attributes=['userAccountControl'])
-        user_entries = [e for e in conn.entries if 'user' in e.objectClass.value and 'computer' not in e.objectClass.value]
+        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['userAccountControl', 'objectClass'])
+        user_entries = [
+            e for e in conn.entries
+            if hasattr(e, "objectClass") and e.objectClass.value and 'user' in e.objectClass.value and 'computer' not in e.objectClass.value
+        ]
         stats['total_users'] = len(user_entries)
         for entry in user_entries:
             uac = entry.userAccountControl.value if entry.userAccountControl else 0
@@ -265,15 +308,15 @@ def get_ad_statistics(**ad_args):
             if uac & 16: stats['locked_users'] += 1
         
         # Get computers
-        conn.search(ad_args['base_dn'], '(objectClass=computer)', attributes=['distinguishedName'])
+        conn.search(ad_args['base_dn'], '(objectClass=computer)', search_scope=ldap3.SUBTREE, attributes=['distinguishedName'])
         stats['total_computers'] = len(conn.entries)
 
         # Get groups
-        conn.search(ad_args['base_dn'], '(objectClass=group)', attributes=['distinguishedName'])
+        conn.search(ad_args['base_dn'], '(objectClass=group)', search_scope=ldap3.SUBTREE, attributes=['distinguishedName'])
         stats['total_groups'] = len(conn.entries)
         
         # Get OUs
-        conn.search(ad_args['base_dn'], '(objectClass=organizationalUnit)', attributes=['distinguishedName'])
+        conn.search(ad_args['base_dn'], '(objectClass=organizationalUnit)', search_scope=ldap3.SUBTREE, attributes=['distinguishedName'])
         stats['total_ous'] = len(conn.entries)
 
     return True, stats
@@ -317,102 +360,94 @@ def reset_user_password(user_dn, new_password, server, port, bind_dn, password):
     except LDAPException as e:
         return False, parse_ldap_error(e)
 
-def get_user_groups(user_dn, **ad_args):
-    ldap_url = f'ldap://{ad_args["server"]}:{ad_args["port"]}'
-    try:
-        with ad_connection(server=ldap_url, bind_user=ad_args['bind_dn'], bind_password=ad_args['bind_password']):
-            result = conn.search_s(user_dn, ldap3.SCOPE_BASE, attrlist=['memberOf'])
-            if not result:
-                return []
-            dn, attrs = result[0]
-            groups = [g.decode() for g in attrs.get('memberOf', [])]
-            return groups
-    except LDAPException:
-        return []
+# --- OU Management ---
 
-def get_ad_statistics(server, port, bind_dn, password, base_dn):
-    ldap_url = f'ldap://{server}:{port}'
-    try:
-        with ad_connection(server=ldap_url, bind_user=bind_dn, bind_password=password):
-            # Search for all users, computers, groups, and OUs, filtering out referrals
-            user_results = [r for r in conn.search_s(base_dn, ldap3.SCOPE_SUBTREE, '(objectClass=user)', ['userAccountControl', 'pwdLastSet']) if r[0] is not None]
-            computer_results = [r for r in conn.search_s(base_dn, ldap3.SCOPE_SUBTREE, '(objectClass=computer)', ['operatingSystem', 'userAccountControl']) if r[0] is not None]
-            group_results = [r for r in conn.search_s(base_dn, ldap3.SCOPE_SUBTREE, '(objectClass=group)', ['groupType']) if r[0] is not None]
-            ou_results = [r for r in conn.search_s(base_dn, ldap3.SCOPE_SUBTREE, '(objectClass=organizationalUnit)') if r[0] is not None]
-
-            total_users = len(user_results)
-            enabled_users = sum(1 for _, attrs in user_results if not int(attrs.get('userAccountControl', [b'0'])[0]) & 2)
-            locked_users = sum(1 for _, attrs in user_results if int(attrs.get('userAccountControl', [b'0'])[0]) & 16)
-            password_expired = sum(1 for _, attrs in user_results if attrs.get('pwdLastSet', [b'1'])[0] == b'0')
-            
-            total_computers = len(computer_results)
-            os_breakdown = {}
-            for _, attrs in computer_results:
-                os = attrs.get('operatingSystem', [b'Unknown'])[0].decode()
-                os_breakdown[os] = os_breakdown.get(os, 0) + 1
-                
-            total_groups = len(group_results)
-            group_types = {'Security': 0, 'Distribution': 0}
-            for _, attrs in group_results:
-                group_type = int(attrs.get('groupType', [b'0'])[0])
-                if group_type & 0x80000000: # Security group flag
-                    group_types['Security'] += 1
-                else:
-                    group_types['Distribution'] += 1
-
-            stats = {
-                'total_users': total_users,
-                'enabled_users': enabled_users,
-                'locked_users': locked_users,
-                'password_expired': password_expired,
-                'total_computers': total_computers,
-                'os_breakdown': os_breakdown,
-                'total_groups': total_groups,
-                'group_types': group_types,
-                'total_ous': len(ou_results),
-            }
-            return True, stats
-    except LDAPException as e:
-        return False, parse_ldap_error(e)
-
-def get_ad_health_status(server, port, bind_dn, password, base_dn):
-    """Get AD health status and alerts"""
-    ldap_url = f'ldap://{server}:{port}'
-    health = {
-        'status': 'healthy',
-        'alerts': [],
-        'warnings': []
+def create_ou(ou_name, parent_dn, **ad_args):
+    """Create a new Organizational Unit"""
+    ou_dn = f'OU={ou_name},{parent_dn}'
+    
+    attrs = {
+        'objectClass': ['top', 'organizationalUnit'],
+        'ou': ou_name
     }
     
-    try:
-        with ad_connection(server=ldap_url, bind_user=bind_dn, bind_password=password):
-            # Check for locked accounts
-            locked_filter = '(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=16))'
-            locked_count = len(conn.search_s(base_dn, ldap3.SCOPE_SUBTREE, locked_filter))
+    with ad_connection(**ad_args) as conn:
+        try:
+            result = conn.add(ou_dn, attributes=attrs)
+            if not result:
+                return False, f"Failed to create OU: {conn.result['description']}"
+            return True, f'OU {ou_name} created successfully.'
+        except Exception as e:
+            return False, f"Exception creating OU: {str(e)}"
+
+def list_ous(**ad_args):
+    """List all OUs in the domain"""
+    ous = []
+    with ad_connection(**ad_args) as conn:
+        try:
+            conn.search(ad_args['base_dn'], '(objectClass=organizationalUnit)', 
+                       search_scope=ldap3.SUBTREE, 
+                       attributes=['distinguishedName', 'ou', 'description'])
             
-            if locked_count > 10:
-                health['warnings'].append(f'{locked_count} user accounts are locked')
-            
-            # Check for expired passwords
-            expired_filter = '(&(objectClass=user)(pwdLastSet=0))'
-            expired_count = len(conn.search_s(base_dn, ldap3.SCOPE_SUBTREE, expired_filter))
-            
-            if expired_count > 5:
-                health['warnings'].append(f'{expired_count} user passwords have expired')
-            
-            # Check for disabled accounts
-            disabled_filter = '(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=2))'
-            disabled_count = len(conn.search_s(base_dn, ldap3.SCOPE_SUBTREE, disabled_filter))
-            
-            if disabled_count > 20:
-                health['warnings'].append(f'{disabled_count} user accounts are disabled')
-            
-            if health['warnings']:
-                health['status'] = 'warning'
-            
-            return True, health
-            
-    except LDAPException as e:
-        health['status'] = 'error'
-        health['alerts'].append(f'AD connection failed: {str(e)}')
-        return False, health 
+            for entry in conn.entries:
+                ous.append({
+                    'dn': entry.distinguishedName.value,
+                    'name': entry.ou.value if entry.ou else '',
+                    'description': entry.description.value if entry.description else ''
+                })
+        except Exception as e:
+            print(f"Error listing OUs: {e}")
+    
+    return sorted(ous, key=lambda x: x['dn'])
+
+def get_ou_tree(**ad_args):
+    """Get hierarchical OU structure"""
+    ous = list_ous(**ad_args)
+    
+    # Build tree structure
+    tree = []
+    ou_dict = {}
+    
+    for ou in ous:
+        ou_dict[ou['dn']] = ou
+        ou['children'] = []
+    
+    for ou in ous:
+        parent_dn = ','.join(ou['dn'].split(',')[1:])
+        if parent_dn in ou_dict:
+            ou_dict[parent_dn]['children'].append(ou)
+        else:
+            tree.append(ou)
+    
+    return tree
+
+def move_user_to_ou(user_dn, new_ou_dn, **ad_args):
+    """Move a user to a different OU"""
+    # Extract the CN from the user DN
+    cn_part = user_dn.split(',')[0]
+    new_user_dn = f'{cn_part},{new_ou_dn}'
+    
+    with ad_connection(**ad_args) as conn:
+        try:
+            result = conn.modify_dn(user_dn, cn_part, new_superior=new_ou_dn)
+            if not result:
+                return False, f"Failed to move user: {conn.result['description']}"
+            return True, f'User moved to {new_ou_dn} successfully.'
+        except Exception as e:
+            return False, f"Exception moving user: {str(e)}"
+
+def get_user_ou(user_dn, **ad_args):
+    """Get the OU where a user is located"""
+    with ad_connection(**ad_args) as conn:
+        try:
+            if conn.search(user_dn, '(objectclass=user)', search_scope=ldap3.BASE, attributes=['distinguishedName']):
+                dn_parts = conn.entries[0].distinguishedName.value.split(',')
+                # Find the OU part
+                for i, part in enumerate(dn_parts):
+                    if part.startswith('OU='):
+                        return ','.join(dn_parts[i:])
+                return ad_args['base_dn']
+        except Exception as e:
+            print(f"Error getting user OU: {e}")
+    
+    return ad_args['base_dn'] 
