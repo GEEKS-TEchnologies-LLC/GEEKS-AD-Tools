@@ -106,4 +106,7 @@ build_config.json
 build-universal.py
 build.bat
 build.py
-build.sh 
+build.sh
+
+# Development/test scripts
+dev_scripts/ 
