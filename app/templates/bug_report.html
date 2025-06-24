@@ -50,6 +50,15 @@
             background-color: #667eea;
             border-color: #667eea;
         }
+        /* Make all muted/secondary text white with a black outline for readability */
+        .text-muted, .text-secondary, .text-muted *, .text-secondary * {
+            color: #fff !important;
+            text-shadow:
+                -1px -1px 0 #000,
+                 1px -1px 0 #000,
+                -1px  1px 0 #000,
+                 1px  1px 0 #000;
+        }
     </style>
 </head>
 <body>

@@ -5,6 +5,7 @@ from ldap3.core.exceptions import LDAPException, LDAPBindError
 from collections import namedtuple, Counter
 from contextlib import contextmanager
 import datetime
+import re
 
 CONFIG_PATH = 'app/ad_config.json'
 
@@ -63,10 +64,22 @@ def test_ad_connection(**ad_args):
 
 def search_users(query, **ad_args):
     users = []
-    filter_str = f'(|(sAMAccountName=*{query}*)(displayName=*{query}*)(mail=*{query}*))' if query else '(objectClass=user)'
+    
+    # Escape LDAP special characters in the query
+    def escape_ldap_filter(value):
+        """Escape special characters in LDAP filter"""
+        if not value:
+            return value
+        # Escape: \ * ( ) \0 / + < > , ; " = and space
+        escaped = re.sub(r'([\\*()\x00/+\x00<>,;"= ])', r'\\\1', value)
+        return escaped
+    
+    escaped_query = escape_ldap_filter(query) if query else ''
+    filter_str = f'(|(sAMAccountName=*{escaped_query}*)(displayName=*{escaped_query}*)(mail=*{escaped_query}*))' if escaped_query else '(objectClass=user)'
     base_dn = _get_base_dn(ad_args)
     
     print(f"DEBUG: Search query: '{query}'")
+    print(f"DEBUG: Escaped query: '{escaped_query}'")
     print(f"DEBUG: Filter string: '{filter_str}'")
     print(f"DEBUG: Base DN: '{base_dn}'")
     

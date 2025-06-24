@@ -40,6 +40,15 @@
         .health-healthy { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); }
         .health-warning { background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); }
         .health-error { background: linear-gradient(135deg, #dc3545 0%, #e83e8c 100%); }
+        /* Make all muted/secondary text white with a black outline for readability */
+        .text-muted, .text-secondary, .text-muted *, .text-secondary * {
+            color: #fff !important;
+            text-shadow:
+                -1px -1px 0 #000,
+                 1px -1px 0 #000,
+                -1px  1px 0 #000,
+                 1px  1px 0 #000;
+        }
     </style>
 </head>
 <body>
