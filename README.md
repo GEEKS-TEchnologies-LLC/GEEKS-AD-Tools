@@ -349,10 +349,23 @@ The build system creates:
 
 ## Configuration
 
-1. **Initial Setup**: Visit `/setup` after installation
-2. **AD Configuration**: Enter domain controller details and credentials
-3. **Admin Groups**: Configure which AD groups have admin access
-4. **Credential Provider**: Deploy Windows Credential Provider via GPO
+### Active Directory Setup
+1. Copy `app/ad_config.example.json` to `app/ad_config.json`
+2. Fill in your real AD credentials:
+   - `ad_server`: Your AD server address
+   - `ad_user`: Admin username (usually admin@domain.com)
+   - `ad_password`: Admin password
+   - `ad_base_dn`: Your domain's base DN (e.g., DC=yourdomain,DC=com)
+
+### Branding Customization
+1. Copy `app/branding_config.example.json` to `app/branding_config.json`
+2. Customize your branding:
+   - `company_name`: Your company name
+   - `primary_color`: Primary brand color (hex code)
+   - `logo_url`: Path to your logo file
+   - `theme`: UI theme (dark/light/auto)
+
+**Note:** These config files are ignored by git and will never be pushed to GitHub for security.
 
 ## File Structure
 

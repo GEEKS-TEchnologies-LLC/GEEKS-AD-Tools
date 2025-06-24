@@ -1,0 +1,6 @@
+{
+  "ad_server": "ad.example.com",
+  "ad_user": "admin@example.com",
+  "ad_password": "YOUR_AD_PASSWORD_HERE",
+  "ad_base_dn": "DC=example,DC=com"
+} 

@@ -26,20 +26,33 @@ venv/
 env/
 ENV/
 
-# Database
+# Database files (but keep directories)
 *.db
 *.sqlite
+*.sqlite3
+app/database.db
+app/ad_config.json
 
-# Logs
+# Logs (but keep directories)
 *.log
-app/logs/
+app/logs/*.log
+bug_reports/*.json
 
 # Configuration
 config.json
 .env
 
-# Bug Reports
-bug_reports/
+# Instance folder contents (but keep directory)
+instance/*
+!instance/.gitkeep
+
+# Bug Reports directory contents (but keep directory)
+bug_reports/*
+!bug_reports/.gitkeep
+
+# Logs directory contents (but keep directory)
+app/logs/*
+!app/logs/.gitkeep
 
 # IDE
 .vscode/
@@ -69,14 +82,6 @@ venv/
 instance/
 .web-env/
 
-# Database
-app/database.db
-app/ad_config.json
-
-# Logs
-app/logs/*.log
-bug_reports/*.json
-
 # Build artifacts
 build/
 dist/
@@ -85,7 +90,6 @@ dist/
 # Environment/Secrets
 .env
 *.env
-app/ad_config.json
 
 # Migrations (keep scripts, ignore SQLite DBs)
 migrations/*.db
