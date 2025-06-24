@@ -253,7 +253,20 @@
             background: rgba(255,255,255,0.1);
         }
         .table tbody td {
-            border-color: rgba(255,255,255,0.1);
+            color: #ffd700;
+            background: none;
+            -webkit-background-clip: initial;
+            -webkit-text-fill-color: initial;
+            background-clip: initial;
+            text-shadow: none !important;
+        }
+        .table tfoot th {
+            color: #ffd700;
+            background: none;
+            -webkit-background-clip: initial;
+            -webkit-text-fill-color: initial;
+            background-clip: initial;
+            text-shadow: none !important;
         }
         .pagination .page-link {
             background: rgba(255,255,255,0.1);
@@ -321,11 +334,8 @@
                 -1px  1px 0 #000,
                  1px  1px 0 #000;
         }
-        /* Branding color/gradient for main title and user table */
-        .main-content h1,
-        .table thead th,
-        .table tbody td,
-        .table tfoot th {
+        /* Branding color/gradient for main title only */
+        .main-content h1 {
             background: linear-gradient(90deg, #ffd700, #ffb347);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -335,9 +345,16 @@
         }
         /* Remove outline from table headers/cells if previously applied */
         .table thead th,
-        .table tbody td,
         .table tfoot th {
             text-shadow: none !important;
+        }
+        /* Ensure .text-muted in user table matches column color */
+        .table tbody td .text-muted {
+            color: #ffd700 !important;
+            text-shadow: none !important;
+            -webkit-background-clip: initial;
+            -webkit-text-fill-color: initial;
+            background-clip: initial;
         }
     </style>
 </head>

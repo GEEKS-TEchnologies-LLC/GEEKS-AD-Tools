@@ -8,81 +8,143 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #181818;
             min-height: 100vh;
-            padding: 20px;
+            padding: 0;
         }
         .main-container {
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
-            padding: 2rem;
-            margin: 2rem auto;
+            background: none;
+            border-radius: 0;
+            box-shadow: none;
+            padding: 2rem 0;
+            margin: 0 auto;
             max-width: 1400px;
         }
+        .glass-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffd700;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
+        }
         .btn-custom {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
             border: none;
-            color: white;
+            color: #000;
             padding: 10px 20px;
             border-radius: 25px;
             margin: 5px;
             transition: all 0.3s ease;
+            font-weight: 600;
         }
         .btn-custom:hover {
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-            color: white;
+            box-shadow: 0 5px 15px rgba(255, 215, 0, 0.3);
+            color: #000;
         }
-        .card-custom {
-            border: none;
-            border-radius: 15px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        .card-header, .glass-card .card-header {
+            background: rgba(0,0,0,0.25);
+            border-bottom: 1px solid rgba(255,255,255,0.12);
+            border-radius: 18px 18px 0 0;
         }
-        .card-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 15px 15px 0 0 !important;
-        }
-        .card-title-custom {
-            margin: 0;
-            color: white;
+        .card-title-custom, .glass-card .card-header h5, .glass-card .card-header h6 {
+            color: #fff !important;
+            text-shadow:
+                -1px -1px 0 #000,
+                 1px -1px 0 #000,
+                -1px  1px 0 #000,
+                 1px  1px 0 #000;
         }
         .user-avatar-large {
             font-size: 4rem;
-            color: #667eea;
+            color: #ffd700;
         }
         .status-badge {
             font-size: 0.9rem;
             padding: 0.5rem 1rem;
         }
+        /* Branding for main title */
+        .main-content h1 {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: #ffd700;
+            text-shadow: none !important;
+        }
+        /* Tabs glassmorphism and branding */
+        .nav-tabs {
+            background: rgba(0,0,0,0.25);
+            border-bottom: 1px solid rgba(255,215,0,0.3);
+            border-radius: 18px 18px 0 0;
+            margin-bottom: 0;
+            padding: 0.5rem 1rem 0 1rem;
+        }
         .nav-tabs .nav-link {
             border: none;
-            color: #333;
-            background-color: #f8f9fa;
+            color: #ffd700;
+            background: transparent;
             border-radius: 10px 10px 0 0;
             margin-right: 5px;
             padding: 10px 20px;
             font-weight: 500;
+            transition: background 0.2s, color 0.2s;
         }
         .nav-tabs .nav-link:hover {
-            background-color: #e9ecef;
-            color: #333;
+            background: rgba(255, 215, 0, 0.1);
+            color: #fff;
         }
         .nav-tabs .nav-link.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            color: #222;
             border: none;
-            font-weight: 600;
+            font-weight: 700;
+            box-shadow: 0 2px 8px rgba(255, 215, 0, 0.15);
         }
         .form-control {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.3);
             border-radius: 10px;
-            border: 2px solid #e9ecef;
+            color: #ffd700;
             padding: 12px 15px;
         }
         .form-control:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+            background: rgba(255,255,255,0.15);
+            border-color: #ffd700;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25);
+            color: #ffd700;
+        }
+        .form-control::placeholder {
+            color: rgba(255, 215, 0, 0.7);
+        }
+        .list-group-item {
+            background: rgba(255,255,255,0.05);
+            color: #ffd700;
+            border: none;
+        }
+        .list-group-item .badge {
+            background: #ffd700;
+            color: #222;
+        }
+        .alert {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #ffd700;
         }
         /* Make all muted/secondary text white with a black outline for readability */
         .text-muted, .text-secondary, .text-muted *, .text-secondary * {
@@ -93,15 +155,10 @@
                 -1px  1px 0 #000,
                  1px  1px 0 #000;
         }
-        /* Widget/card titles: white text with black outline for readability */
-        .card-header,
-        .card-title-custom {
-            color: #fff !important;
-            text-shadow:
-                -1px -1px 0 #000,
-                 1px -1px 0 #000,
-                -1px  1px 0 #000,
-                 1px  1px 0 #000;
+        /* Ensure .text-muted in lists matches gold */
+        .list-group-item .text-muted {
+            color: #ffd700 !important;
+            text-shadow: none !important;
         }
     </style>
 </head>
@@ -127,12 +184,12 @@
         
         <div class="row">
             <div class="col-md-3">
-                <div class="card card-custom">
+                <div class="glass-card">
                     <div class="card-body text-center">
                         <div class="user-avatar-large mb-3">
                             <i class="fas fa-user-circle"></i>
                         </div>
-                        <h4>{{ user.displayName[0] if user.displayName else 'N/A' }}</h4>
+                        <h4 class="card-title-custom">{{ user.displayName[0] if user.displayName else 'N/A' }}</h4>
                         <p class="text-muted">{{ user.sAMAccountName[0] if user.sAMAccountName else 'N/A' }}</p>
                         {% if is_disabled %}
                             <span class="badge bg-danger status-badge">Disabled</span>
@@ -143,8 +200,8 @@
                         {% endif %}
                     </div>
                 </div>
-                <div class="card card-custom mt-3">
-                    <div class="card-header">
+                <div class="glass-card mt-3">
+                    <div class="card-header bg-dark text-white">
                         <h5 class="card-title-custom"><i class="fas fa-unlock-alt me-2"></i>Security Actions</h5>
                     </div>
                     <div class="card-body">
@@ -172,8 +229,8 @@
             </div>
 
             <div class="col-md-9">
-                <div class="card card-custom">
-                    <div class="card-header">
+                <div class="glass-card">
+                    <div class="card-header bg-dark text-white">
                         <ul class="nav nav-tabs card-header-tabs" id="user-details-tabs" role="tablist">
                             <li class="nav-item" role="presentation"><button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general" type="button" role="tab">General</button></li>
                             <li class="nav-item" role="presentation"><button class="nav-link" id="address-tab" data-bs-toggle="tab" data-bs-target="#address" type="button" role="tab">Address</button></li>
@@ -183,7 +240,8 @@
                         </ul>
                     </div>
                     <div class="card-body">
-                        <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}">
+                        <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}" id="userAttributesForm">
+                            <input type="hidden" name="update_attributes" value="1">
                             <div class="tab-content" id="user-details-content">
                                 <!-- General Tab -->
                                 <div class="tab-pane fade show active" id="general" role="tabpanel">
@@ -202,46 +260,6 @@
                                         <div class="col-md-6 mb-3"><label class="form-label">Email</label><input type="email" class="form-control" name="mail" value="{{ user.mail[0] if user.mail }}"></div>
                                     </div>
                                     <div class="mb-3"><label class="form-label">Web Page</label><input type="text" class="form-control" name="wWWHomePage" value="{{ user.wWWHomePage[0] if user.wWWHomePage }}"></div>
-                                    <div class="row mt-4">
-                                        <div class="col-md-6">
-                                            <div class="card card-custom mb-3">
-                                                <div class="card-header"><i class="fas fa-users"></i> Group Types</div>
-                                                <div class="card-body">
-                                                    {% if group_type_counts %}
-                                                    <ul class="list-group">
-                                                        {% for type, count in group_type_counts.items() %}
-                                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                                            {{ type }}
-                                                            <span class="badge bg-primary rounded-pill">{{ count }}</span>
-                                                        </li>
-                                                        {% endfor %}
-                                                    </ul>
-                                                    {% else %}
-                                                    <div class="text-muted">No group type data available.</div>
-                                                    {% endif %}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="card card-custom mb-3">
-                                                <div class="card-header"><i class="fas fa-desktop"></i> OS Breakdown</div>
-                                                <div class="card-body">
-                                                    {% if os_breakdown %}
-                                                    <ul class="list-group">
-                                                        {% for os, count in os_breakdown.items() %}
-                                                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                                                            {{ os }}
-                                                            <span class="badge bg-info rounded-pill">{{ count }}</span>
-                                                        </li>
-                                                        {% endfor %}
-                                                    </ul>
-                                                    {% else %}
-                                                    <div class="text-muted">No OS data available.</div>
-                                                    {% endif %}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
                                 </div>
 
                                 <!-- Address Tab -->
@@ -264,7 +282,9 @@
                                     <div class="mb-3"><label class="form-label">Job Title</label><input type="text" class="form-control" name="title" value="{{ user.title[0] if user.title }}"></div>
                                     <div class="mb-3"><label class="form-label">Department</label><input type="text" class="form-control" name="department" value="{{ user.department[0] if user.department }}"></div>
                                     <div class="mb-3"><label class="form-label">Company</label><input type="text" class="form-control" name="company" value="{{ user.company[0] if user.company }}"></div>
-                                    <div class="mb-3"><label class="form-label">Manager</label><input type="text" class="form-control" name="manager" value="{{ user.manager[0] if user.manager }}" disabled></div>
+                                    <div class="mb-3"><label class="form-label">Manager</label>
+                                        <input type="text" class="form-control" value="{{ manager_display_name if manager_display_name else (user.manager[0] if user.manager else '') }}" disabled style="color: #ffd700; background: rgba(255,255,255,0.08); border: none; font-weight: 600;">
+                                    </div>
                                 </div>
 
                                 <!-- Account Tab -->
@@ -287,10 +307,9 @@
                                         {% for group in user_groups %}
                                             <div class="list-group-item d-flex justify-content-between align-items-center">
                                                 <span><i class="fas fa-users me-2"></i>{{ group.split(',')[0].replace('CN=', '') }}</span>
-                                                <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}" class="d-inline">
-                                                    <input type="hidden" name="group_dn" value="{{ group }}">
-                                                    <button type="submit" name="action" value="remove_from_group" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash-alt"></i></button>
-                                                </form>
+                                                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeFromGroup('{{ group }}')">
+                                                    <i class="fas fa-trash-alt"></i>
+                                                </button>
                                             </div>
                                         {% else %}
                                             <div class="list-group-item">User is not a member of any groups.</div>
@@ -299,24 +318,26 @@
 
                                     <hr>
                                     <h5 class="mb-3">Add to Group</h5>
-                                    <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}">
-                                        <div class="input-group">
-                                            <select class="form-select" name="group_dn">
-                                                {% set user_group_dns = user_groups | map('lower') | list %}
-                                                {% for group in all_groups %}
-                                                    {% if group.dn.lower() not in user_group_dns %}
-                                                        <option value="{{ group.dn }}">{{ group.name }}</option>
-                                                    {% endif %}
-                                                {% endfor %}
-                                            </select>
-                                            <button type="submit" name="action" value="add_to_group" class="btn btn-custom"><i class="fas fa-plus me-2"></i>Add</button>
-                                        </div>
-                                    </form>
+                                    <div class="input-group">
+                                        <select class="form-select" id="groupSelect">
+                                            {% set user_group_dns = user_groups | map('lower') | list %}
+                                            {% for group in all_groups %}
+                                                {% if group.dn.lower() not in user_group_dns %}
+                                                    <option value="{{ group.dn }}">{{ group.name }}</option>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </select>
+                                        <button type="button" class="btn btn-custom" onclick="addToGroup()">
+                                            <i class="fas fa-plus me-2"></i>Add
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
                             <div class="mt-4 text-end">
-                                <button type="submit" name="update_attributes" class="btn btn-primary btn-lg"><i class="fas fa-save me-2"></i>Save Changes</button>
+                                <button type="submit" name="action" value="save_attributes" class="btn btn-primary btn-lg" id="saveChangesBtn">
+                                    <i class="fas fa-save me-2"></i>Save Changes
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -350,5 +371,69 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Group management functions
+        function addToGroup() {
+            const groupSelect = document.getElementById('groupSelect');
+            const groupDn = groupSelect.value;
+            if (groupDn) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '{{ url_for("main.user_details", user_dn=user.distinguishedName[0]) }}';
+                
+                const actionInput = document.createElement('input');
+                actionInput.type = 'hidden';
+                actionInput.name = 'action';
+                actionInput.value = 'add_to_group';
+                
+                const groupInput = document.createElement('input');
+                groupInput.type = 'hidden';
+                groupInput.name = 'group_dn';
+                groupInput.value = groupDn;
+                
+                form.appendChild(actionInput);
+                form.appendChild(groupInput);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
+        
+        function removeFromGroup(groupDn) {
+            if (confirm('Are you sure you want to remove this user from the group?')) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '{{ url_for("main.user_details", user_dn=user.distinguishedName[0]) }}';
+                
+                const actionInput = document.createElement('input');
+                actionInput.type = 'hidden';
+                actionInput.name = 'action';
+                actionInput.value = 'remove_from_group';
+                
+                const groupInput = document.createElement('input');
+                groupInput.type = 'hidden';
+                groupInput.name = 'group_dn';
+                groupInput.value = groupDn;
+                
+                form.appendChild(actionInput);
+                form.appendChild(groupInput);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
+        
+        // Form submission handling
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('userAttributesForm');
+            const saveBtn = document.getElementById('saveChangesBtn');
+            
+            if (form && saveBtn) {
+                form.addEventListener('submit', function(e) {
+                    // Show loading state
+                    saveBtn.disabled = true;
+                    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Saving...';
+                });
+            }
+        });
+    </script>
 </body>
 </html> 

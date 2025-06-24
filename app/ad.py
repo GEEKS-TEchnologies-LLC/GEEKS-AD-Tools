@@ -100,29 +100,21 @@ def search_users(query, **ad_args):
                         is_user = 'user' in str(object_classes) and 'computer' not in str(object_classes)
                 
                 if is_user:
-                    # Parse OU from DN - show path from user up 2 levels (immediate parent → parent's parent)
                     dn_parts = entry.distinguishedName.value.split(',')
                     ou_parts = [part[3:] for part in dn_parts if part.startswith('OU=')]
-                    
-                    # Show path from user up 2 levels (immediate parent → parent's parent)
-                    if ou_parts:
-                        if len(ou_parts) >= 2:
-                            # Take the last 2 OUs and reverse them to show immediate parent first
-                            immediate_parent = ou_parts[-1]  # Last OU (immediate parent)
-                            parent_parent = ou_parts[-2]     # Second to last OU (parent's parent)
-                            ou = f'{immediate_parent} → {parent_parent}'
-                        else:
-                            # Only one OU, show it
-                            ou = ou_parts[0]
+                    if 'Sunray Users' in ou_parts:
+                        idx = ou_parts.index('Sunray Users')
+                        # Take Sunray Users and all OUs to the right (closer to the user), reverse for left-to-right
+                        display_ous = list(reversed(ou_parts[:idx+1]))
+                        ou_display = ' → '.join(display_ous)
                     else:
-                        ou = 'Domain Root'
-                    
+                        ou_display = ' → '.join(reversed(ou_parts)) if ou_parts else 'Domain Root'
                     users.append({
                         'dn': entry.distinguishedName.value,
                         'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
                         'displayName': entry.displayName.value if entry.displayName else '',
                         'mail': entry.mail.value if entry.mail else '',
-                        'ou': ou
+                        'ou': ou_display
                     })
             
             print(f"DEBUG: Found {len(users)} user objects")
@@ -200,11 +192,50 @@ def create_user(username, password, display_name, mail, target_ou=None, **ad_arg
 
 def update_user_attributes(user_dn, changes, **ad_args):
     with ad_connection(**ad_args) as conn:
-        ldap_changes = {key: [(ldap3.MODIFY_REPLACE, [value])] if value else [(ldap3.MODIFY_DELETE, [])] for key, value in changes.items()}
-        result = conn.modify(user_dn, ldap_changes)
-        if not result:
-            return False, f"Failed to update user: {conn.result['description']}"
-        return True, "User updated successfully."
+        # Filter out None values but allow empty strings for clearing fields
+        valid_changes = {}
+        for key, value in changes.items():
+            if value is not None:  # Allow empty strings to clear fields
+                valid_changes[key] = value.strip() if isinstance(value, str) else value
+        
+        if not valid_changes:
+            return True, "No changes to update"
+        
+        print(f"DEBUG: Updating user {user_dn} with changes: {valid_changes}")
+        
+        # First, get the current user attributes to see what exists
+        if conn.search(user_dn, '(objectClass=user)', search_scope=ldap3.BASE, attributes=list(valid_changes.keys())):
+            current_attrs = conn.entries[0]
+        else:
+            return False, "Could not retrieve current user attributes"
+        
+        # Create LDAP changes dictionary - only REPLACE operations for valid values
+        ldap_changes = {}
+        for key, value in valid_changes.items():
+            if value == "":  # Empty string - only delete if attribute exists
+                if hasattr(current_attrs, key) and current_attrs[key]:
+                    ldap_changes[key] = [(ldap3.MODIFY_DELETE, [])]
+            else:  # Non-empty value - replace the attribute
+                ldap_changes[key] = [(ldap3.MODIFY_REPLACE, [value])]
+        
+        if not ldap_changes:
+            return True, "No changes to update"
+        
+        print(f"DEBUG: LDAP changes: {ldap_changes}")
+        
+        try:
+            result = conn.modify(user_dn, ldap_changes)
+            if not result:
+                error_msg = f"Failed to update user: {conn.result['description']}"
+                print(f"DEBUG: Update failed: {error_msg}")
+                return False, error_msg
+            
+            print(f"DEBUG: Update successful")
+            return True, "User updated successfully."
+        except Exception as e:
+            error_msg = f"Exception during update: {str(e)}"
+            print(f"DEBUG: Update exception: {error_msg}")
+            return False, error_msg
 
 # --- User Account Control ---
 
@@ -575,13 +606,21 @@ def get_group_types_for_user(user_groups, **ad_args):
         -2147483640: 'Universal Distribution',
     }
     type_counts = Counter()
+    from ldap3.core.exceptions import LDAPInvalidDnError
     with ad_connection(**ad_args) as conn:
         for group_dn in user_groups:
-            if conn.search(group_dn, '(objectClass=group)', attributes=['groupType']):
-                entry = conn.entries[0]
-                group_type_val = entry.groupType.value if hasattr(entry, 'groupType') and entry.groupType else None
-                group_type_str = group_type_map.get(group_type_val, str(group_type_val) if group_type_val else 'Unknown')
-                type_counts[group_type_str] += 1
+            if not group_dn or '=' not in group_dn:
+                continue  # Skip invalid/empty DNs
+            try:
+                if conn.search(group_dn, '(objectClass=group)', attributes=['groupType']):
+                    entry = conn.entries[0]
+                    group_type_val = entry.groupType.value if hasattr(entry, 'groupType') and entry.groupType else None
+                    group_type_str = group_type_map.get(group_type_val, str(group_type_val) if group_type_val else 'Unknown')
+                    type_counts[group_type_str] += 1
+            except LDAPInvalidDnError:
+                continue  # Skip invalid DNs
+            except Exception:
+                continue  # Skip any other LDAP errors
     return dict(type_counts)
 
 def get_client_os_breakdown(**ad_args):
