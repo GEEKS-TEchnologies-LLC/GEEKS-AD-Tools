@@ -410,6 +410,8 @@ def user_search():
     end = start + per_page
     users_page = users[start:end]
     
+    print(f"DEBUG: page={page}, start={start}, end={end}, users_page_len={len(users_page)}, total_users={total_users}")
+    
     # Get OUs for move user functionality
     ous = list_ous(**ad_args)
     
@@ -430,6 +432,9 @@ def user_search():
 @login_required
 @admin_required
 def user_details(user_dn):
+    print(f"DEBUG: user_details called with method: {request.method}")
+    print(f"DEBUG: user_dn: {user_dn}")
+    
     config = get_ad_config()
     if not config:
         flash('AD not configured. Please complete setup first.', 'warning')
@@ -444,28 +449,17 @@ def user_details(user_dn):
     }
 
     if request.method == 'POST':
+        print("DEBUG: Received POST to user_details for", user_dn)
+        print("DEBUG: All form data:", dict(request.form))
+        print("DEBUG: All request data:", dict(request.values))
         action = request.form.get('action')
+        print("DEBUG: Action:", action)
         
-        # Actions that don't depend on user details form
-        if action == 'add_to_group':
-            group_dn = request.form.get('group_dn')
-            ok, msg = add_user_to_group(user_dn, group_dn, **ad_args)
-            if ok and "already a member" in msg:
-                flash(msg, 'warning')
-            else:
-                flash(msg, 'success' if ok else 'danger')
-            return redirect(url_for('main.user_details', user_dn=user_dn))
-        elif action == 'remove_from_group':
-            group_dn = request.form.get('group_dn')
-            ok, msg = remove_user_from_group(user_dn, group_dn, **ad_args)
-            if ok and "not a member" in msg:
-                flash(msg, 'warning')
-            else:
-                flash(msg, 'success' if ok else 'danger')
-            return redirect(url_for('main.user_details', user_dn=user_dn))
-
-        # Handle user attribute updates from the main form
-        if 'update_attributes' in request.form:
+        # Handle user attribute updates from the main form (Save Changes button)
+        if action == 'save_attributes' or 'update_attributes' in request.form:
+            print("DEBUG: Processing save_attributes/update_attributes request")
+            print("DEBUG: All form data:", dict(request.form))
+            
             # Collect attributes from form
             attributes_to_update = {
                 'givenName': request.form.get('givenName'),
@@ -487,10 +481,34 @@ def user_details(user_dn):
                 'postalCode': request.form.get('postalCode'),
                 'co': request.form.get('co'),
             }
+            
+            # Filter out None values and show what we're actually updating
+            filtered_attributes = {k: v for k, v in attributes_to_update.items() if v is not None}
+            print("DEBUG: Filtered attributes to update:", filtered_attributes)
+            
+            print("DEBUG: save_attributes POST", attributes_to_update)
             ok, msg = update_user_attributes(user_dn, attributes_to_update, **ad_args)
+            print("DEBUG: update_user_attributes result", ok, msg)
             flash(msg, 'success' if ok else 'danger')
+            return redirect(url_for('main.user_details', user_dn=user_dn))
         
-        # Handle other actions like password reset, enable/disable, etc.
+        # Actions that don't depend on user details form
+        elif action == 'add_to_group':
+            group_dn = request.form.get('group_dn')
+            ok, msg = add_user_to_group(user_dn, group_dn, **ad_args)
+            if ok and "already a member" in msg:
+                flash(msg, 'warning')
+            else:
+                flash(msg, 'success' if ok else 'danger')
+            return redirect(url_for('main.user_details', user_dn=user_dn))
+        elif action == 'remove_from_group':
+            group_dn = request.form.get('group_dn')
+            ok, msg = remove_user_from_group(user_dn, group_dn, **ad_args)
+            if ok and "not a member" in msg:
+                flash(msg, 'warning')
+            else:
+                flash(msg, 'success' if ok else 'danger')
+            return redirect(url_for('main.user_details', user_dn=user_dn))
         elif action == 'reset_password':
             new_password = request.form.get('new_password')
             ok, msg = ad_set_password(user_dn, new_password, **ad_args)
@@ -514,15 +532,30 @@ def user_details(user_dn):
                 return redirect(url_for('main.user_search'))
             else:
                 flash(msg, 'danger')
+        else:
+            print("DEBUG: No matching action found for:", action)
+            flash('Unknown action', 'warning')
 
         return redirect(url_for('main.user_details', user_dn=user_dn))
 
     # GET request logic
+    print("DEBUG: Processing GET request for user_details")
     user = get_user_details(user_dn, **ad_args)
     if not user:
         flash(f"User with DN '{user_dn}' not found.", 'danger')
         return redirect(url_for('main.user_search'))
-        
+    
+    # Fetch manager display name if possible
+    manager_display_name = None
+    manager_dn = user.get('manager', [None])[0] if user.get('manager') else None
+    if manager_dn:
+        from .ad import ad_connection
+        with ad_connection(**ad_args) as conn:
+            if conn.search(manager_dn, '(objectClass=user)', search_scope=ldap3.BASE, attributes=['displayName']):
+                entry = conn.entries[0]
+                if hasattr(entry, 'displayName') and entry.displayName:
+                    manager_display_name = entry.displayName.value
+
     user_groups = get_user_groups(user_dn, **ad_args)
     all_groups = get_all_groups(**ad_args)
     
@@ -542,7 +575,8 @@ def user_details(user_dn):
         is_disabled=is_disabled,
         is_locked=is_locked,
         group_type_counts=group_type_counts,
-        os_breakdown=os_breakdown
+        os_breakdown=os_breakdown,
+        manager_display_name=manager_display_name
     )
 
 @main.route('/admin/create_user', methods=['GET', 'POST'])
@@ -1306,90 +1340,55 @@ def drilldown_users():
 @main.route('/admin/settings', methods=['GET', 'POST'])
 @admin_required
 def admin_settings():
-    """Admin settings page with system setup, customization, and admin groups."""
+    config = get_ad_config()
+    branding = get_branding_config()
+    admin_groups = get_admin_groups()
+    
     if request.method == 'POST':
-        action = request.form.get('action')
+        # Handle branding updates
+        if 'update_branding' in request.form:
+            branding_data = {
+                'company_name': request.form.get('company_name', 'GEEKS-AD-Plus'),
+                'logo_url': request.form.get('logo_url', ''),
+                'primary_color': request.form.get('primary_color', '#ffd700'),
+                'secondary_color': request.form.get('secondary_color', '#ffb347'),
+                'custom_css': request.form.get('custom_css', '')
+            }
+            save_branding_config(branding_data)
+            flash('Branding settings updated successfully!', 'success')
+            return redirect(url_for('main.admin_settings'))
         
-        if action == 'save_ad_config':
-            # Save AD configuration
-            ad_config = {
-                'ad_server': request.form.get('ad_server'),
-                'ad_user': request.form.get('ad_user'),
-                'ad_password': request.form.get('ad_password'),
-                'ad_base_dn': request.form.get('ad_base_dn')
-            }
-            
-            # Save to file (in production, use secure storage)
-            try:
-                with open('app/ad_config.json', 'w') as f:
-                    json.dump(ad_config, f, indent=2)
-                flash('AD configuration saved successfully!', 'success')
-            except Exception as e:
-                flash(f'Error saving AD configuration: {str(e)}', 'error')
-                
-        elif action == 'save_branding':
-            # Save branding configuration
-            branding = {
-                'company_name': request.form.get('company_name'),
-                'primary_color': request.form.get('primary_color'),
-                'logo_url': request.form.get('logo_url'),
-                'theme': request.form.get('theme')
-            }
-            
-            # Save to file (in production, use database)
-            try:
-                with open('app/branding_config.json', 'w') as f:
-                    json.dump(branding, f, indent=2)
-                flash('Branding configuration saved successfully!', 'success')
-            except Exception as e:
-                flash(f'Error saving branding: {str(e)}', 'error')
-                
-        elif action == 'add_admin_group':
-            # Add new admin group
-            group_name = request.form.get('group_name')
-            group_dn = request.form.get('group_dn')
-            
-            if group_name and group_dn:
-                # In production, save to database
-                flash(f'Admin group "{group_name}" added successfully!', 'success')
-            else:
-                flash('Please provide both group name and DN.', 'error')
-                
-        elif action == 'remove_admin_group':
-            # Remove admin group
-            group_id = request.form.get('group_id')
-            if group_id:
-                # In production, remove from database
-                flash('Admin group removed successfully!', 'success')
-    
-    # Load current configurations
-    ad_config = {}
-    try:
-        with open('app/ad_config.json', 'r') as f:
-            ad_config = json.load(f)
-    except FileNotFoundError:
-        pass
-    
-    branding = {
-        'company_name': 'Geeks Technologies',
-        'primary_color': '#ffd700',
-        'logo_url': '/static/img/geeks_logo.png',
-        'theme': 'dark'
-    }
-    try:
-        with open('app/branding_config.json', 'r') as f:
-            branding.update(json.load(f))
-    except FileNotFoundError:
-        pass
-    
-    # Mock admin groups (in production, load from database)
-    admin_groups = [
-        {'id': 1, 'name': 'Domain Admins', 'dn': 'CN=Domain Admins,CN=Users,DC=example,DC=com'},
-        {'id': 2, 'name': 'Enterprise Admins', 'dn': 'CN=Enterprise Admins,CN=Users,DC=example,DC=com'},
-        {'id': 3, 'name': 'Enterprise Admins', 'dn': 'CN=Enterprise Admins,CN=Users,DC=example,DC=com'}
-    ]
+        # Handle admin group updates
+        elif 'update_admin_groups' in request.form:
+            groups = request.form.get('admin_groups', '').split(',')
+            groups = [g.strip() for g in groups if g.strip()]
+            set_admin_groups(groups)
+            flash('Admin groups updated successfully!', 'success')
+            return redirect(url_for('main.admin_settings'))
     
     return render_template('admin_settings.html', 
-                         ad_config=ad_config, 
+                         config=config, 
                          branding=branding, 
-                         admin_groups=admin_groups) 
+                         admin_groups=admin_groups)
+
+@main.route('/test-form', methods=['GET', 'POST'])
+def test_form():
+    if request.method == 'POST':
+        print("DEBUG: Test form submitted")
+        print("DEBUG: Form data:", dict(request.form))
+        return f"Form submitted successfully! Data: {dict(request.form)}"
+    return '''
+    <html>
+    <body>
+        <h1>Test Form</h1>
+        <form method="POST">
+            <input type="text" name="test_field" value="test value">
+            <button type="submit">Submit Test</button>
+        </form>
+    </body>
+    </html>
+    '''
+
+@main.route('/test-user-details')
+def test_user_details():
+    return render_template('test_user_details.html') 
