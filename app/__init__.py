@@ -37,6 +37,17 @@ def create_app():
     login_manager.init_app(app)
     migrate.init_app(app, db)
 
+    # Database initialization with error handling
+    with app.app_context():
+        try:
+            # Create all tables if they don't exist
+            db.create_all()
+            app.logger.info('Database tables created successfully')
+        except Exception as e:
+            app.logger.warning(f'Database initialization warning: {e}')
+            # Continue without database if it's read-only or other issues
+            pass
+
     # Logging setup
     if not app.debug:
         if not os.path.exists('app/logs'):
@@ -54,9 +65,14 @@ def create_app():
     from .views import main as main_blueprint
     app.register_blueprint(main_blueprint)
 
-    return app 
+    return app
 
 @login_manager.user_loader
 def load_user(user_id):
     from .models import Admin
-    return Admin.query.get(int(user_id)) 
+    try:
+        return Admin.query.get(int(user_id))
+    except Exception as e:
+        # Handle database errors gracefully
+        logging.warning(f"Failed to load user {user_id}: {e}")
+        return None 

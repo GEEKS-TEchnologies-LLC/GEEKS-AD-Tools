@@ -42,101 +42,117 @@ def log_event(action, result='success', details=None, user=None, ip_address=None
         # Fallback to file logging if database fails
         import logging
         logging.error(f"Failed to log audit event: {e}")
+        # Don't re-raise the exception to prevent application crashes
+        # Just log the error and continue
 
-def log_login(username, result='success', details=None):
+def log_login(username, result, details=None):
     """Log login attempts"""
     log_event('login', result, details, username)
 
-def log_password_reset(username, result='success', details=None):
+def log_password_reset(username, result, details=None):
     """Log password reset attempts"""
     log_event('password_reset', result, details, username)
 
-def log_user_action(action, username, result='success', details=None):
+def log_user_action(action, username, result, details=None):
     """Log user management actions"""
     log_event(f'user_{action}', result, details, username)
 
-def log_admin_action(action, result='success', details=None):
+def log_admin_action(action, result, details=None):
     """Log admin actions"""
     log_event(f'admin_{action}', result, details)
 
-def log_system_event(action, result='success', details=None):
+def log_system_event(event, result, details=None):
     """Log system events"""
-    log_event(f'system_{action}', result, details, 'System')
+    log_event(f'system_{event}', result, details, user='System')
 
 def get_audit_logs(start_date=None, end_date=None, user=None, action=None, result=None, limit=100):
-    """Retrieve audit logs with filtering"""
-    query = AuditLog.query
-    
-    if start_date:
-        query = query.filter(AuditLog.timestamp >= start_date)
-    if end_date:
-        query = query.filter(AuditLog.timestamp <= end_date)
-    if user:
-        query = query.filter(AuditLog.user.like(f'%{user}%'))
-    if action:
-        query = query.filter(AuditLog.action.like(f'%{action}%'))
-    if result:
-        query = query.filter(AuditLog.result == result)
-    
-    return query.order_by(AuditLog.timestamp.desc()).limit(limit).all()
+    """Get audit logs with optional filtering"""
+    try:
+        query = AuditLog.query
+        
+        if start_date:
+            query = query.filter(AuditLog.timestamp >= start_date)
+        if end_date:
+            query = query.filter(AuditLog.timestamp <= end_date)
+        if user:
+            query = query.filter(AuditLog.user.like(f'%{user}%'))
+        if action:
+            query = query.filter(AuditLog.action.like(f'%{action}%'))
+        if result:
+            query = query.filter(AuditLog.result == result)
+        
+        return query.order_by(AuditLog.timestamp.desc()).limit(limit).all()
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to get audit logs: {e}")
+        return []
 
 def export_audit_logs_csv(start_date=None, end_date=None, user=None, action=None, result=None):
     """Export audit logs to CSV format"""
-    import csv
-    import io
-    
-    logs = get_audit_logs(start_date, end_date, user, action, result, limit=10000)
-    
-    output = io.StringIO()
-    writer = csv.writer(output)
-    
-    # Write header
-    writer.writerow(['Timestamp', 'User', 'Action', 'Details', 'Result', 'IP Address', 'User Agent'])
-    
-    # Write data
-    for log in logs:
-        writer.writerow([
-            log.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-            log.user,
-            log.action,
-            log.details,
-            log.result,
-            log.ip_address,
-            log.user_agent
-        ])
-    
-    return output.getvalue()
+    try:
+        logs = get_audit_logs(start_date, end_date, user, action, result, limit=10000)
+        
+        csv_data = "Timestamp,User,Action,Details,Result,IP Address,User Agent\n"
+        for log in logs:
+            details = log.details.replace('"', '""') if log.details else ''
+            csv_data += f'"{log.timestamp}","{log.user}","{log.action}","{details}","{log.result}","{log.ip_address}","{log.user_agent}"\n'
+        
+        return csv_data
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to export audit logs: {e}")
+        return ""
 
 def get_audit_stats(days=30):
-    """Get audit statistics for the dashboard"""
-    start_date = datetime.utcnow() - timedelta(days=days)
-    
-    # Total events
-    total_events = AuditLog.query.filter(AuditLog.timestamp >= start_date).count()
-    
-    # Events by result
-    success_events = AuditLog.query.filter(
-        AuditLog.timestamp >= start_date,
-        AuditLog.result == 'success'
-    ).count()
-    
-    failure_events = AuditLog.query.filter(
-        AuditLog.timestamp >= start_date,
-        AuditLog.result == 'failure'
-    ).count()
-    
-    # Top actions
-    from sqlalchemy import func
-    top_actions = db.session.query(
-        AuditLog.action,
-        func.count(AuditLog.id).label('count')
-    ).filter(
-        AuditLog.timestamp >= start_date
-    ).group_by(AuditLog.action).order_by(func.count(AuditLog.id).desc()).limit(5).all()
-    
-    return {
-        'total_events': total_events,
-        'success_events': success_events,
-        'failure_events': failure_events,
-        'top_actions': top_actions
-    } 
+    """Get audit statistics for the last N days"""
+    try:
+        from datetime import datetime, timedelta
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        # Get total events
+        total_events = AuditLog.query.filter(AuditLog.timestamp >= start_date).count()
+        
+        # Get events by result
+        success_events = AuditLog.query.filter(
+            AuditLog.timestamp >= start_date,
+            AuditLog.result == 'success'
+        ).count()
+        
+        failure_events = AuditLog.query.filter(
+            AuditLog.timestamp >= start_date,
+            AuditLog.result == 'failure'
+        ).count()
+        
+        error_events = AuditLog.query.filter(
+            AuditLog.timestamp >= start_date,
+            AuditLog.result == 'error'
+        ).count()
+        
+        # Get top actions
+        from sqlalchemy import func
+        top_actions = db.session.query(
+            AuditLog.action,
+            func.count(AuditLog.id).label('count')
+        ).filter(
+            AuditLog.timestamp >= start_date
+        ).group_by(AuditLog.action).order_by(
+            func.count(AuditLog.id).desc()
+        ).limit(5).all()
+        
+        return {
+            'total_events': total_events,
+            'success_events': success_events,
+            'failure_events': failure_events,
+            'error_events': error_events,
+            'top_actions': [(action, count) for action, count in top_actions]
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to get audit stats: {e}")
+        return {
+            'total_events': 0,
+            'success_events': 0,
+            'failure_events': 0,
+            'error_events': 0,
+            'top_actions': []
+        } 

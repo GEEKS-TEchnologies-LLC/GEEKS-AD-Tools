@@ -325,7 +325,7 @@
             <span class="status-dot green" title="AD Health"></span>
             <div class="user-dropdown" id="userDropdown">
                 <button class="user-dropdown-toggle" id="userDropdownToggle" type="button">
-                    <i class="fas fa-user-circle me-2"></i> <span class="d-none d-md-inline">{{ current_user.username if current_user else '' }}</span> <i class="fas fa-caret-down ms-1"></i>
+                    <i class="fas fa-user-circle me-2"></i> <span class="d-none d-md-inline">{{ current_user.username if current_user and current_user.is_authenticated else 'User' }}</span> <i class="fas fa-caret-down ms-1"></i>
                 </button>
                 <div class="user-dropdown-menu" id="userDropdownMenu">
                     <a href="/admin/profile"><i class="fas fa-id-badge me-2"></i> Profile</a>
