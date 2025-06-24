@@ -66,9 +66,15 @@ def search_users(query, **ad_args):
     filter_str = f'(|(sAMAccountName=*{query}*)(displayName=*{query}*)(mail=*{query}*))' if query else '(objectClass=user)'
     base_dn = _get_base_dn(ad_args)
     
+    print(f"DEBUG: Search query: '{query}'")
+    print(f"DEBUG: Filter string: '{filter_str}'")
+    print(f"DEBUG: Base DN: '{base_dn}'")
+    
     with ad_connection(**ad_args) as conn:
         try:
+            print(f"DEBUG: Starting LDAP search...")
             conn.search(base_dn, filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass'])
+            print(f"DEBUG: Found {len(conn.entries)} total entries")
             
             for entry in conn.entries:
                 # Check if this is a user object
@@ -105,6 +111,8 @@ def search_users(query, **ad_args):
                         'mail': entry.mail.value if entry.mail else '',
                         'ou': ou
                     })
+            
+            print(f"DEBUG: Found {len(users)} user objects")
         except LDAPException as e:
             print(f"Error searching users: {e}") # Log error
             return []
