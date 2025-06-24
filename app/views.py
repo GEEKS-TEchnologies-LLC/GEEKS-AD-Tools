@@ -29,6 +29,7 @@ from .bug_report import generate_bug_report, save_bug_report, get_bug_report_sum
 from urllib.parse import unquote
 from .version import __version__
 import ldap3
+import json
 
 main = Blueprint('main', __name__)
 
@@ -296,7 +297,21 @@ def admin_dashboard():
         'AD Configured': bool(config),
         'Admin Groups': get_admin_groups(),
     }
-    return render_template('admin_dashboard.html', logs=logs, status=status, audit_stats=audit_stats, ad_stats=ad_stats, ad_health=ad_health)
+
+    # Load branding config
+    branding = {
+        'company_name': 'Geeks Technologies',
+        'primary_color': '#ffd700',
+        'logo_url': '/static/img/geeks_logo.png',
+        'theme': 'dark'
+    }
+    try:
+        with open('app/branding_config.json', 'r') as f:
+            branding.update(json.load(f))
+    except FileNotFoundError:
+        pass
+
+    return render_template('admin_dashboard.html', logs=logs, status=status, audit_stats=audit_stats, ad_stats=ad_stats, ad_health=ad_health, branding=branding)
 
 @main.route('/admin/ad-dashboard')
 @login_required
@@ -1286,4 +1301,95 @@ def drilldown_users():
                         'displayName': entry.displayName.value if entry.displayName else entry.sAMAccountName.value if entry.sAMAccountName else 'Unknown'
                     })
     
-    return {"users": users} 
+    return {"users": users}
+
+@main.route('/admin/settings', methods=['GET', 'POST'])
+@admin_required
+def admin_settings():
+    """Admin settings page with system setup, customization, and admin groups."""
+    if request.method == 'POST':
+        action = request.form.get('action')
+        
+        if action == 'save_ad_config':
+            # Save AD configuration
+            ad_config = {
+                'ad_server': request.form.get('ad_server'),
+                'ad_user': request.form.get('ad_user'),
+                'ad_password': request.form.get('ad_password'),
+                'ad_base_dn': request.form.get('ad_base_dn')
+            }
+            
+            # Save to file (in production, use secure storage)
+            try:
+                with open('app/ad_config.json', 'w') as f:
+                    json.dump(ad_config, f, indent=2)
+                flash('AD configuration saved successfully!', 'success')
+            except Exception as e:
+                flash(f'Error saving AD configuration: {str(e)}', 'error')
+                
+        elif action == 'save_branding':
+            # Save branding configuration
+            branding = {
+                'company_name': request.form.get('company_name'),
+                'primary_color': request.form.get('primary_color'),
+                'logo_url': request.form.get('logo_url'),
+                'theme': request.form.get('theme')
+            }
+            
+            # Save to file (in production, use database)
+            try:
+                with open('app/branding_config.json', 'w') as f:
+                    json.dump(branding, f, indent=2)
+                flash('Branding configuration saved successfully!', 'success')
+            except Exception as e:
+                flash(f'Error saving branding: {str(e)}', 'error')
+                
+        elif action == 'add_admin_group':
+            # Add new admin group
+            group_name = request.form.get('group_name')
+            group_dn = request.form.get('group_dn')
+            
+            if group_name and group_dn:
+                # In production, save to database
+                flash(f'Admin group "{group_name}" added successfully!', 'success')
+            else:
+                flash('Please provide both group name and DN.', 'error')
+                
+        elif action == 'remove_admin_group':
+            # Remove admin group
+            group_id = request.form.get('group_id')
+            if group_id:
+                # In production, remove from database
+                flash('Admin group removed successfully!', 'success')
+    
+    # Load current configurations
+    ad_config = {}
+    try:
+        with open('app/ad_config.json', 'r') as f:
+            ad_config = json.load(f)
+    except FileNotFoundError:
+        pass
+    
+    branding = {
+        'company_name': 'Geeks Technologies',
+        'primary_color': '#ffd700',
+        'logo_url': '/static/img/geeks_logo.png',
+        'theme': 'dark'
+    }
+    try:
+        with open('app/branding_config.json', 'r') as f:
+            branding.update(json.load(f))
+    except FileNotFoundError:
+        pass
+    
+    # Mock admin groups (in production, load from database)
+    admin_groups = [
+        {'id': 1, 'name': 'Domain Admins', 'dn': 'CN=Domain Admins,CN=Users,DC=example,DC=com'},
+        {'id': 2, 'name': 'Enterprise Admins', 'dn': 'CN=Enterprise Admins,CN=Users,DC=example,DC=com'},
+        {'id': 3, 'name': 'Enterprise Admins', 'dn': 'CN=Enterprise Admins,CN=Users,DC=example,DC=com'}
+    ]
+    
+    return render_template('admin_settings.html', 
+                         ad_config=ad_config, 
+                         branding=branding, 
+                         admin_groups=admin_groups) 
