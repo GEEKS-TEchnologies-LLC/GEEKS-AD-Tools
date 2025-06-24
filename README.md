@@ -557,5 +557,23 @@ python3 get-ip.py
 make network-info
 ```
 
+## Dashboard & UI (2025)
+
+- **Modern Admin Dashboard**: Black/gold Geeks Technologies branding, responsive layout
+- **Collapsible Sidebar**: Left-justified icons/text when open, centered icons when collapsed
+- **Top Bar**: Always-visible logo, gold gradient text, AD health status light (right side), user dropdown (profile/logout)
+- **Stat Cards**: Total Users, Computers, Groups, OUs
+- **Interactive Charts**: User Status, Server OS, Client OS, User Types (with drilldown via Chart.js)
+- **Recent Log Reports**: Last 10 log lines in a dashboard card
+- **Quick Audit Results**: Audit stats (total, success, failure, top actions) in a dashboard card
+- **Settings Page**: For admin/config and branding (planned)
+- **Fully Responsive**: Bootstrap grid, mobile-friendly
+
+## Security & Sanitization for Open Source
+
+- **No secrets or credentials**: All `.env`, AD config, logs, bug reports, and instance data are deleted and ignored by `.gitignore`.
+- **Safe for GitHub**: You can now push this repo publicly without leaking sensitive data.
+- **How to keep it clean**: All sensitive runtime files are excluded by default. If you add new secrets/configs, add them to `.gitignore`.
+
 
 

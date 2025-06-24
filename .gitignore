@@ -80,4 +80,30 @@ bug_reports/*.json
 # Build artifacts
 build/
 dist/
-*.spec 
+*.spec
+
+# Environment/Secrets
+.env
+*.env
+app/ad_config.json
+
+# Migrations (keep scripts, ignore SQLite DBs)
+migrations/*.db
+
+# Flask/Instance
+*.db
+*.sqlite3
+
+# System/Editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Build
+build_config.json
+build-universal.py
+build.bat
+build.py
+build.sh 

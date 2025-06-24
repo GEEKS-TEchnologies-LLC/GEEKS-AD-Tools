@@ -1,190 +1,335 @@
-{% extends "base.html" %}
-
-{% block title %}User Details - {{ user.displayName[0] if user.displayName else 'N/A' }}{% endblock %}
-
-{% block content %}
-<div class="container-fluid mt-4">
-    <div class="row">
-        <div class="col-md-3">
-            <div class="card card-custom">
-                <div class="card-body text-center">
-                    <div class="user-avatar-large mb-3">
-                        <i class="fas fa-user-circle"></i>
-                    </div>
-                    <h4>{{ user.displayName[0] if user.displayName else 'N/A' }}</h4>
-                    <p class="text-muted">{{ user.sAMAccountName[0] if user.sAMAccountName else 'N/A' }}</p>
-                    {% if is_disabled %}
-                        <span class="badge bg-danger status-badge">Disabled</span>
-                    {% elif is_locked %}
-                        <span class="badge bg-warning status-badge">Locked</span>
-                    {% else %}
-                        <span class="badge bg-success status-badge">Enabled</span>
-                    {% endif %}
-                </div>
-            </div>
-            <div class="card card-custom mt-3">
-                <div class="card-header">
-                    <h5 class="card-title-custom"><i class="fas fa-unlock-alt me-2"></i>Security Actions</h5>
-                </div>
-                <div class="card-body">
-                    <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}" class="d-grid gap-2">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Details - {{ user.displayName[0] if user.displayName else 'N/A' }} - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .main-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            padding: 2rem;
+            margin: 2rem auto;
+            max-width: 1400px;
+        }
+        .btn-custom {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            margin: 5px;
+            transition: all 0.3s ease;
+        }
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            color: white;
+        }
+        .card-custom {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px 15px 0 0 !important;
+        }
+        .card-title-custom {
+            margin: 0;
+            color: white;
+        }
+        .user-avatar-large {
+            font-size: 4rem;
+            color: #667eea;
+        }
+        .status-badge {
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+        }
+        .nav-tabs .nav-link {
+            border: none;
+            color: #333;
+            background-color: #f8f9fa;
+            border-radius: 10px 10px 0 0;
+            margin-right: 5px;
+            padding: 10px 20px;
+            font-weight: 500;
+        }
+        .nav-tabs .nav-link:hover {
+            background-color: #e9ecef;
+            color: #333;
+        }
+        .nav-tabs .nav-link.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            font-weight: 600;
+        }
+        .form-control {
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+            padding: 12px 15px;
+        }
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-user text-primary"></i> User Details</h1>
+            <a href="/admin/users" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Users
+            </a>
+        </div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category in ['error', 'danger'] else 'warning' if category == 'warning' else 'success' if category == 'success' else category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card card-custom">
+                    <div class="card-body text-center">
+                        <div class="user-avatar-large mb-3">
+                            <i class="fas fa-user-circle"></i>
+                        </div>
+                        <h4>{{ user.displayName[0] if user.displayName else 'N/A' }}</h4>
+                        <p class="text-muted">{{ user.sAMAccountName[0] if user.sAMAccountName else 'N/A' }}</p>
                         {% if is_disabled %}
-                            <button type="submit" name="action" value="enable" class="btn btn-success"><i class="fas fa-check-circle me-2"></i>Enable User</button>
+                            <span class="badge bg-danger status-badge">Disabled</span>
+                        {% elif is_locked %}
+                            <span class="badge bg-warning status-badge">Locked</span>
                         {% else %}
-                            <button type="submit" name="action" value="disable" class="btn btn-warning"><i class="fas fa-ban me-2"></i>Disable User</button>
+                            <span class="badge bg-success status-badge">Enabled</span>
                         {% endif %}
-                        {% if is_locked %}
-                            <button type="submit" name="action" value="unlock" class="btn btn-info"><i class="fas fa-unlock me-2"></i>Unlock Account</button>
-                        {% endif %}
-                        <button type="button" class="btn btn-custom" data-bs-toggle="modal" data-bs-target="#resetPasswordModal">
-                            <i class="fas fa-key me-2"></i>Reset Password
-                        </button>
-                        <button type="submit" name="action" value="force_password_change" class="btn btn-custom">
-                            <i class="fas fa-history me-2"></i>Force Password Change
-                        </button>
-                        <button type="submit" name="action" value="delete" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this user? This cannot be undone.');">
-                            <i class="fas fa-trash-alt me-2"></i>Delete User
-                        </button>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-9">
-            <div class="card card-custom">
-                <div class="card-header">
-                    <ul class="nav nav-tabs card-header-tabs" id="user-details-tabs" role="tablist">
-                        <li class="nav-item" role="presentation"><button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general" type="button" role="tab">General</button></li>
-                        <li class="nav-item" role="presentation"><button class="nav-link" id="address-tab" data-bs-toggle="tab" data-bs-target="#address" type="button" role="tab">Address</button></li>
-                        <li class="nav-item" role="presentation"><button class="nav-link" id="organization-tab" data-bs-toggle="tab" data-bs-target="#organization" type="button" role="tab">Organization</button></li>
-                        <li class="nav-item" role="presentation"><button class="nav-link" id="account-tab" data-bs-toggle="tab" data-bs-target="#account" type="button" role="tab">Account</button></li>
-                        <li class="nav-item" role="presentation"><button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups" type="button" role="tab">Member Of</button></li>
-                    </ul>
-                </div>
-                <div class="card-body">
-                    <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}">
-                        <div class="tab-content" id="user-details-content">
-                            <!-- General Tab -->
-                            <div class="tab-pane fade show active" id="general" role="tabpanel">
-                                <h5 class="mb-3">General Information</h5>
-                                <div class="row">
-                                    <div class="col-md-4 mb-3"><label class="form-label">First Name</label><input type="text" class="form-control" name="givenName" value="{{ user.givenName[0] if user.givenName }}"></div>
-                                    <div class="col-md-4 mb-3"><label class="form-label">Initials</label><input type="text" class="form-control" name="initials" value="{{ user.initials[0] if user.initials }}"></div>
-                                    <div class="col-md-4 mb-3"><label class="form-label">Last Name</label><input type="text" class="form-control" name="sn" value="{{ user.sn[0] if user.sn }}"></div>
-                                </div>
-                                <div class="mb-3"><label class="form-label">Display Name</label><input type="text" class="form-control" name="displayName" value="{{ user.displayName[0] if user.displayName }}"></div>
-                                <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control" name="description">{{ user.description[0] if user.description }}</textarea></div>
-                                <hr>
-                                <h5 class="mb-3">Contact</h5>
-                                <div class="row">
-                                    <div class="col-md-6 mb-3"><label class="form-label">Telephone</label><input type="text" class="form-control" name="telephoneNumber" value="{{ user.telephoneNumber[0] if user.telephoneNumber }}"></div>
-                                    <div class="col-md-6 mb-3"><label class="form-label">Email</label><input type="email" class="form-control" name="mail" value="{{ user.mail[0] if user.mail }}"></div>
-                                </div>
-                                <div class="mb-3"><label class="form-label">Web Page</label><input type="text" class="form-control" name="wWWHomePage" value="{{ user.wWWHomePage[0] if user.wWWHomePage }}"></div>
-                            </div>
-
-                            <!-- Address Tab -->
-                            <div class="tab-pane fade" id="address" role="tabpanel">
-                                <h5 class="mb-3">Address Information</h5>
-                                <div class="mb-3"><label class="form-label">Street</label><input type="text" class="form-control" name="streetAddress" value="{{ user.streetAddress[0] if user.streetAddress }}"></div>
-                                <div class="row">
-                                    <div class="col-md-6 mb-3"><label class="form-label">City</label><input type="text" class="form-control" name="l" value="{{ user.l[0] if user.l }}"></div>
-                                    <div class="col-md-6 mb-3"><label class="form-label">State/Province</label><input type="text" class="form-control" name="st" value="{{ user.st[0] if user.st }}"></div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-md-6 mb-3"><label class="form-label">ZIP/Postal Code</label><input type="text" class="form-control" name="postalCode" value="{{ user.postalCode[0] if user.postalCode }}"></div>
-                                    <div class="col-md-6 mb-3"><label class="form-label">Country/Region</label><input type="text" class="form-control" name="co" value="{{ user.co[0] if user.co }}"></div>
-                                </div>
-                            </div>
-
-                            <!-- Organization Tab -->
-                            <div class="tab-pane fade" id="organization" role="tabpanel">
-                                <h5 class="mb-3">Organization Information</h5>
-                                <div class="mb-3"><label class="form-label">Job Title</label><input type="text" class="form-control" name="title" value="{{ user.title[0] if user.title }}"></div>
-                                <div class="mb-3"><label class="form-label">Department</label><input type="text" class="form-control" name="department" value="{{ user.department[0] if user.department }}"></div>
-                                <div class="mb-3"><label class="form-label">Company</label><input type="text" class="form-control" name="company" value="{{ user.company[0] if user.company }}"></div>
-                                <div class="mb-3"><label class="form-label">Manager</label><input type="text" class="form-control" name="manager" value="{{ user.manager[0] if user.manager }}" disabled></div>
-                            </div>
-
-                            <!-- Account Tab -->
-                            <div class="tab-pane fade" id="account" role="tabpanel">
-                                <h5 class="mb-3">Account Information</h5>
-                                <div class="mb-3"><label class="form-label">User Logon Name (UPN)</label><input type="text" class="form-control" value="{{ user.userPrincipalName[0] if user.userPrincipalName }}" disabled></div>
-                                <div class="mb-3"><label class="form-label">User Logon Name (pre-Windows 2000)</label><input type="text" class="form-control" value="{{ user.sAMAccountName[0] if user.sAMAccountName }}" disabled></div>
-                                <div class="mb-3"><label class="form-label">Employee ID</label><input type="text" class="form-control" name="employeeID" value="{{ user.employeeID[0] if user.employeeID }}"></div>
-                                <hr>
-                                <h5 class="mb-3">Account Timestamps</h5>
-                                <p><strong>Created:</strong> {{ user.whenCreated[0] if user.whenCreated }}</p>
-                                <p><strong>Modified:</strong> {{ user.whenChanged[0] if user.whenChanged }}</p>
-                                <p><strong>Last Logon:</strong> {{ user.lastLogonTimestamp[0] if user.lastLogonTimestamp }}</p>
-                            </div>
-
-                            <!-- Groups Tab -->
-                            <div class="tab-pane fade" id="groups" role="tabpanel">
-                                <h5 class="mb-3">Group Membership</h5>
-                                <div class="list-group mb-3">
-                                    {% for group in user_groups %}
-                                        <div class="list-group-item d-flex justify-content-between align-items-center">
-                                            <span><i class="fas fa-users me-2"></i>{{ group.split(',')[0].replace('CN=', '') }}</span>
-                                            <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}" class="d-inline">
-                                                <input type="hidden" name="group_dn" value="{{ group }}">
-                                                <button type="submit" name="action" value="remove_from_group" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash-alt"></i></button>
-                                            </form>
-                                        </div>
-                                    {% else %}
-                                        <div class="list-group-item">User is not a member of any groups.</div>
-                                    {% endfor %}
-                                </div>
-
-                                <hr>
-                                <h5 class="mb-3">Add to Group</h5>
-                                <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}">
-                                    <div class="input-group">
-                                        <select class="form-select" name="group_dn">
-                                            {% set user_group_dns = user_groups | map('lower') | list %}
-                                            {% for group in all_groups %}
-                                                {% if group.dn.lower() not in user_group_dns %}
-                                                    <option value="{{ group.dn }}">{{ group.name }}</option>
-                                                {% endif %}
-                                            {% endfor %}
-                                        </select>
-                                        <button type="submit" name="action" value="add_to_group" class="btn btn-custom"><i class="fas fa-plus me-2"></i>Add</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-
-                        <div class="mt-4 text-end">
-                            <button type="submit" name="update_attributes" class="btn btn-primary btn-lg"><i class="fas fa-save me-2"></i>Save Changes</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Reset Password Modal -->
-<div class="modal fade" id="resetPasswordModal" tabindex="-1" aria-labelledby="resetPasswordModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="resetPasswordModalLabel">Reset Password for {{ user.displayName[0] }}</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label for="new_password" class="form-label">New Password</label>
-                        <input type="password" class="form-control" id="new_password" name="new_password" required>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" name="action" value="reset_password" class="btn btn-primary">Set Password</button>
+                <div class="card card-custom mt-3">
+                    <div class="card-header">
+                        <h5 class="card-title-custom"><i class="fas fa-unlock-alt me-2"></i>Security Actions</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}" class="d-grid gap-2">
+                            {% if is_disabled %}
+                                <button type="submit" name="action" value="enable" class="btn btn-success"><i class="fas fa-check-circle me-2"></i>Enable User</button>
+                            {% else %}
+                                <button type="submit" name="action" value="disable" class="btn btn-warning"><i class="fas fa-ban me-2"></i>Disable User</button>
+                            {% endif %}
+                            {% if is_locked %}
+                                <button type="submit" name="action" value="unlock" class="btn btn-info"><i class="fas fa-unlock me-2"></i>Unlock Account</button>
+                            {% endif %}
+                            <button type="button" class="btn btn-custom" data-bs-toggle="modal" data-bs-target="#resetPasswordModal">
+                                <i class="fas fa-key me-2"></i>Reset Password
+                            </button>
+                            <button type="submit" name="action" value="force_password_change" class="btn btn-custom">
+                                <i class="fas fa-history me-2"></i>Force Password Change
+                            </button>
+                            <button type="submit" name="action" value="delete" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this user? This cannot be undone.');">
+                                <i class="fas fa-trash-alt me-2"></i>Delete User
+                            </button>
+                        </form>
+                    </div>
                 </div>
-            </form>
+            </div>
+
+            <div class="col-md-9">
+                <div class="card card-custom">
+                    <div class="card-header">
+                        <ul class="nav nav-tabs card-header-tabs" id="user-details-tabs" role="tablist">
+                            <li class="nav-item" role="presentation"><button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general" type="button" role="tab">General</button></li>
+                            <li class="nav-item" role="presentation"><button class="nav-link" id="address-tab" data-bs-toggle="tab" data-bs-target="#address" type="button" role="tab">Address</button></li>
+                            <li class="nav-item" role="presentation"><button class="nav-link" id="organization-tab" data-bs-toggle="tab" data-bs-target="#organization" type="button" role="tab">Organization</button></li>
+                            <li class="nav-item" role="presentation"><button class="nav-link" id="account-tab" data-bs-toggle="tab" data-bs-target="#account" type="button" role="tab">Account</button></li>
+                            <li class="nav-item" role="presentation"><button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups" type="button" role="tab">Member Of</button></li>
+                        </ul>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}">
+                            <div class="tab-content" id="user-details-content">
+                                <!-- General Tab -->
+                                <div class="tab-pane fade show active" id="general" role="tabpanel">
+                                    <h5 class="mb-3">General Information</h5>
+                                    <div class="row">
+                                        <div class="col-md-4 mb-3"><label class="form-label">First Name</label><input type="text" class="form-control" name="givenName" value="{{ user.givenName[0] if user.givenName }}"></div>
+                                        <div class="col-md-4 mb-3"><label class="form-label">Initials</label><input type="text" class="form-control" name="initials" value="{{ user.initials[0] if user.initials }}"></div>
+                                        <div class="col-md-4 mb-3"><label class="form-label">Last Name</label><input type="text" class="form-control" name="sn" value="{{ user.sn[0] if user.sn }}"></div>
+                                    </div>
+                                    <div class="mb-3"><label class="form-label">Display Name</label><input type="text" class="form-control" name="displayName" value="{{ user.displayName[0] if user.displayName }}"></div>
+                                    <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control" name="description">{{ user.description[0] if user.description }}</textarea></div>
+                                    <hr>
+                                    <h5 class="mb-3">Contact</h5>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3"><label class="form-label">Telephone</label><input type="text" class="form-control" name="telephoneNumber" value="{{ user.telephoneNumber[0] if user.telephoneNumber }}"></div>
+                                        <div class="col-md-6 mb-3"><label class="form-label">Email</label><input type="email" class="form-control" name="mail" value="{{ user.mail[0] if user.mail }}"></div>
+                                    </div>
+                                    <div class="mb-3"><label class="form-label">Web Page</label><input type="text" class="form-control" name="wWWHomePage" value="{{ user.wWWHomePage[0] if user.wWWHomePage }}"></div>
+                                    <div class="row mt-4">
+                                        <div class="col-md-6">
+                                            <div class="card card-custom mb-3">
+                                                <div class="card-header"><i class="fas fa-users"></i> Group Types</div>
+                                                <div class="card-body">
+                                                    {% if group_type_counts %}
+                                                    <ul class="list-group">
+                                                        {% for type, count in group_type_counts.items() %}
+                                                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                            {{ type }}
+                                                            <span class="badge bg-primary rounded-pill">{{ count }}</span>
+                                                        </li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                    {% else %}
+                                                    <div class="text-muted">No group type data available.</div>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="card card-custom mb-3">
+                                                <div class="card-header"><i class="fas fa-desktop"></i> OS Breakdown</div>
+                                                <div class="card-body">
+                                                    {% if os_breakdown %}
+                                                    <ul class="list-group">
+                                                        {% for os, count in os_breakdown.items() %}
+                                                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                            {{ os }}
+                                                            <span class="badge bg-info rounded-pill">{{ count }}</span>
+                                                        </li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                    {% else %}
+                                                    <div class="text-muted">No OS data available.</div>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Address Tab -->
+                                <div class="tab-pane fade" id="address" role="tabpanel">
+                                    <h5 class="mb-3">Address Information</h5>
+                                    <div class="mb-3"><label class="form-label">Street</label><input type="text" class="form-control" name="streetAddress" value="{{ user.streetAddress[0] if user.streetAddress }}"></div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3"><label class="form-label">City</label><input type="text" class="form-control" name="l" value="{{ user.l[0] if user.l }}"></div>
+                                        <div class="col-md-6 mb-3"><label class="form-label">State/Province</label><input type="text" class="form-control" name="st" value="{{ user.st[0] if user.st }}"></div>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3"><label class="form-label">ZIP/Postal Code</label><input type="text" class="form-control" name="postalCode" value="{{ user.postalCode[0] if user.postalCode }}"></div>
+                                        <div class="col-md-6 mb-3"><label class="form-label">Country/Region</label><input type="text" class="form-control" name="co" value="{{ user.co[0] if user.co }}"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Organization Tab -->
+                                <div class="tab-pane fade" id="organization" role="tabpanel">
+                                    <h5 class="mb-3">Organization Information</h5>
+                                    <div class="mb-3"><label class="form-label">Job Title</label><input type="text" class="form-control" name="title" value="{{ user.title[0] if user.title }}"></div>
+                                    <div class="mb-3"><label class="form-label">Department</label><input type="text" class="form-control" name="department" value="{{ user.department[0] if user.department }}"></div>
+                                    <div class="mb-3"><label class="form-label">Company</label><input type="text" class="form-control" name="company" value="{{ user.company[0] if user.company }}"></div>
+                                    <div class="mb-3"><label class="form-label">Manager</label><input type="text" class="form-control" name="manager" value="{{ user.manager[0] if user.manager }}" disabled></div>
+                                </div>
+
+                                <!-- Account Tab -->
+                                <div class="tab-pane fade" id="account" role="tabpanel">
+                                    <h5 class="mb-3">Account Information</h5>
+                                    <div class="mb-3"><label class="form-label">User Logon Name (UPN)</label><input type="text" class="form-control" value="{{ user.userPrincipalName[0] if user.userPrincipalName }}" disabled></div>
+                                    <div class="mb-3"><label class="form-label">User Logon Name (pre-Windows 2000)</label><input type="text" class="form-control" value="{{ user.sAMAccountName[0] if user.sAMAccountName }}" disabled></div>
+                                    <div class="mb-3"><label class="form-label">Employee ID</label><input type="text" class="form-control" name="employeeID" value="{{ user.employeeID[0] if user.employeeID }}"></div>
+                                    <hr>
+                                    <h5 class="mb-3">Account Timestamps</h5>
+                                    <p><strong>Created:</strong> {{ user.whenCreated[0] if user.whenCreated }}</p>
+                                    <p><strong>Modified:</strong> {{ user.whenChanged[0] if user.whenChanged }}</p>
+                                    <p><strong>Last Logon:</strong> {{ user.lastLogonTimestamp[0] if user.lastLogonTimestamp }}</p>
+                                </div>
+
+                                <!-- Groups Tab -->
+                                <div class="tab-pane fade" id="groups" role="tabpanel">
+                                    <h5 class="mb-3">Group Membership</h5>
+                                    <div class="list-group mb-3">
+                                        {% for group in user_groups %}
+                                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                                <span><i class="fas fa-users me-2"></i>{{ group.split(',')[0].replace('CN=', '') }}</span>
+                                                <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}" class="d-inline">
+                                                    <input type="hidden" name="group_dn" value="{{ group }}">
+                                                    <button type="submit" name="action" value="remove_from_group" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash-alt"></i></button>
+                                                </form>
+                                            </div>
+                                        {% else %}
+                                            <div class="list-group-item">User is not a member of any groups.</div>
+                                        {% endfor %}
+                                    </div>
+
+                                    <hr>
+                                    <h5 class="mb-3">Add to Group</h5>
+                                    <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}">
+                                        <div class="input-group">
+                                            <select class="form-select" name="group_dn">
+                                                {% set user_group_dns = user_groups | map('lower') | list %}
+                                                {% for group in all_groups %}
+                                                    {% if group.dn.lower() not in user_group_dns %}
+                                                        <option value="{{ group.dn }}">{{ group.name }}</option>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </select>
+                                            <button type="submit" name="action" value="add_to_group" class="btn btn-custom"><i class="fas fa-plus me-2"></i>Add</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+
+                            <div class="mt-4 text-end">
+                                <button type="submit" name="update_attributes" class="btn btn-primary btn-lg"><i class="fas fa-save me-2"></i>Save Changes</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
-</div>
-{% endblock %} 
+
+    <!-- Reset Password Modal -->
+    <div class="modal fade" id="resetPasswordModal" tabindex="-1" aria-labelledby="resetPasswordModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="POST" action="{{ url_for('main.user_details', user_dn=user.distinguishedName[0]) }}">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="resetPasswordModalLabel">Reset Password for {{ user.displayName[0] }}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="new_password" class="form-label">New Password</label>
+                            <input type="password" class="form-control" id="new_password" name="new_password" required>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        <button type="submit" name="action" value="reset_password" class="btn btn-primary">Set Password</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 
