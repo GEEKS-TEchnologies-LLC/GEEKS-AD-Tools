@@ -81,15 +81,17 @@ def search_users(query, **ad_args):
                         is_user = 'user' in str(object_classes) and 'computer' not in str(object_classes)
                 
                 if is_user:
-                    # Parse OU from DN - show the last 2 OUs (immediate parent and parent's parent)
+                    # Parse OU from DN - show path from user up 2 levels (immediate parent → parent's parent)
                     dn_parts = entry.distinguishedName.value.split(',')
                     ou_parts = [part[3:] for part in dn_parts if part.startswith('OU=')]
                     
-                    # Show the last 2 OUs (most specific to least specific, closest to user)
+                    # Show path from user up 2 levels (immediate parent → parent's parent)
                     if ou_parts:
                         if len(ou_parts) >= 2:
-                            # Take the last 2 OUs (immediate parent and parent's parent)
-                            ou = ' → '.join(ou_parts[-2:])
+                            # Take the last 2 OUs and reverse them to show immediate parent first
+                            immediate_parent = ou_parts[-1]  # Last OU (immediate parent)
+                            parent_parent = ou_parts[-2]     # Second to last OU (parent's parent)
+                            ou = f'{immediate_parent} → {parent_parent}'
                         else:
                             # Only one OU, show it
                             ou = ou_parts[0]
