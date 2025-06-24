@@ -81,14 +81,18 @@ def search_users(query, **ad_args):
                         is_user = 'user' in str(object_classes) and 'computer' not in str(object_classes)
                 
                 if is_user:
-                    # Parse OU from DN - show OUs in correct hierarchical order
+                    # Parse OU from DN - show the last 2 OUs (immediate parent and parent's parent)
                     dn_parts = entry.distinguishedName.value.split(',')
                     ou_parts = [part[3:] for part in dn_parts if part.startswith('OU=')]
                     
-                    # Reverse the OU parts to show them in correct hierarchical order (root to leaf)
+                    # Show the last 2 OUs (most specific to least specific, closest to user)
                     if ou_parts:
-                        ou_parts.reverse()  # Reverse to show root OU first
-                        ou = ' → '.join(ou_parts[:2])  # Show up to 2 levels
+                        if len(ou_parts) >= 2:
+                            # Take the last 2 OUs (immediate parent and parent's parent)
+                            ou = ' → '.join(ou_parts[-2:])
+                        else:
+                            # Only one OU, show it
+                            ou = ou_parts[0]
                     else:
                         ou = 'Domain Root'
                     
