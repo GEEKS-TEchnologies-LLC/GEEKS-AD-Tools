@@ -311,7 +311,7 @@
                     <div class="status-light" title="AD Health"></div>
                     <div class="dropdown">
                         <button class="btn btn-outline-warning dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-user"></i> {{ current_user.username }}
+                            <i class="fas fa-user"></i> {{ current_user.username if current_user and current_user.is_authenticated else 'User' }}
                         </button>
                         <ul class="dropdown-menu">
                             <li><a class="dropdown-item" href="{{ url_for('main.admin_groups') }}"><i class="fas fa-user-circle"></i> Profile</a></li>
