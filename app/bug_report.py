@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 from flask import request
 from .models import AuditLog, db
-from .ad import load_ad_config
+from .ad import get_ad_config
 
 def collect_system_info():
     """Collect system information for bug reports"""
@@ -17,7 +17,7 @@ def collect_system_info():
         'architecture': platform.architecture()[0],
         'hostname': platform.node(),
         'app_version': get_app_version(),
-        'ad_configured': bool(load_ad_config()),
+        'ad_configured': bool(get_ad_config()),
     }
     return info
 
@@ -87,7 +87,7 @@ def collect_config_info():
     config = {}
     
     # AD config (sanitized)
-    ad_config = load_ad_config()
+    ad_config = get_ad_config()
     if ad_config:
         config['ad'] = {
             'server': ad_config.get('ad_server', ''),

@@ -6,6 +6,7 @@
     <title>User Search - GEEKS-AD-Plus</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
     <style>
         body {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -54,6 +55,14 @@
             border: none;
             font-weight: 600;
         }
+        /* Limit Email column width and add ellipsis */
+        .email-col {
+            max-width: 220px;
+            min-width: 120px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
     </style>
 </head>
 <body>
@@ -91,19 +100,71 @@
         <div class="card">
             <div class="card-header bg-success text-white">
                 {% if query %}
-                <h5 class="mb-0"><i class="fas fa-list"></i> Search Results for "{{ query }}" ({{ users|length }} users)</h5>
+                <h5 class="mb-0"><i class="fas fa-list"></i> Search Results for "{{ query }}" (Showing {{ (page-1)*50+1 }}-{{ (page-1)*50+users|length }} of {{ total_users }} users)</h5>
                 {% else %}
-                <h5 class="mb-0"><i class="fas fa-list"></i> All Users ({{ users|length }} users)</h5>
+                <h5 class="mb-0"><i class="fas fa-list"></i> All Users (Showing {{ (page-1)*50+1 }}-{{ (page-1)*50+users|length }} of {{ total_users }} users)</h5>
                 {% endif %}
             </div>
             <div class="card-body">
+                <!-- Pagination Controls (Top) -->
+                <nav aria-label="User pagination" class="mb-3">
+                  <ul class="pagination justify-content-center">
+                    <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                      <a class="page-link" href="?page={{ page-1 }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}" tabindex="-1">Previous</a>
+                    </li>
+                    {% for p in range(1, total_pages+1) %}
+                      <li class="page-item {% if p == page %}active{% endif %}"><a class="page-link" href="?page={{ p }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">{{ p }}</a></li>
+                    {% endfor %}
+                    <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                      <a class="page-link" href="?page={{ page+1 }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">Next</a>
+                    </li>
+                  </ul>
+                  <div class="text-center text-muted small">Page {{ page }} of {{ total_pages }} | Showing {{ users|length }} of {{ total_users }} users</div>
+                </nav>
                 <div class="table-responsive">
-                    <table class="table table-hover">
+                    <table id="userTable" class="table table-hover">
                         <thead>
                             <tr>
-                                <th><i class="fas fa-user"></i> Username</th>
-                                <th><i class="fas fa-id-card"></i> Name</th>
-                                <th><i class="fas fa-envelope"></i> Email</th>
+                                <th>
+                                    <a href="?{% if query %}query={{ query }}&{% endif %}sort_by=username&sort_order={% if sort_by == 'username' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                        <i class="fas fa-user"></i> Username
+                                        {% if sort_by == 'username' %}
+                                            <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
+                                        {% else %}
+                                            <i class="fas fa-sort text-muted"></i>
+                                        {% endif %}
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="?{% if query %}query={{ query }}&{% endif %}sort_by=displayName&sort_order={% if sort_by == 'displayName' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                        <i class="fas fa-id-card"></i> Name
+                                        {% if sort_by == 'displayName' %}
+                                            <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
+                                        {% else %}
+                                            <i class="fas fa-sort text-muted"></i>
+                                        {% endif %}
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="?{% if query %}query={{ query }}&{% endif %}sort_by=mail&sort_order={% if sort_by == 'mail' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark email-col">
+                                        <i class="fas fa-envelope"></i> Email
+                                        {% if sort_by == 'mail' %}
+                                            <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
+                                        {% else %}
+                                            <i class="fas fa-sort text-muted"></i>
+                                        {% endif %}
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="?{% if query %}query={{ query }}&{% endif %}sort_by=ou&sort_order={% if sort_by == 'ou' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                        <i class="fas fa-sitemap"></i> OU Location
+                                        {% if sort_by == 'ou' %}
+                                            <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
+                                        {% else %}
+                                            <i class="fas fa-sort text-muted"></i>
+                                        {% endif %}
+                                    </a>
+                                </th>
                                 <th><i class="fas fa-cogs"></i> Actions</th>
                             </tr>
                         </thead>
@@ -112,7 +173,7 @@
                             <tr>
                                 <td><strong>{{ user.username }}</strong></td>
                                 <td>{{ user.displayName or 'N/A' }}</td>
-                                <td>
+                                <td class="email-col" title="{{ user.mail or '' }}">
                                     {% if user.mail %}
                                         <a href="mailto:{{ user.mail }}" class="text-decoration-none">
                                             <i class="fas fa-envelope"></i> {{ user.mail }}
@@ -121,16 +182,37 @@
                                         <span class="text-muted">N/A</span>
                                     {% endif %}
                                 </td>
+                                <td>{{ user.ou or 'N/A' }}</td>
                                 <td>
-                                    <a href="/admin/user/{{ user.dn|urlencode }}" class="btn btn-custom btn-sm">
+                                    <a href="/user_details/{{ user.dn|urlencode }}" class="btn btn-custom btn-sm">
                                         <i class="fas fa-eye"></i> Details
                                     </a>
+                                    <button type="button" class="btn btn-warning btn-sm" 
+                                            data-bs-toggle="modal" data-bs-target="#moveUserModal" 
+                                            data-user-dn="{{ user.dn }}" data-user-name="{{ user.username }}">
+                                        <i class="fas fa-exchange-alt"></i> Move
+                                    </button>
                                 </td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
+                <!-- Pagination Controls (Bottom) -->
+                <nav aria-label="User pagination" class="mt-4">
+                  <ul class="pagination justify-content-center">
+                    <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                      <a class="page-link" href="?page={{ page-1 }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}" tabindex="-1">Previous</a>
+                    </li>
+                    {% for p in range(1, total_pages+1) %}
+                      <li class="page-item {% if p == page %}active{% endif %}"><a class="page-link" href="?page={{ p }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">{{ p }}</a></li>
+                    {% endfor %}
+                    <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                      <a class="page-link" href="?page={{ page+1 }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">Next</a>
+                    </li>
+                  </ul>
+                  <div class="text-center text-muted small">Page {{ page }} of {{ total_pages }} | Showing {{ users|length }} of {{ total_users }} users</div>
+                </nav>
             </div>
         </div>
         {% elif query %}
@@ -152,6 +234,83 @@
         {% endif %}
     </div>
 
+    <!-- Move User Modal -->
+    <div class="modal fade" id="moveUserModal" tabindex="-1" aria-labelledby="moveUserModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="moveUserModalLabel">
+                        <i class="fas fa-exchange-alt"></i> Move User
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="post" action="/admin/move_user">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="user_dn" class="form-label">User DN</label>
+                            <input type="text" class="form-control" id="user_dn" name="user_dn" readonly>
+                        </div>
+                        <div class="mb-3">
+                            <label for="new_ou_dn" class="form-label">New OU</label>
+                            <select class="form-control" id="new_ou_dn" name="new_ou_dn" required>
+                                <option value="">Select destination OU...</option>
+                                <option value="{{ base_dn }}">Domain Root ({{ base_dn }})</option>
+                                {% for ou in ous %}
+                                <option value="{{ ou.dn }}">{{ ou.name }} ({{ ou.dn }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i> 
+                            Moving a user will change their location in Active Directory. This action cannot be undone.
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-warning">
+                            <i class="fas fa-exchange-alt"></i> Move User
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script>
+        // Handle move user modal
+        document.getElementById('moveUserModal').addEventListener('show.bs.modal', function (event) {
+            var button = event.relatedTarget;
+            var userDn = button.getAttribute('data-user-dn');
+            var userName = button.getAttribute('data-user-name');
+            
+            var modal = this;
+            modal.querySelector('#user_dn').value = userDn;
+            modal.querySelector('#moveUserModalLabel').textContent = 'Move User: ' + userName;
+        });
+
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Table data:', {{ users|tojson|safe }});
+            console.log('Sort by:', '{{ sort_by }}');
+            console.log('Sort order:', '{{ sort_order }}');
+            
+            var table = $('#userTable').DataTable({
+                paging: false,
+                info: false,
+                searching: true,
+                ordering: false, // Disable client-side sorting since we use server-side sorting
+                order: [],
+                columnDefs: [
+                    { orderable: false, targets: '_all' } // Disable sorting on all columns
+                ],
+                language: {
+                    search: "Filter current page:"
+                }
+            });
+        });
+    </script>
 </body>
 </html> 

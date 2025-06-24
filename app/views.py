@@ -11,11 +11,12 @@ from .ad import (
     delete_user as ad_delete_user, set_password as ad_set_password,
     enable_user as ad_enable_user, disable_user as ad_disable_user,
     unlock_user as ad_unlock_user, force_password_change as ad_force_password_change,
-    update_user_attributes
+    update_user_attributes, list_ous, create_ou, move_user_to_ou, get_ou_tree,
+    get_group_types_for_user, get_os_breakdown
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
-from .models import Admin, User
+from .models import Admin
 from . import db
 from werkzeug.security import generate_password_hash
 from functools import wraps
@@ -27,6 +28,7 @@ from .audit import (
 from .bug_report import generate_bug_report, save_bug_report, get_bug_report_summary
 from urllib.parse import unquote
 from .version import __version__
+import ldap3
 
 main = Blueprint('main', __name__)
 
@@ -95,7 +97,14 @@ def admin_login():
 
             if ok:
                 # Check if user is in an admin group
-                if is_user_in_admin_group(username, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn']):
+                if is_user_in_admin_group(
+                    username,
+                    server=config['ad_server'],
+                    port=config['ad_port'],
+                    bind_user=config['ad_bind_dn'],
+                    bind_password=config['ad_password'],
+                    base_dn=config['ad_base_dn']
+                ):
                     # Create or update AD admin record
                     admin = Admin.query.filter_by(username=username).first()
                     if not admin:
@@ -148,10 +157,10 @@ def setup():
         }
         save_ad_config(config_data)
         ok, msg = test_ad_connection(
-            config_data['ad_server'],
-            config_data['ad_port'],
-            config_data['ad_bind_dn'],
-            config_data['ad_password']
+            server=config_data['ad_server'],
+            port=config_data['ad_port'],
+            bind_user=config_data['ad_bind_dn'],
+            bind_password=config_data['ad_password']
         )
         if ok:
             flash('Setup saved and AD connection successful!', 'success')
@@ -236,10 +245,10 @@ def add_user_to_group_route():
         config['ad_password'],
         config['ad_base_dn']
     )
-    if ok:
-        flash(msg, 'success')
+    if ok and "already a member" in msg:
+        flash(msg, 'warning')
     else:
-        flash(msg, 'danger')
+        flash(msg, 'success' if ok else 'danger')
     return redirect(url_for('main.admin_groups'))
 
 @main.route('/admin/dashboard')
@@ -262,22 +271,22 @@ def admin_dashboard():
     config = get_ad_config()
     if config:
         ok, stats = get_ad_statistics(
-            config['ad_server'],
-            config['ad_port'],
-            config['ad_bind_dn'],
-            config['ad_password'],
-            config['ad_base_dn']
+            server=config['ad_server'],
+            port=config['ad_port'],
+            bind_user=config['ad_bind_dn'],
+            bind_password=config['ad_password'],
+            base_dn=config['ad_base_dn']
         )
         if ok:
             ad_stats = stats
         
         # Get AD health status
         ok, health = get_ad_health_status(
-            config['ad_server'],
-            config['ad_port'],
-            config['ad_bind_dn'],
-            config['ad_password'],
-            config['ad_base_dn']
+            server=config['ad_server'],
+            port=config['ad_port'],
+            bind_user=config['ad_bind_dn'],
+            bind_password=config['ad_password'],
+            base_dn=config['ad_base_dn']
         )
         if ok:
             ad_health = health
@@ -301,29 +310,29 @@ def ad_dashboard():
     
     # Get AD statistics
     ok, stats = get_ad_statistics(
-        config['ad_server'],
-        config['ad_port'],
-        config['ad_bind_dn'],
-        config['ad_password'],
-        config['ad_base_dn']
+        server=config['ad_server'],
+        port=config['ad_port'],
+        bind_user=config['ad_bind_dn'],
+        bind_password=config['ad_password'],
+        base_dn=config['ad_base_dn']
     )
     
     if not ok:
         flash(f'Failed to get AD statistics: {stats}', 'danger')
-        stats = None
+        stats = {}
     
     # Get AD health status
     ok, health = get_ad_health_status(
-        config['ad_server'],
-        config['ad_port'],
-        config['ad_bind_dn'],
-        config['ad_password'],
-        config['ad_base_dn']
+        server=config['ad_server'],
+        port=config['ad_port'],
+        bind_user=config['ad_bind_dn'],
+        bind_password=config['ad_password'],
+        base_dn=config['ad_base_dn']
     )
     
     if not ok:
         flash(f'Failed to get AD health status: {health}', 'danger')
-        health = None
+        health = {}
     
     return render_template('ad_dashboard.html', ad_stats=stats, ad_health=health)
 
@@ -336,19 +345,88 @@ def user_search():
         flash('AD not configured. Please complete setup first.', 'warning')
         return redirect(url_for('main.setup'))
     
-    query = ""
-    if request.method == 'POST':
-        query = request.form.get('query', '')
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
     
-    # On a GET request, the query will be empty, and search_users will return all users.
-    users = search_users(query, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
+    query = request.form.get('query', '') if request.method == 'POST' else request.args.get('query', '')
+    users = []
     
-    return render_template('user_search.html', users=users, query=query)
+    # Always search for users - if no query, search for all users
+    if query:
+        users = search_users(query, **ad_args)
+        log_user_action('search', query, 'success' if users else 'no_results', {'query': query, 'results_count': len(users)})
+    else:
+        # Show all users when no query is provided
+        users = search_users('', **ad_args)
+        log_user_action('search', 'all_users', 'success' if users else 'no_results', {'query': 'all_users', 'results_count': len(users)})
+    
+    # Server-side sorting
+    sort_by = request.args.get('sort_by', 'username')
+    sort_order = request.args.get('sort_order', 'asc')
+    
+    # Validate sort_by parameter
+    valid_sort_fields = ['username', 'displayName', 'mail', 'ou']
+    if sort_by not in valid_sort_fields:
+        sort_by = 'username'
+    
+    # Sort users
+    reverse_sort = sort_order.lower() == 'desc'
+    
+    # Handle empty values in sorting
+    def sort_key(user):
+        value = user.get(sort_by, '')
+        if value is None:
+            value = ''
+        return str(value).lower()
+    
+    users.sort(key=sort_key, reverse=reverse_sort)
+    
+    # Pagination logic
+    page = int(request.args.get('page', 1))
+    per_page = 50
+    total_users = len(users)
+    total_pages = (total_users + per_page - 1) // per_page
+    start = (page - 1) * per_page
+    end = start + per_page
+    users_page = users[start:end]
+    
+    # Get OUs for move user functionality
+    ous = list_ous(**ad_args)
+    
+    return render_template(
+        'user_search.html', 
+        users=users_page, 
+        query=query, 
+        ous=ous, 
+        base_dn=config['ad_base_dn'],
+        page=page,
+        total_pages=total_pages,
+        total_users=total_users,
+        sort_by=sort_by,
+        sort_order=sort_order
+    )
 
 @main.route('/user_details/<path:user_dn>', methods=['GET', 'POST'])
 @login_required
+@admin_required
 def user_details(user_dn):
-    ad_args = get_ad_config()
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
 
     if request.method == 'POST':
         action = request.form.get('action')
@@ -357,12 +435,18 @@ def user_details(user_dn):
         if action == 'add_to_group':
             group_dn = request.form.get('group_dn')
             ok, msg = add_user_to_group(user_dn, group_dn, **ad_args)
-            flash(msg, 'success' if ok else 'danger')
+            if ok and "already a member" in msg:
+                flash(msg, 'warning')
+            else:
+                flash(msg, 'success' if ok else 'danger')
             return redirect(url_for('main.user_details', user_dn=user_dn))
         elif action == 'remove_from_group':
             group_dn = request.form.get('group_dn')
             ok, msg = remove_user_from_group(user_dn, group_dn, **ad_args)
-            flash(msg, 'success' if ok else 'danger')
+            if ok and "not a member" in msg:
+                flash(msg, 'warning')
+            else:
+                flash(msg, 'success' if ok else 'danger')
             return redirect(url_for('main.user_details', user_dn=user_dn))
 
         # Handle user attribute updates from the main form
@@ -427,6 +511,10 @@ def user_details(user_dn):
     user_groups = get_user_groups(user_dn, **ad_args)
     all_groups = get_all_groups(**ad_args)
     
+    # Group type counts
+    group_type_counts = get_group_types_for_user(user_groups, **ad_args)
+    os_breakdown = get_os_breakdown(**ad_args)
+    
     uac = int(user.get('userAccountControl', ['0'])[0])
     is_disabled = bool(uac & 2)
     is_locked = bool(uac & 16) # LOCKOUT bit
@@ -437,27 +525,60 @@ def user_details(user_dn):
         user_groups=user_groups,
         all_groups=all_groups,
         is_disabled=is_disabled,
-        is_locked=is_locked
+        is_locked=is_locked,
+        group_type_counts=group_type_counts,
+        os_breakdown=os_breakdown
     )
 
 @main.route('/admin/create_user', methods=['GET', 'POST'])
 @login_required
 @admin_required
 def create_user_route():
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
         display_name = request.form['display_name']
-        mail = request.form['mail']
-        config = get_ad_config()
-        ok, msg = ad_create_user(username, password, display_name, mail, config['ad_server'], config['ad_port'], config['ad_bind_dn'], config['ad_password'], config['ad_base_dn'])
-        log_user_action('create', username, 'success' if ok else 'failure', {'display_name': display_name, 'mail': mail})
+        mail = request.form.get('mail', '')  # Get mail with empty string as default
+        target_ou = request.form.get('target_ou', '')  # Get target OU
+        
+        # Use target_ou if provided, otherwise None (will use base_dn)
+        target_ou = target_ou if target_ou else None
+        
+        ok, msg = ad_create_user(
+            username, 
+            password, 
+            display_name, 
+            mail,
+            target_ou=target_ou,
+            server=config['ad_server'],
+            port=config['ad_port'],
+            bind_user=config['ad_bind_dn'],
+            bind_password=config['ad_password'],
+            base_dn=config['ad_base_dn']
+        )
+        log_user_action('create', username, 'success' if ok else 'failure', {'display_name': display_name, 'mail': mail, 'target_ou': target_ou})
         if ok:
             flash(msg, 'success')
             return redirect(url_for('main.user_search'))
         else:
             flash(msg, 'danger')
-    return render_template('create_user.html')
+    
+    # Get available OUs for the form
+    ous = list_ous(**ad_args)
+    return render_template('create_user.html', ous=ous, base_dn=config['ad_base_dn'])
 
 @main.route('/admin/gpo-deployment')
 @login_required
@@ -630,107 +751,107 @@ function New-GPODployment {{
 # This script is deployed via Group Policy
 
 param(
-    [string]`$PortalURL = "$PortalURL"
+    [string]$PortalURL = "$PortalURL"
 )
 
 # Script information
-`$ScriptName = "GEEKS-CredentialProvider-GPO"
-`$ScriptVersion = "1.3.0"
+$ScriptName = "GEEKS-CredentialProvider-GPO"
+$ScriptVersion = "1.3.0"
 
 # Logging function
 function Write-Log {{
     param(
-        [string]`$Message,
-        [string]`$Level = "INFO"
+        [string]$Message,
+        [string]$Level = "INFO"
     )
     
-    `$Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    `$LogMessage = "[`$Timestamp] [`$Level] `$Message"
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $LogMessage = "[$Timestamp] [$Level] $Message"
     
-    Write-Host `$LogMessage
-    Write-EventLog -LogName Application -Source `$ScriptName -EventId 4000 -EntryType Information -Message `$LogMessage -ErrorAction SilentlyContinue
+    Write-Host $LogMessage
+    Write-EventLog -LogName Application -Source $ScriptName -EventId 4000 -EntryType Information -Message $LogMessage -ErrorAction SilentlyContinue
 }}
 
 # Error handling function
 function Write-ErrorLog {{
     param(
-        [string]`$Message,
-        [string]`$Exception = ""
+        [string]$Message,
+        [string]$Exception = ""
     )
     
-    `$Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    `$LogMessage = "[`$Timestamp] [ERROR] `$Message"
-    if (`$Exception) {{
-        `$LogMessage += " Exception: `$Exception"
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $LogMessage = "[$Timestamp] [ERROR] $Message"
+    if ($Exception) {{
+        $LogMessage += " Exception: $Exception"
     }}
     
-    Write-Host `$LogMessage -ForegroundColor Red
-    Write-EventLog -LogName Application -Source `$ScriptName -EventId 4001 -EntryType Error -Message `$LogMessage -ErrorAction SilentlyContinue
+    Write-Host $LogMessage -ForegroundColor Red
+    Write-EventLog -LogName Application -Source $ScriptName -EventId 4001 -EntryType Error -Message $LogMessage -ErrorAction SilentlyContinue
 }}
 
 # Create event log source
 function New-EventLogSource {{
     try {{
-        if (![System.Diagnostics.EventLog]::SourceExists(`$ScriptName)) {{
-            New-EventLog -LogName Application -Source `$ScriptName
-            Write-Log "Created event log source: `$ScriptName"
+        if (![System.Diagnostics.EventLog]::SourceExists($ScriptName)) {{
+            New-EventLog -LogName Application -Source $ScriptName
+            Write-Log "Created event log source: $ScriptName"
         }}
     }} catch {{
-        Write-ErrorLog "Failed to create event log source" `$_.Exception.Message
+        Write-ErrorLog "Failed to create event log source" $_.Exception.Message
     }}
 }}
 
 # Main installation function
 function Install-CredentialProvider {{
     param(
-        [string]`$PortalURL
+        [string]$PortalURL
     )
     
     Write-Log "Starting GEEKS Credential Provider GPO installation..."
-    Write-Log "Portal URL: `$PortalURL"
+    Write-Log "Portal URL: $PortalURL"
     
     try {{
         # Get script directory (GPO share)
-        `$scriptDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
-        `$dllPath = Join-Path `$scriptDir "GEEKS-CredentialProvider.dll"
+        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+        $dllPath = Join-Path $scriptDir "GEEKS-CredentialProvider.dll"
         
         # Check if DLL exists
-        if (!(Test-Path `$dllPath)) {{
-            Write-ErrorLog "Credential provider DLL not found: `$dllPath"
-            return `$false
+        if (!(Test-Path $dllPath)) {{
+            Write-ErrorLog "Credential provider DLL not found: $dllPath"
+            return $false
         }}
         
         # Register the DLL
         Write-Log "Registering credential provider DLL..."
-        `$result = & regsvr32.exe /s `$dllPath
-        if (`$LASTEXITCODE -ne 0) {{
+        $result = & regsvr32.exe /s $dllPath
+        if ($LASTEXITCODE -ne 0) {{
             Write-ErrorLog "Failed to register DLL with regsvr32"
-            return `$false
+            return $false
         }}
         Write-Log "DLL registered successfully"
         
         # Configure registry settings
         Write-Log "Configuring registry settings..."
-        `$registryPath = "HKLM:\\SOFTWARE\\GEEKS\\CredentialProvider"
+        $registryPath = "HKLM:\\SOFTWARE\\GEEKS\\CredentialProvider"
         
         # Create registry key if it doesn't exist
-        if (!(Test-Path `$registryPath)) {{
-            New-Item -Path `$registryPath -Force | Out-Null
+        if (!(Test-Path $registryPath)) {{
+            New-Item -Path $registryPath -Force | Out-Null
         }}
         
         # Set configuration values
-        Set-ItemProperty -Path `$registryPath -Name "PortalURL" -Value `$PortalURL -Type String
-        Set-ItemProperty -Path `$registryPath -Name "Enabled" -Value 1 -Type DWord
-        Set-ItemProperty -Path `$registryPath -Name "Debug" -Value 0 -Type DWord
+        Set-ItemProperty -Path $registryPath -Name "PortalURL" -Value $PortalURL -Type String
+        Set-ItemProperty -Path $registryPath -Name "Enabled" -Value 1 -Type DWord
+        Set-ItemProperty -Path $registryPath -Name "Debug" -Value 0 -Type DWord
         
         Write-Log "Registry configuration completed"
         
         Write-Log "GEEKS Credential Provider GPO installation completed successfully"
-        return `$true
+        return $true
         
     }} catch {{
-        Write-ErrorLog "Installation failed" `$_.Exception.Message
-        return `$false
+        Write-ErrorLog "Installation failed" $_.Exception.Message
+        return $false
     }}
 }}
 
@@ -739,13 +860,13 @@ try {{
     # Create event log source
     New-EventLogSource
     
-    Write-Log "GEEKS Credential Provider GPO Installer v`$ScriptVersion"
+    Write-Log "GEEKS Credential Provider GPO Installer v$ScriptVersion"
     Write-Log "====================================================="
     
     # Perform installation
-    `$success = Install-CredentialProvider -PortalURL `$PortalURL
+    $success = Install-CredentialProvider -PortalURL $PortalURL
     
-    if (`$success) {{
+    if ($success) {{
         Write-Log "GPO installation completed successfully!"
     }} else {{
         Write-ErrorLog "GPO installation failed"
@@ -753,7 +874,7 @@ try {{
     }}
     
 }} catch {{
-    Write-ErrorLog "Unexpected error during GPO installation" `$_.Exception.Message
+    Write-ErrorLog "Unexpected error during GPO installation" $_.Exception.Message
     exit 1
 }}
 "@
@@ -966,4 +1087,203 @@ def reset_config():
         flash('AD configuration has been reset. Please reconfigure.', 'info')
     except Exception as e:
         flash(f'Error resetting configuration: {e}', 'danger')
-    return redirect(url_for('main.welcome')) 
+    return redirect(url_for('main.welcome'))
+
+@main.route('/admin/ous')
+@login_required
+@admin_required
+def list_ous_route():
+    """List all OUs in the domain"""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    ous = list_ous(**ad_args)
+    ou_tree = get_ou_tree(**ad_args)
+    
+    return render_template('ous.html', ous=ous, ou_tree=ou_tree)
+
+@main.route('/admin/create_ou', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def create_ou_route():
+    """Create a new OU"""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    if request.method == 'POST':
+        ou_name = request.form['ou_name']
+        parent_dn = request.form['parent_dn']
+        description = request.form.get('description', '')
+        
+        ok, msg = create_ou(ou_name, parent_dn, **ad_args)
+        if ok:
+            flash(msg, 'success')
+            return redirect(url_for('main.list_ous_route'))
+        else:
+            flash(msg, 'danger')
+    
+    # Get available parent OUs
+    ous = list_ous(**ad_args)
+    return render_template('create_ou.html', ous=ous, base_dn=config['ad_base_dn'])
+
+@main.route('/admin/move_user', methods=['POST'])
+@login_required
+@admin_required
+def move_user_route():
+    """Move a user to a different OU"""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    user_dn = request.form['user_dn']
+    new_ou_dn = request.form['new_ou_dn']
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    ok, msg = move_user_to_ou(user_dn, new_ou_dn, **ad_args)
+    flash(msg, 'success' if ok else 'danger')
+    
+    return redirect(url_for('main.user_search'))
+
+@main.route('/admin/drilldown/computers')
+@login_required
+@admin_required
+def drilldown_computers():
+    os_name = request.args.get('os')
+    config = get_ad_config()
+    if not config:
+        return {"error": "AD not configured."}, 400
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    from .ad import ad_connection
+    computers = []
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], '(objectClass=computer)', search_scope=ldap3.SUBTREE, attributes=['cn', 'operatingSystem'])
+        for entry in conn.entries:
+            os_val = entry.operatingSystem.value if hasattr(entry, 'operatingSystem') and entry.operatingSystem else 'Unknown'
+            if os_name == 'Other':
+                if not any(v in os_val for v in ['Windows XP', 'Windows 7', 'Windows 8', 'Windows 10', 'Windows 11', 'Windows Server 2008', 'Windows Server 2012', 'Windows Server 2016', 'Windows Server 2019', 'Windows Server 2022']):
+                    computers.append({'name': entry.cn.value if entry.cn else '', 'os': os_val})
+            elif os_name == 'Unknown':
+                if os_val == 'Unknown':
+                    computers.append({'name': entry.cn.value if entry.cn else '', 'os': os_val})
+            else:
+                if os_name in os_val:
+                    computers.append({'name': entry.cn.value if entry.cn else '', 'os': os_val})
+    return {"computers": computers}
+
+@main.route('/admin/drilldown/groups')
+@login_required
+@admin_required
+def drilldown_groups():
+    group_type = request.args.get('type')
+    config = get_ad_config()
+    if not config:
+        return {"error": "AD not configured."}, 400
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    from .ad import ad_connection
+    groups = []
+    group_type_map = {
+        2: 'Global Security',
+        4: 'Domain Local Security',
+        8: 'Universal Security',
+        -2147483646: 'Global Distribution',
+        -2147483644: 'Domain Local Distribution',
+        -2147483640: 'Universal Distribution',
+    }
+    # Reverse the mapping to find the numeric value
+    type_value = None
+    for val, name in group_type_map.items():
+        if name == group_type:
+            type_value = val
+            break
+    
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], '(objectClass=group)', search_scope=ldap3.SUBTREE, attributes=['cn', 'groupType', 'description'])
+        for entry in conn.entries:
+            group_type_val = entry.groupType.value if hasattr(entry, 'groupType') and entry.groupType else None
+            if group_type_val == type_value:
+                groups.append({
+                    'name': entry.cn.value if entry.cn else '',
+                    'description': entry.description.value if entry.description else 'No description'
+                })
+    return {"groups": groups}
+
+@main.route('/admin/drilldown/users')
+@login_required
+@admin_required
+def drilldown_users():
+    user_type = request.args.get('type')
+    config = get_ad_config()
+    if not config:
+        return {"error": "AD not configured."}, 400
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    from .ad import ad_connection
+    users = []
+    admin_groups = get_admin_groups()
+    
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'memberOf'])
+        for entry in conn.entries:
+            if hasattr(entry, "objectClass") and entry.objectClass.value and 'user' in entry.objectClass.value and 'computer' not in entry.objectClass.value:
+                # Check if user is in any admin group
+                is_admin = False
+                if hasattr(entry, 'memberOf') and entry.memberOf:
+                    user_groups = [str(group) for group in entry.memberOf.values]
+                    for admin_group in admin_groups:
+                        if any(admin_group.lower() in group.lower() for group in user_groups):
+                            is_admin = True
+                            break
+                
+                # Add user based on type filter
+                if (user_type == 'Admin Users' and is_admin) or (user_type == 'Regular Users' and not is_admin):
+                    users.append({
+                        'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                        'displayName': entry.displayName.value if entry.displayName else entry.sAMAccountName.value if entry.sAMAccountName else 'Unknown'
+                    })
+    
+    return {"users": users} 

@@ -2,8 +2,9 @@ import os
 import json
 import ldap3
 from ldap3.core.exceptions import LDAPException, LDAPBindError
-from collections import namedtuple
+from collections import namedtuple, Counter
 from contextlib import contextmanager
+import datetime
 
 CONFIG_PATH = 'app/ad_config.json'
 
@@ -14,15 +15,25 @@ Group = namedtuple('Group', ['dn', 'name'])
 @contextmanager
 def ad_connection(**kwargs):
     """Context manager for handling ldap3 connections."""
-    server_uri = f"ldap://{kwargs['server']}"
-    server = ldap3.Server(server_uri, get_info=ldap3.ALL)
-    conn = ldap3.Connection(server, user=kwargs['bind_user'], password=kwargs['bind_password'], auto_bind=True, raise_exceptions=True)
+    # Map configuration keys to expected parameter names
+    server = kwargs.get('server') or kwargs.get('ad_server')
+    bind_user = kwargs.get('bind_user') or kwargs.get('ad_bind_dn')
+    bind_password = kwargs.get('bind_password') or kwargs.get('ad_password')
+    base_dn = kwargs.get('base_dn') or kwargs.get('ad_base_dn')
+    
+    server_uri = f"ldap://{server}"
+    server_obj = ldap3.Server(server_uri, get_info=ldap3.ALL)
+    conn = ldap3.Connection(server_obj, user=bind_user, password=bind_password, auto_bind=True, raise_exceptions=True)
     try:
         yield conn
     finally:
         conn.unbind()
 
 # --- Configuration ---
+
+def _get_base_dn(ad_args):
+    """Helper function to get base_dn with proper mapping"""
+    return ad_args.get('base_dn') or ad_args.get('ad_base_dn')
 
 def save_ad_config(config):
     with open(CONFIG_PATH, 'w') as f:
@@ -53,10 +64,11 @@ def test_ad_connection(**ad_args):
 def search_users(query, **ad_args):
     users = []
     filter_str = f'(|(sAMAccountName=*{query}*)(displayName=*{query}*)(mail=*{query}*))' if query else '(objectClass=user)'
+    base_dn = _get_base_dn(ad_args)
     
     with ad_connection(**ad_args) as conn:
         try:
-            conn.search(ad_args['base_dn'], filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass'])
+            conn.search(base_dn, filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass'])
             
             for entry in conn.entries:
                 # Check if this is a user object
@@ -69,11 +81,22 @@ def search_users(query, **ad_args):
                         is_user = 'user' in str(object_classes) and 'computer' not in str(object_classes)
                 
                 if is_user:
+                    # Parse OU from DN - show only the two closest OUs to the user
+                    dn_parts = entry.distinguishedName.value.split(',')
+                    ou_parts = [part[3:] for part in dn_parts if part.startswith('OU=')]
+                    
+                    # Show only the two closest OUs (parent and parent's parent)
+                    if ou_parts:
+                        ou = ' → '.join(ou_parts[:2])
+                    else:
+                        ou = 'Domain Root'
+                    
                     users.append({
                         'dn': entry.distinguishedName.value,
                         'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
                         'displayName': entry.displayName.value if entry.displayName else '',
                         'mail': entry.mail.value if entry.mail else '',
+                        'ou': ou
                     })
         except LDAPException as e:
             print(f"Error searching users: {e}") # Log error
@@ -222,8 +245,19 @@ def get_all_groups(**ad_args):
 
 def add_user_to_group(user_dn, group_dn, **ad_args):
     with ad_connection(**ad_args) as conn:
-        result = conn.modify(group_dn, {'member': [(ldap3.MODIFY_ADD, [user_dn])]})
-        return (True, "User added to group.") if result else (False, f"Failed to add user to group: {conn.result['description']}")
+        # Check if user is already a member
+        conn.search(group_dn, '(objectClass=group)', attributes=['member'])
+        if conn.entries and hasattr(conn.entries[0], 'member') and conn.entries[0].member:
+            members = conn.entries[0].member.value
+            if user_dn in members:
+                return (True, "User is already a member of the group.")
+        try:
+            result = conn.modify(group_dn, {'member': [(ldap3.MODIFY_ADD, [user_dn])]})
+            return (True, "User added to group.") if result else (False, f"Failed to add user to group: {conn.result['description']}")
+        except ldap3.core.exceptions.LDAPEntryAlreadyExistsResult:
+            return (True, "User is already a member of the group.")
+        except Exception as e:
+            return (False, f"Error adding user to group: {e}")
 
 def remove_user_from_group(user_dn, group_dn, **ad_args):
     with ad_connection(**ad_args) as conn:
@@ -292,11 +326,23 @@ def authenticate_user(username, password):
 def get_ad_statistics(**ad_args):
     stats = {
         'total_users': 0, 'enabled_users': 0, 'locked_users': 0, 
-        'total_computers': 0, 'total_groups': 0, 'total_ous': 0
+        'total_computers': 0, 'total_groups': 0, 'total_ous': 0,
+        'recent_logins': [],
+        'expired_passwords': [],
+        'os_breakdown': {},
+        'client_os_breakdown': {},
+        'server_os_breakdown': {},
+        'group_types': {},
+        'user_types_breakdown': {}
     }
+    max_password_age_days = 90  # TODO: make dynamic from AD policy
+    now = datetime.datetime.utcnow()
+    user_login_info = []
+    expired_pw_users = []
+    from .ad import get_os_breakdown, get_group_types_for_user
     with ad_connection(**ad_args) as conn:
         # Get users
-        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['userAccountControl', 'objectClass'])
+        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['userAccountControl', 'objectClass', 'sAMAccountName', 'displayName', 'lastLogonTimestamp', 'pwdLastSet'])
         user_entries = [
             e for e in conn.entries
             if hasattr(e, "objectClass") and e.objectClass.value and 'user' in e.objectClass.value and 'computer' not in e.objectClass.value
@@ -306,19 +352,57 @@ def get_ad_statistics(**ad_args):
             uac = entry.userAccountControl.value if entry.userAccountControl else 0
             if not (uac & 2): stats['enabled_users'] += 1
             if uac & 16: stats['locked_users'] += 1
-        
+            # Recent logins
+            last_logon = None
+            if hasattr(entry, 'lastLogonTimestamp') and entry.lastLogonTimestamp.value:
+                try:
+                    # Convert AD timestamp to datetime
+                    last_logon = datetime.datetime.utcfromtimestamp((int(entry.lastLogonTimestamp.value) - 116444736000000000) / 10000000)
+                except Exception:
+                    last_logon = None
+            user_login_info.append({
+                'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                'displayName': entry.displayName.value if entry.displayName else '',
+                'lastLogon': last_logon
+            })
+            # Expired passwords
+            pwd_last_set = None
+            if hasattr(entry, 'pwdLastSet') and entry.pwdLastSet.value:
+                try:
+                    pwd_last_set = datetime.datetime.utcfromtimestamp((int(entry.pwdLastSet.value) - 116444736000000000) / 10000000)
+                except Exception:
+                    pwd_last_set = None
+            if pwd_last_set:
+                days_since = (now - pwd_last_set).days
+                if days_since > max_password_age_days:
+                    expired_pw_users.append({
+                        'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                        'displayName': entry.displayName.value if entry.displayName else '',
+                        'days_since_pwd_set': days_since
+                    })
+        # Top 10 recent logins
+        stats['recent_logins'] = sorted(
+            [u for u in user_login_info if u['lastLogon']],
+            key=lambda x: x['lastLogon'], reverse=True
+        )[:10]
+        # Expired passwords
+        stats['expired_passwords'] = expired_pw_users
         # Get computers
         conn.search(ad_args['base_dn'], '(objectClass=computer)', search_scope=ldap3.SUBTREE, attributes=['distinguishedName'])
         stats['total_computers'] = len(conn.entries)
-
         # Get groups
         conn.search(ad_args['base_dn'], '(objectClass=group)', search_scope=ldap3.SUBTREE, attributes=['distinguishedName'])
-        stats['total_groups'] = len(conn.entries)
-        
+        group_dns = [e.distinguishedName.value for e in conn.entries if hasattr(e, 'distinguishedName') and e.distinguishedName]
+        stats['total_groups'] = len(group_dns)
         # Get OUs
         conn.search(ad_args['base_dn'], '(objectClass=organizationalUnit)', search_scope=ldap3.SUBTREE, attributes=['distinguishedName'])
         stats['total_ous'] = len(conn.entries)
-
+    # Add OS breakdown and group types
+    stats['os_breakdown'] = get_os_breakdown(**ad_args)
+    stats['client_os_breakdown'] = get_client_os_breakdown(**ad_args)
+    stats['server_os_breakdown'] = get_server_os_breakdown(**ad_args)
+    stats['group_types'] = get_group_types_for_user(group_dns, **ad_args)
+    stats['user_types_breakdown'] = get_user_types_breakdown(**ad_args)
     return True, stats
 
 def get_ad_health_status(**ad_args):
@@ -450,4 +534,133 @@ def get_user_ou(user_dn, **ad_args):
         except Exception as e:
             print(f"Error getting user OU: {e}")
     
-    return ad_args['base_dn'] 
+    return ad_args['base_dn']
+
+def get_group_types_for_user(user_groups, **ad_args):
+    # user_groups: list of group DNs
+    group_type_map = {
+        2: 'Global Security',
+        4: 'Domain Local Security',
+        8: 'Universal Security',
+        -2147483646: 'Global Distribution',
+        -2147483644: 'Domain Local Distribution',
+        -2147483640: 'Universal Distribution',
+    }
+    type_counts = Counter()
+    with ad_connection(**ad_args) as conn:
+        for group_dn in user_groups:
+            if conn.search(group_dn, '(objectClass=group)', attributes=['groupType']):
+                entry = conn.entries[0]
+                group_type_val = entry.groupType.value if hasattr(entry, 'groupType') and entry.groupType else None
+                group_type_str = group_type_map.get(group_type_val, str(group_type_val) if group_type_val else 'Unknown')
+                type_counts[group_type_str] += 1
+    return dict(type_counts)
+
+def get_client_os_breakdown(**ad_args):
+    # Returns a dict: { 'Windows XP': n, 'Windows 7': n, ... }
+    os_versions = Counter()
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], '(objectClass=computer)', search_scope=ldap3.SUBTREE, attributes=['operatingSystem'])
+        for entry in conn.entries:
+            os_name = entry.operatingSystem.value if hasattr(entry, 'operatingSystem') and entry.operatingSystem else 'Unknown'
+            if os_name:
+                if 'Windows XP' in os_name:
+                    os_versions['Windows XP'] += 1
+                elif 'Windows 7' in os_name:
+                    os_versions['Windows 7'] += 1
+                elif 'Windows 8' in os_name:
+                    os_versions['Windows 8'] += 1
+                elif 'Windows 10' in os_name:
+                    os_versions['Windows 10'] += 1
+                elif 'Windows 11' in os_name:
+                    os_versions['Windows 11'] += 1
+                else:
+                    # Only count as Other if it's not a server OS
+                    if not any(server_os in os_name for server_os in ['Windows Server 2008', 'Windows Server 2012', 'Windows Server 2016', 'Windows Server 2019', 'Windows Server 2022']):
+                        os_versions['Other'] += 1
+            else:
+                os_versions['Unknown'] += 1
+    return dict(os_versions)
+
+def get_server_os_breakdown(**ad_args):
+    # Returns a dict: { 'Windows Server 2008': n, 'Windows Server 2012': n, ... }
+    os_versions = Counter()
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], '(objectClass=computer)', search_scope=ldap3.SUBTREE, attributes=['operatingSystem'])
+        for entry in conn.entries:
+            os_name = entry.operatingSystem.value if hasattr(entry, 'operatingSystem') and entry.operatingSystem else 'Unknown'
+            if os_name:
+                if 'Windows Server 2008' in os_name:
+                    os_versions['Windows Server 2008'] += 1
+                elif 'Windows Server 2012' in os_name:
+                    os_versions['Windows Server 2012'] += 1
+                elif 'Windows Server 2016' in os_name:
+                    os_versions['Windows Server 2016'] += 1
+                elif 'Windows Server 2019' in os_name:
+                    os_versions['Windows Server 2019'] += 1
+                elif 'Windows Server 2022' in os_name:
+                    os_versions['Windows Server 2022'] += 1
+    return dict(os_versions)
+
+def get_os_breakdown(**ad_args):
+    # Returns a dict: { 'Windows XP': n, 'Windows 7': n, ... }
+    os_versions = Counter()
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], '(objectClass=computer)', search_scope=ldap3.SUBTREE, attributes=['operatingSystem'])
+        for entry in conn.entries:
+            os_name = entry.operatingSystem.value if hasattr(entry, 'operatingSystem') and entry.operatingSystem else 'Unknown'
+            if os_name:
+                if 'Windows XP' in os_name:
+                    os_versions['Windows XP'] += 1
+                elif 'Windows 7' in os_name:
+                    os_versions['Windows 7'] += 1
+                elif 'Windows 8' in os_name:
+                    os_versions['Windows 8'] += 1
+                elif 'Windows 10' in os_name:
+                    os_versions['Windows 10'] += 1
+                elif 'Windows 11' in os_name:
+                    os_versions['Windows 11'] += 1
+                elif 'Windows Server 2008' in os_name:
+                    os_versions['Windows Server 2008'] += 1
+                elif 'Windows Server 2012' in os_name:
+                    os_versions['Windows Server 2012'] += 1
+                elif 'Windows Server 2016' in os_name:
+                    os_versions['Windows Server 2016'] += 1
+                elif 'Windows Server 2019' in os_name:
+                    os_versions['Windows Server 2019'] += 1
+                elif 'Windows Server 2022' in os_name:
+                    os_versions['Windows Server 2022'] += 1
+                else:
+                    os_versions['Other'] += 1
+            else:
+                os_versions['Unknown'] += 1
+    return dict(os_versions)
+
+def get_user_types_breakdown(**ad_args):
+    # Returns a dict: { 'Admin Users': n, 'Regular Users': n }
+    admin_users = 0
+    regular_users = 0
+    admin_groups = get_admin_groups()
+    
+    with ad_connection(**ad_args) as conn:
+        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'memberOf'])
+        for entry in conn.entries:
+            if hasattr(entry, "objectClass") and entry.objectClass.value and 'user' in entry.objectClass.value and 'computer' not in entry.objectClass.value:
+                # Check if user is in any admin group
+                is_admin = False
+                if hasattr(entry, 'memberOf') and entry.memberOf:
+                    user_groups = [str(group) for group in entry.memberOf.values]
+                    for admin_group in admin_groups:
+                        if any(admin_group.lower() in group.lower() for group in user_groups):
+                            is_admin = True
+                            break
+                
+                if is_admin:
+                    admin_users += 1
+                else:
+                    regular_users += 1
+    
+    return {
+        'Admin Users': admin_users,
+        'Regular Users': regular_users
+    } 

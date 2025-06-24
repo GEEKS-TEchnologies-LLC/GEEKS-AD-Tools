@@ -7,6 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <style>
         body {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -66,31 +67,31 @@
             <div class="col-md-3">
                 <div class="stat-card">
                     <h5><i class="fas fa-users text-primary"></i> Total Users</h5>
-                    <h2 class="display-5">{{ ad_stats.total_users }}</h2>
+                    <h2 class="display-5">{{ ad_stats.get('total_users', 0) }}</h2>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="stat-card">
                     <h5><i class="fas fa-desktop text-info"></i> Total Computers</h5>
-                    <h2 class="display-5">{{ ad_stats.total_computers }}</h2>
+                    <h2 class="display-5">{{ ad_stats.get('total_computers', 0) }}</h2>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="stat-card">
                     <h5><i class="fas fa-users-cog text-success"></i> Total Groups</h5>
-                    <h2 class="display-5">{{ ad_stats.total_groups }}</h2>
+                    <h2 class="display-5">{{ ad_stats.get('total_groups', 0) }}</h2>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="stat-card">
                     <h5><i class="fas fa-sitemap text-warning"></i> Total OUs</h5>
-                    <h2 class="display-5">{{ ad_stats.total_ous }}</h2>
+                    <h2 class="display-5">{{ ad_stats.get('total_ous', 0) }}</h2>
                 </div>
             </div>
         </div>
         
         <div class="row mt-4">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card h-100">
                     <div class="card-header bg-primary text-white">
                         <h5 class="mb-0"><i class="fas fa-user-friends"></i> User Status</h5>
@@ -100,23 +101,33 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card h-100">
-                    <div class="card-header bg-info text-white">
-                        <h5 class="mb-0"><i class="fas fa-desktop"></i> Computer OS Breakdown</h5>
+                    <div class="card-header bg-warning text-white">
+                        <h5 class="mb-0"><i class="fas fa-server"></i> Server OS</h5>
                     </div>
                     <div class="card-body">
-                        <canvas id="osChart"></canvas>
+                        <canvas id="serverOsChart"></canvas>
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card h-100">
-                    <div class="card-header bg-success text-white">
-                        <h5 class="mb-0"><i class="fas fa-users-cog"></i> Group Types</h5>
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="fas fa-desktop"></i> Client OS</h5>
                     </div>
                     <div class="card-body">
-                        <canvas id="groupTypeChart"></canvas>
+                        <canvas id="clientOsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="fas fa-users-cog"></i> User Types</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="userTypesChart"></canvas>
                     </div>
                 </div>
             </div>
@@ -164,8 +175,34 @@
         {% endif %}
     </div>
 
+    <!-- Drill-down Modal -->
+    <div class="modal fade" id="drilldownModal" tabindex="-1" aria-labelledby="drilldownModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="drilldownModalLabel">Details</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" id="drilldownModalBody">
+            <!-- Drill-down content will be loaded here -->
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script>
     {% if ad_stats %}
+        // Helper function for drill-down modal
+        function showDrilldownModal(title, html) {
+            console.log('showDrilldownModal called with:', title, html);
+            console.log('Bootstrap available:', typeof bootstrap !== 'undefined');
+            document.getElementById('drilldownModalLabel').textContent = title;
+            document.getElementById('drilldownModalBody').innerHTML = html;
+            var modal = new bootstrap.Modal(document.getElementById('drilldownModal'));
+            console.log('Modal object:', modal);
+            modal.show();
+        }
+
         // User Status Chart
         const userStatusCtx = document.getElementById('userStatusChart').getContext('2d');
         new Chart(userStatusCtx, {
@@ -175,10 +212,10 @@
                 datasets: [{
                     label: 'User Status',
                     data: [
-                        {{ ad_stats.enabled_users }}, 
-                        {{ ad_stats.total_users - ad_stats.enabled_users }}, 
-                        {{ ad_stats.locked_users }}, 
-                        {{ ad_stats.password_expired }}
+                        {{ ad_stats.get('enabled_users', 0) }}, 
+                        {{ ad_stats.get('total_users', 0) - ad_stats.get('enabled_users', 0) }}, 
+                        {{ ad_stats.get('locked_users', 0) }}, 
+                        {{ ad_stats.get('password_expired', 0) }}
                     ],
                     backgroundColor: [
                         'rgba(40, 167, 69, 0.7)',
@@ -209,29 +246,39 @@
             }
         });
 
-        // OS Breakdown Chart
-        const osCtx = document.getElementById('osChart').getContext('2d');
-        const osData = {{ ad_stats.os_breakdown | tojson }};
-        new Chart(osCtx, {
+        // Client OS Chart
+        const clientOsCtx = document.getElementById('clientOsChart').getContext('2d');
+        const clientOsData = {{ ad_stats.get('client_os_breakdown', {}) | tojson }};
+        const clientOsChart = new Chart(clientOsCtx, {
             type: 'bar',
             data: {
-                labels: Object.keys(osData),
+                labels: Object.keys(clientOsData),
                 datasets: [{
                     label: 'Number of Computers',
-                    data: Object.values(osData),
+                    data: Object.values(clientOsData),
                     backgroundColor: [
                         'rgba(0, 123, 255, 0.7)',
                         'rgba(23, 162, 184, 0.7)',
                         'rgba(40, 167, 69, 0.7)',
                         'rgba(255, 193, 7, 0.7)',
-                        'rgba(220, 53, 69, 0.7)'
+                        'rgba(220, 53, 69, 0.7)',
+                        'rgba(102, 126, 234, 0.7)',
+                        'rgba(118, 75, 162, 0.7)',
+                        'rgba(253, 126, 20, 0.7)',
+                        'rgba(108, 117, 125, 0.7)',
+                        'rgba(32, 201, 151, 0.7)'
                     ],
                     borderColor: [
                         'rgba(0, 123, 255, 1)',
                         'rgba(23, 162, 184, 1)',
                         'rgba(40, 167, 69, 1)',
                         'rgba(255, 193, 7, 1)',
-                        'rgba(220, 53, 69, 1)'
+                        'rgba(220, 53, 69, 1)',
+                        'rgba(102, 126, 234, 1)',
+                        'rgba(118, 75, 162, 1)',
+                        'rgba(253, 126, 20, 1)',
+                        'rgba(108, 117, 125, 1)',
+                        'rgba(32, 201, 151, 1)'
                     ],
                     borderWidth: 1
                 }]
@@ -244,38 +291,144 @@
                     },
                     title: {
                         display: true,
-                        text: 'Computer Operating Systems'
+                        text: 'Client Operating Systems'
                     }
                 },
                 scales: {
                     y: {
                         beginAtZero: true
                     }
+                },
+                onClick: function(evt, elements) {
+                    console.log('Chart clicked!', evt, elements);
+                    if (elements.length > 0) {
+                        const idx = elements[0].index;
+                        const osLabel = this.data.labels[idx];
+                        console.log('OS Label:', osLabel);
+                        fetch(`/admin/drilldown/computers?os=${encodeURIComponent(osLabel)}`)
+                            .then(resp => resp.json())
+                            .then(data => {
+                                console.log('Fetched data:', data);
+                                let html = `<h6>Computers with OS: <b>${osLabel}</b></h6>`;
+                                if (data.computers && data.computers.length > 0) {
+                                    html += '<ul class="list-group">';
+                                    data.computers.forEach(c => {
+                                        html += `<li class='list-group-item d-flex justify-content-between align-items-center'>${c.name}<span class='badge bg-info'>${c.os}</span></li>`;
+                                    });
+                                    html += '</ul>';
+                                } else {
+                                    html += '<div class="text-muted">No computers found for this OS.</div>';
+                                }
+                                showDrilldownModal(`Computers: ${osLabel}`, html);
+                            })
+                            .catch(error => {
+                                console.error('Error fetching data:', error);
+                            });
+                    }
                 }
             }
         });
 
-        // Group Type Chart
-        const groupTypeCtx = document.getElementById('groupTypeChart').getContext('2d');
-        const groupTypeData = {{ ad_stats.group_types | tojson }};
-        new Chart(groupTypeCtx, {
-            type: 'pie',
+        // Server OS Chart
+        const serverOsCtx = document.getElementById('serverOsChart').getContext('2d');
+        const serverOsData = {{ ad_stats.get('server_os_breakdown', {}) | tojson }};
+        const serverOsChart = new Chart(serverOsCtx, {
+            type: 'bar',
             data: {
-                labels: Object.keys(groupTypeData),
+                labels: Object.keys(serverOsData),
                 datasets: [{
-                    label: 'Group Types',
-                    data: Object.values(groupTypeData),
+                    label: 'Number of Computers',
+                    data: Object.values(serverOsData),
                     backgroundColor: [
+                        'rgba(0, 123, 255, 0.7)',
+                        'rgba(23, 162, 184, 0.7)',
+                        'rgba(40, 167, 69, 0.7)',
+                        'rgba(255, 193, 7, 0.7)',
+                        'rgba(220, 53, 69, 0.7)',
                         'rgba(102, 126, 234, 0.7)',
                         'rgba(118, 75, 162, 0.7)',
-                        'rgba(23, 162, 184, 0.7)',
-                        'rgba(255, 193, 7, 0.7)'
+                        'rgba(253, 126, 20, 0.7)',
+                        'rgba(108, 117, 125, 0.7)',
+                        'rgba(32, 201, 151, 0.7)'
                     ],
                     borderColor: [
+                        'rgba(0, 123, 255, 1)',
+                        'rgba(23, 162, 184, 1)',
+                        'rgba(40, 167, 69, 1)',
+                        'rgba(255, 193, 7, 1)',
+                        'rgba(220, 53, 69, 1)',
                         'rgba(102, 126, 234, 1)',
                         'rgba(118, 75, 162, 1)',
-                        'rgba(23, 162, 184, 1)',
-                        'rgba(255, 193, 7, 1)'
+                        'rgba(253, 126, 20, 1)',
+                        'rgba(108, 117, 125, 1)',
+                        'rgba(32, 201, 151, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    title: {
+                        display: true,
+                        text: 'Server Operating Systems'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                },
+                onClick: function(evt, elements) {
+                    console.log('Chart clicked!', evt, elements);
+                    if (elements.length > 0) {
+                        const idx = elements[0].index;
+                        const osLabel = this.data.labels[idx];
+                        console.log('OS Label:', osLabel);
+                        fetch(`/admin/drilldown/computers?os=${encodeURIComponent(osLabel)}`)
+                            .then(resp => resp.json())
+                            .then(data => {
+                                console.log('Fetched data:', data);
+                                let html = `<h6>Computers with OS: <b>${osLabel}</b></h6>`;
+                                if (data.computers && data.computers.length > 0) {
+                                    html += '<ul class="list-group">';
+                                    data.computers.forEach(c => {
+                                        html += `<li class='list-group-item d-flex justify-content-between align-items-center'>${c.name}<span class='badge bg-info'>${c.os}</span></li>`;
+                                    });
+                                    html += '</ul>';
+                                } else {
+                                    html += '<div class="text-muted">No computers found for this OS.</div>';
+                                }
+                                showDrilldownModal(`Computers: ${osLabel}`, html);
+                            })
+                            .catch(error => {
+                                console.error('Error fetching data:', error);
+                            });
+                    }
+                }
+            }
+        });
+
+        // User Types Chart
+        const userTypesCtx = document.getElementById('userTypesChart').getContext('2d');
+        const userTypesData = {{ ad_stats.get('user_types_breakdown', {}) | tojson }};
+        const userTypesChart = new Chart(userTypesCtx, {
+            type: 'pie',
+            data: {
+                labels: Object.keys(userTypesData),
+                datasets: [{
+                    label: 'User Types',
+                    data: Object.values(userTypesData),
+                    backgroundColor: [
+                        'rgba(220, 53, 69, 0.7)',
+                        'rgba(40, 167, 69, 0.7)'
+                    ],
+                    borderColor: [
+                        'rgba(220, 53, 69, 1)',
+                        'rgba(40, 167, 69, 1)'
                     ],
                     borderWidth: 1
                 }]
@@ -288,7 +441,34 @@
                     },
                     title: {
                         display: true,
-                        text: 'AD Group Types'
+                        text: 'Admin vs Regular Users'
+                    }
+                },
+                onClick: function(evt, elements) {
+                    console.log('Chart clicked!', evt, elements);
+                    if (elements.length > 0) {
+                        const idx = elements[0].index;
+                        const userTypeLabel = this.data.labels[idx];
+                        console.log('User Type Label:', userTypeLabel);
+                        fetch(`/admin/drilldown/users?type=${encodeURIComponent(userTypeLabel)}`)
+                            .then(resp => resp.json())
+                            .then(data => {
+                                console.log('Fetched data:', data);
+                                let html = `<h6>Users of type: <b>${userTypeLabel}</b></h6>`;
+                                if (data.users && data.users.length > 0) {
+                                    html += '<ul class="list-group">';
+                                    data.users.forEach(u => {
+                                        html += `<li class='list-group-item d-flex justify-content-between align-items-center'>${u.displayName}<small class='text-muted'>${u.username}</small></li>`;
+                                    });
+                                    html += '</ul>';
+                                } else {
+                                    html += '<div class="text-muted">No users found for this type.</div>';
+                                }
+                                showDrilldownModal(`Users: ${userTypeLabel}`, html);
+                            })
+                            .catch(error => {
+                                console.error('Error fetching data:', error);
+                            });
                     }
                 }
             }
