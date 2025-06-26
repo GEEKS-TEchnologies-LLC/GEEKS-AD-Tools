@@ -267,6 +267,47 @@
                 -1px  1px 0 #000,
                  1px  1px 0 #000;
         }
+
+        .group-item {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-left: 4px solid #667eea;
+        }
+        
+        /* Searchable Dropdown Styles */
+        #groupDropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+            background: white;
+        }
+        
+        #groupDropdown .dropdown-item {
+            padding: 0.5rem 1rem;
+            border-bottom: 1px solid #f8f9fa;
+            transition: background-color 0.15s ease-in-out;
+        }
+        
+        #groupDropdown .dropdown-item:hover,
+        #groupDropdown .dropdown-item.active {
+            background-color: #e9ecef;
+            color: #495057;
+        }
+        
+        #groupDropdown .dropdown-item:last-child {
+            border-bottom: none;
+        }
+        
+        .position-relative {
+            position: relative;
+        }
     </style>
 </head>
 <body>
@@ -341,7 +382,7 @@
                         </button>
                         <ul class="dropdown-menu">
                             <li><a class="dropdown-item" href="{{ url_for('main.admin_groups') }}"><i class="fas fa-user-circle"></i> Profile</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('main.admin_logout') }}"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('main.unified_logout') }}"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
                         </ul>
                     </div>
                 </div>
@@ -349,6 +390,19 @@
 
             <!-- Settings Content -->
             <div class="container-fluid p-4">
+                <!-- Flash Messages -->
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                  {% if messages %}
+                    {% for category, message in messages %}
+                      <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                        <i class="fas fa-{{ 'exclamation-triangle' if category == 'error' else 'check-circle' }} me-2"></i>
+                        <span class="alert-message">{{ message }}</span>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                      </div>
+                    {% endfor %}
+                  {% endif %}
+                {% endwith %}
+                
                 <div class="glass-card">
                     <h2><i class="fas fa-cog"></i> Settings</h2>
                     <p class="text-muted">Configure system settings, customization, and admin groups.</p>
@@ -367,8 +421,23 @@
                         </button>
                     </li>
                     <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="homepage-tab" data-bs-toggle="tab" data-bs-target="#homepage" type="button" role="tab">
+                            <i class="fas fa-home"></i> Homepage
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="password-policy-tab" data-bs-toggle="tab" data-bs-target="#password-policy" type="button" role="tab">
+                            <i class="fas fa-shield-alt"></i> Password Policy
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
                         <button class="nav-link" id="admins-tab" data-bs-toggle="tab" data-bs-target="#admins" type="button" role="tab">
                             <i class="fas fa-user-shield"></i> Admin Groups
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="debug-tab" data-bs-toggle="tab" data-bs-target="#debug" type="button" role="tab">
+                            <i class="fas fa-bug"></i> Debug Settings
                         </button>
                     </li>
                 </ul>
@@ -383,21 +452,21 @@
                                     <div class="col-md-6">
                                         <div class="mb-3">
                                             <label for="ad_server" class="form-label">AD Server</label>
-                                            <input type="text" class="form-control" id="ad_server" name="ad_server" value="{{ ad_config.get('ad_server', '') }}" required>
+                                            <input type="text" class="form-control" id="ad_server" name="ad_server" value="{{ config.get('ad_server', '') }}" required>
                                         </div>
                                         <div class="mb-3">
                                             <label for="ad_user" class="form-label">AD Username</label>
-                                            <input type="text" class="form-control" id="ad_user" name="ad_user" value="{{ ad_config.get('ad_user', '') }}" required>
+                                            <input type="text" class="form-control" id="ad_user" name="ad_user" value="{{ config.get('ad_user', '') }}" required>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="mb-3">
                                             <label for="ad_password" class="form-label">AD Password</label>
-                                            <input type="password" class="form-control" id="ad_password" name="ad_password" value="{{ ad_config.get('ad_password', '') }}" required>
+                                            <input type="password" class="form-control" id="ad_password" name="ad_password" value="{{ config.get('ad_password', '') }}" required>
                                         </div>
                                         <div class="mb-3">
                                             <label for="ad_base_dn" class="form-label">Base DN</label>
-                                            <input type="text" class="form-control" id="ad_base_dn" name="ad_base_dn" value="{{ ad_config.get('ad_base_dn', '') }}" required>
+                                            <input type="text" class="form-control" id="ad_base_dn" name="ad_base_dn" value="{{ config.get('ad_base_dn', '') }}" required>
                                         </div>
                                     </div>
                                 </div>
@@ -446,6 +515,290 @@
                         </div>
                     </div>
 
+                    <!-- Homepage Tab -->
+                    <div class="tab-pane fade" id="homepage" role="tabpanel">
+                        <div class="glass-card">
+                            <h4><i class="fas fa-home"></i> Homepage Configuration</h4>
+                            <p class="text-muted">Configure the homepage content, feature cards, and links for end users.</p>
+                            
+                            <form method="POST" action="{{ url_for('main.admin_settings') }}">
+                                <!-- General Homepage Settings -->
+                                <h5 class="mb-3"><i class="fas fa-cog"></i> General Settings</h5>
+                                <div class="row mb-4">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="homepage_title" class="form-label">Welcome Title</label>
+                                            <input type="text" class="form-control" id="homepage_title" name="homepage_title" 
+                                                   value="{{ branding.get('homepage_title', 'Welcome to GEEKS-AD-Plus') }}">
+                                            <div class="form-text">Main title displayed on the homepage</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="homepage_subtitle" class="form-label">Welcome Subtitle</label>
+                                            <input type="text" class="form-control" id="homepage_subtitle" name="homepage_subtitle" 
+                                                   value="{{ branding.get('homepage_subtitle', 'This portal allows you to reset your Active Directory password securely and manage your organization\'s AD infrastructure.') }}">
+                                            <div class="form-text">Subtitle displayed below the main title</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Feature Cards Configuration -->
+                                <h5 class="mb-3"><i class="fas fa-th-large"></i> Feature Cards</h5>
+                                
+                                <!-- Password Reset Card (Always shown) -->
+                                <div class="row mb-3">
+                                    <div class="col-12">
+                                        <div class="card bg-dark text-light">
+                                            <div class="card-header">
+                                                <h6 class="mb-0"><i class="fas fa-key text-success"></i> Password Reset Card</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <p class="text-muted mb-2">This card is always displayed and cannot be disabled.</p>
+                                                <div class="row">
+                                                    <div class="col-md-6">
+                                                        <div class="mb-3">
+                                                            <label for="password_reset_title" class="form-label">Card Title</label>
+                                                            <input type="text" class="form-control" id="password_reset_title" name="password_reset_title" 
+                                                                   value="{{ branding.get('password_reset_title', 'Password Reset') }}">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="mb-3">
+                                                            <label for="password_reset_description" class="form-label">Card Description</label>
+                                                            <input type="text" class="form-control" id="password_reset_description" name="password_reset_description" 
+                                                                   value="{{ branding.get('password_reset_description', 'Securely reset your Active Directory password with self-service functionality.') }}">
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Bug Reporting Card -->
+                                <div class="row mb-3">
+                                    <div class="col-12">
+                                        <div class="card bg-dark text-light">
+                                            <div class="card-header">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0"><i class="fas fa-bug text-warning"></i> Bug Reporting Card</h6>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" id="show_bug_reporting" name="show_bug_reporting" 
+                                                               {{ 'checked' if branding.get('show_bug_reporting', True) else '' }}>
+                                                        <label class="form-check-label" for="show_bug_reporting">Show Card</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="row">
+                                                    <div class="col-md-4">
+                                                        <div class="mb-3">
+                                                            <label for="bug_reporting_title" class="form-label">Card Title</label>
+                                                            <input type="text" class="form-control" id="bug_reporting_title" name="bug_reporting_title" 
+                                                                   value="{{ branding.get('bug_reporting_title', 'Bug Reporting') }}">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="mb-3">
+                                                            <label for="bug_reporting_description" class="form-label">Card Description</label>
+                                                            <input type="text" class="form-control" id="bug_reporting_description" name="bug_reporting_description" 
+                                                                   value="{{ branding.get('bug_reporting_description', 'Report issues and bugs with detailed system information for quick resolution.') }}">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <div class="mb-3">
+                                                            <label for="bug_reporting_link" class="form-label">Button Link URL</label>
+                                                            <input type="text" class="form-control" id="bug_reporting_link" name="bug_reporting_link" 
+                                                                   value="{{ branding.get('bug_reporting_link', '/bug-report') }}">
+                                                            <div class="form-text">URL for the "Report Bug" button</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Custom Feature Card 1 -->
+                                <div class="row mb-3">
+                                    <div class="col-12">
+                                        <div class="card bg-dark text-light">
+                                            <div class="card-header">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0"><i class="fas fa-plus text-info"></i> Custom Feature Card 1</h6>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" id="show_custom_card_1" name="show_custom_card_1" 
+                                                               {{ 'checked' if branding.get('show_custom_card_1', False) else '' }}>
+                                                        <label class="form-check-label" for="show_custom_card_1">Show Card</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="row">
+                                                    <div class="col-md-3">
+                                                        <div class="mb-3">
+                                                            <label for="custom_card_1_icon" class="form-label">Icon Class</label>
+                                                            <input type="text" class="form-control" id="custom_card_1_icon" name="custom_card_1_icon" 
+                                                                   value="{{ branding.get('custom_card_1_icon', 'fas fa-info') }}" placeholder="fas fa-info">
+                                                            <div class="form-text">FontAwesome icon class</div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="mb-3">
+                                                            <label for="custom_card_1_title" class="form-label">Card Title</label>
+                                                            <input type="text" class="form-control" id="custom_card_1_title" name="custom_card_1_title" 
+                                                                   value="{{ branding.get('custom_card_1_title', '') }}">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="mb-3">
+                                                            <label for="custom_card_1_description" class="form-label">Card Description</label>
+                                                            <input type="text" class="form-control" id="custom_card_1_description" name="custom_card_1_description" 
+                                                                   value="{{ branding.get('custom_card_1_description', '') }}">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="mb-3">
+                                                            <label for="custom_card_1_link" class="form-label">Button Link URL</label>
+                                                            <input type="text" class="form-control" id="custom_card_1_link" name="custom_card_1_link" 
+                                                                   value="{{ branding.get('custom_card_1_link', '') }}">
+                                                            <div class="form-text">Optional button link</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Custom Feature Card 2 -->
+                                <div class="row mb-4">
+                                    <div class="col-12">
+                                        <div class="card bg-dark text-light">
+                                            <div class="card-header">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0"><i class="fas fa-plus text-info"></i> Custom Feature Card 2</h6>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" id="show_custom_card_2" name="show_custom_card_2" 
+                                                               {{ 'checked' if branding.get('show_custom_card_2', False) else '' }}>
+                                                        <label class="form-check-label" for="show_custom_card_2">Show Card</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="row">
+                                                    <div class="col-md-3">
+                                                        <div class="mb-3">
+                                                            <label for="custom_card_2_icon" class="form-label">Icon Class</label>
+                                                            <input type="text" class="form-control" id="custom_card_2_icon" name="custom_card_2_icon" 
+                                                                   value="{{ branding.get('custom_card_2_icon', 'fas fa-info') }}" placeholder="fas fa-info">
+                                                            <div class="form-text">FontAwesome icon class</div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="mb-3">
+                                                            <label for="custom_card_2_title" class="form-label">Card Title</label>
+                                                            <input type="text" class="form-control" id="custom_card_2_title" name="custom_card_2_title" 
+                                                                   value="{{ branding.get('custom_card_2_title', '') }}">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="mb-3">
+                                                            <label for="custom_card_2_description" class="form-label">Card Description</label>
+                                                            <input type="text" class="form-control" id="custom_card_2_description" name="custom_card_2_description" 
+                                                                   value="{{ branding.get('custom_card_2_description', '') }}">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="mb-3">
+                                                            <label for="custom_card_2_link" class="form-label">Button Link URL</label>
+                                                            <input type="text" class="form-control" id="custom_card_2_link" name="custom_card_2_link" 
+                                                                   value="{{ branding.get('custom_card_2_link', '') }}">
+                                                            <div class="form-text">Optional button link</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="submit" class="btn btn-primary" name="action" value="save_homepage">
+                                    <i class="fas fa-save"></i> Save Homepage Configuration
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Password Policy Tab -->
+                    <div class="tab-pane fade" id="password-policy" role="tabpanel">
+                        <div class="glass-card">
+                            <h4><i class="fas fa-shield-alt"></i> Password Policy</h4>
+                            <p class="text-muted">Configure the password policy for your organization.</p>
+                            
+                            <form method="POST" action="{{ url_for('main.admin_settings') }}">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="min_password_length" class="form-label">Minimum Password Length</label>
+                                            <input type="number" class="form-control" id="min_password_length" name="min_password_length" 
+                                                   value="{{ branding.get('min_password_length', 8) }}" min="8" max="64">
+                                            <div class="form-text">
+                                                <i class="fas fa-info-circle me-1"></i>
+                                                The minimum length of passwords for new accounts.
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <label for="max_password_age" class="form-label">Maximum Password Age (days)</label>
+                                            <input type="number" class="form-control" id="max_password_age" name="max_password_age" 
+                                                   value="{{ branding.get('max_password_age', 90) }}" min="1" max="365">
+                                            <div class="form-text">
+                                                <i class="fas fa-info-circle me-1"></i>
+                                                The maximum number of days a password can be used before it must be changed.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="password_history" class="form-label">Password History</label>
+                                            <input type="number" class="form-control" id="password_history" name="password_history" 
+                                                   value="{{ branding.get('password_history', 5) }}" min="1" max="10">
+                                            <div class="form-text">
+                                                <i class="fas fa-info-circle me-1"></i>
+                                                The number of previous passwords that cannot be reused.
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <label for="password_complexity" class="form-label">Password Complexity</label>
+                                            <select class="form-select" id="password_complexity" name="password_complexity">
+                                                <option value="low" {{ 'selected' if branding.get('password_complexity') == 'low' else '' }}>Low</option>
+                                                <option value="medium" {{ 'selected' if branding.get('password_complexity') == 'medium' else '' }}>Medium</option>
+                                                <option value="high" {{ 'selected' if branding.get('password_complexity') == 'high' else '' }}>High</option>
+                                            </select>
+                                            <div class="form-text">
+                                                <i class="fas fa-info-circle me-1"></i>
+                                                The level of complexity required for passwords.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="alert alert-warning">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <strong>Warning:</strong> Password policy settings should be carefully configured to ensure security and user convenience.
+                                </div>
+                                
+                                <button type="submit" class="btn btn-primary" name="action" value="save_password_policy">
+                                    <i class="fas fa-save"></i> Save Password Policy
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
                     <!-- Admin Groups Tab -->
                     <div class="tab-pane fade" id="admins" role="tabpanel">
                         <div class="glass-card">
@@ -454,11 +807,15 @@
                             <!-- Add New Admin Group -->
                             <form method="POST" action="{{ url_for('main.admin_settings') }}" class="mb-4">
                                 <div class="row">
-                                    <div class="col-md-4">
-                                        <input type="text" class="form-control" name="group_name" placeholder="Group Name" required>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <input type="text" class="form-control" name="group_dn" placeholder="Group DN" required>
+                                    <div class="col-md-8">
+                                        <div class="position-relative">
+                                            <input type="text" class="form-control" id="groupSearch" name="new_group" 
+                                                   placeholder="Type to search AD groups..." required autocomplete="off">
+                                            <div id="groupDropdown" class="dropdown-menu w-100" style="max-height: 300px; overflow-y: auto; display: none;">
+                                                <!-- Groups will be loaded here -->
+                                            </div>
+                                        </div>
+                                        <div class="form-text">Start typing to search for AD groups. Select a group from the dropdown to add it as an admin group.</div>
                                     </div>
                                     <div class="col-md-4">
                                         <button type="submit" class="btn btn-primary" name="action" value="add_admin_group">
@@ -474,28 +831,108 @@
                                     <thead>
                                         <tr>
                                             <th>Group Name</th>
-                                            <th>Group DN</th>
                                             <th>Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {% for group in admin_groups %}
                                         <tr>
-                                            <td>{{ group.name }}</td>
-                                            <td>{{ group.dn }}</td>
+                                            <td>{{ group }}</td>
                                             <td>
                                                 <form method="POST" action="{{ url_for('main.admin_settings') }}" style="display: inline;">
-                                                    <input type="hidden" name="group_id" value="{{ group.id }}">
+                                                    <input type="hidden" name="remove_group" value="{{ group }}">
                                                     <button type="submit" class="btn btn-sm btn-danger" name="action" value="remove_admin_group">
-                                                        <i class="fas fa-trash"></i>
+                                                        <i class="fas fa-trash"></i> Remove
                                                     </button>
                                                 </form>
                                             </td>
+                                        </tr>
+                                        {% else %}
+                                        <tr>
+                                            <td colspan="2" class="text-center text-muted">No admin groups configured</td>
                                         </tr>
                                         {% endfor %}
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Debug Settings Tab -->
+                    <div class="tab-pane fade" id="debug" role="tabpanel">
+                        <div class="glass-card">
+                            <h4><i class="fas fa-bug"></i> Debug & Development Settings</h4>
+                            <p class="text-muted">Configure debug features and development options. These settings are for advanced users and debugging purposes.</p>
+                            
+                            <form method="POST" action="{{ url_for('main.admin_settings') }}">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="flash_countdown" name="flash_countdown" 
+                                                       {{ 'checked' if branding.get('flash_countdown', False) else '' }}>
+                                                <label class="form-check-label" for="flash_countdown">
+                                                    <strong>Flash Message Countdown</strong>
+                                                </label>
+                                            </div>
+                                            <div class="form-text">
+                                                <i class="fas fa-info-circle me-1"></i>
+                                                When enabled, flash messages will show a countdown timer before auto-dismissing. 
+                                                Useful for debugging and development.
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="debug_mode" name="debug_mode" 
+                                                       {{ 'checked' if branding.get('debug_mode', False) else '' }}>
+                                                <label class="form-check-label" for="debug_mode">
+                                                    <strong>Debug Mode</strong>
+                                                </label>
+                                            </div>
+                                            <div class="form-text">
+                                                <i class="fas fa-info-circle me-1"></i>
+                                                Enable additional debug information and logging throughout the application.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="flash_timeout" class="form-label">Flash Message Timeout (seconds)</label>
+                                            <input type="number" class="form-control" id="flash_timeout" name="flash_timeout" 
+                                                   value="{{ branding.get('flash_timeout', 180) }}" min="30" max="600">
+                                            <div class="form-text">
+                                                <i class="fas fa-clock me-1"></i>
+                                                How long flash messages should be displayed before auto-dismissing (30-600 seconds).
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <label for="log_level" class="form-label">Log Level</label>
+                                            <select class="form-select" id="log_level" name="log_level">
+                                                <option value="INFO" {{ 'selected' if branding.get('log_level') == 'INFO' else '' }}>Info</option>
+                                                <option value="DEBUG" {{ 'selected' if branding.get('log_level') == 'DEBUG' else '' }}>Debug</option>
+                                                <option value="WARNING" {{ 'selected' if branding.get('log_level') == 'WARNING' else '' }}>Warning</option>
+                                                <option value="ERROR" {{ 'selected' if branding.get('log_level') == 'ERROR' else '' }}>Error</option>
+                                            </select>
+                                            <div class="form-text">
+                                                <i class="fas fa-file-alt me-1"></i>
+                                                Set the logging level for system events and debugging information.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="alert alert-warning">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <strong>Warning:</strong> Debug settings may affect performance and should only be enabled when needed for troubleshooting.
+                                </div>
+                                
+                                <button type="submit" class="btn btn-primary" name="action" value="save_debug_settings">
+                                    <i class="fas fa-save"></i> Save Debug Settings
+                                </button>
+                            </form>
                         </div>
                     </div>
                 </div>
@@ -504,11 +941,139 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/flash-messages.js"></script>
     <script>
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             sidebar.classList.toggle('collapsed');
         }
+
+        // Admin Groups Searchable Dropdown
+        document.addEventListener('DOMContentLoaded', function() {
+            const groupSearch = document.getElementById('groupSearch');
+            const groupDropdown = document.getElementById('groupDropdown');
+            let allGroups = [];
+            let filteredGroups = [];
+
+            // Load all groups when the admin groups tab is clicked
+            document.getElementById('admins-tab').addEventListener('click', function() {
+                if (allGroups.length === 0) {
+                    loadAllGroups();
+                }
+            });
+
+            // Load all groups from AD
+            function loadAllGroups() {
+                fetch('/admin/get_all_groups')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            console.error('Error loading groups:', data.error);
+                            return;
+                        }
+                        allGroups = data.groups || [];
+                        console.log('Loaded', allGroups.length, 'groups');
+                    })
+                    .catch(error => {
+                        console.error('Error loading groups:', error);
+                    });
+            }
+
+            // Filter groups based on search input
+            function filterGroups(searchTerm) {
+                if (!searchTerm) {
+                    filteredGroups = allGroups.slice(0, 10); // Show first 10 groups when empty
+                } else {
+                    filteredGroups = allGroups.filter(group => 
+                        group.name.toLowerCase().includes(searchTerm.toLowerCase())
+                    ).slice(0, 20); // Limit to 20 results
+                }
+                displayGroups();
+            }
+
+            // Display filtered groups in dropdown
+            function displayGroups() {
+                groupDropdown.innerHTML = '';
+                
+                if (filteredGroups.length === 0) {
+                    groupDropdown.innerHTML = '<div class="dropdown-item text-muted">No groups found</div>';
+                } else {
+                    filteredGroups.forEach(group => {
+                        const item = document.createElement('div');
+                        item.className = 'dropdown-item';
+                        item.textContent = group.name;
+                        item.style.cursor = 'pointer';
+                        item.addEventListener('click', function() {
+                            groupSearch.value = group.name;
+                            groupDropdown.style.display = 'none';
+                        });
+                        groupDropdown.appendChild(item);
+                    });
+                }
+            }
+
+            // Handle search input
+            groupSearch.addEventListener('input', function() {
+                const searchTerm = this.value.trim();
+                if (searchTerm.length >= 1) {
+                    filterGroups(searchTerm);
+                    groupDropdown.style.display = 'block';
+                } else {
+                    groupDropdown.style.display = 'none';
+                }
+            });
+
+            // Handle focus to show initial groups
+            groupSearch.addEventListener('focus', function() {
+                if (allGroups.length === 0) {
+                    loadAllGroups();
+                }
+                if (this.value.trim() === '') {
+                    filterGroups('');
+                    groupDropdown.style.display = 'block';
+                }
+            });
+
+            // Hide dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!groupSearch.contains(e.target) && !groupDropdown.contains(e.target)) {
+                    groupDropdown.style.display = 'none';
+                }
+            });
+
+            // Handle keyboard navigation
+            groupSearch.addEventListener('keydown', function(e) {
+                const items = groupDropdown.querySelectorAll('.dropdown-item');
+                const currentIndex = Array.from(items).findIndex(item => item.classList.contains('active'));
+                
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const nextIndex = currentIndex < items.length - 1 ? currentIndex + 1 : 0;
+                    items.forEach(item => item.classList.remove('active'));
+                    if (items[nextIndex]) {
+                        items[nextIndex].classList.add('active');
+                        items[nextIndex].scrollIntoView({ block: 'nearest' });
+                    }
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const prevIndex = currentIndex > 0 ? currentIndex - 1 : items.length - 1;
+                    items.forEach(item => item.classList.remove('active'));
+                    if (items[prevIndex]) {
+                        items[prevIndex].classList.add('active');
+                        items[prevIndex].scrollIntoView({ block: 'nearest' });
+                    }
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const activeItem = groupDropdown.querySelector('.dropdown-item.active');
+                    if (activeItem) {
+                        groupSearch.value = activeItem.textContent;
+                        groupDropdown.style.display = 'none';
+                    }
+                } else if (e.key === 'Escape') {
+                    groupDropdown.style.display = 'none';
+                }
+            });
+        });
     </script>
 </body>
 </html> 

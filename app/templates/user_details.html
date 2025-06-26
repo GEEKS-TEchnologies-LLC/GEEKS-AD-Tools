@@ -117,7 +117,7 @@
             box-shadow: 0 2px 8px rgba(255, 215, 0, 0.15);
         }
         .form-control {
-            background: rgba(255,255,255,0.1);
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%) !important;
             border: 1px solid rgba(255,255,255,0.3);
             border-radius: 10px;
             color: #ffd700;
@@ -233,6 +233,7 @@
                     <div class="card-header bg-dark text-white">
                         <ul class="nav nav-tabs card-header-tabs" id="user-details-tabs" role="tablist">
                             <li class="nav-item" role="presentation"><button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general" type="button" role="tab">General</button></li>
+                            <li class="nav-item" role="presentation"><button class="nav-link" id="password-tab" data-bs-toggle="tab" data-bs-target="#password" type="button" role="tab">Password</button></li>
                             <li class="nav-item" role="presentation"><button class="nav-link" id="address-tab" data-bs-toggle="tab" data-bs-target="#address" type="button" role="tab">Address</button></li>
                             <li class="nav-item" role="presentation"><button class="nav-link" id="organization-tab" data-bs-toggle="tab" data-bs-target="#organization" type="button" role="tab">Organization</button></li>
                             <li class="nav-item" role="presentation"><button class="nav-link" id="account-tab" data-bs-toggle="tab" data-bs-target="#account" type="button" role="tab">Account</button></li>
@@ -298,6 +299,79 @@
                                     <p><strong>Created:</strong> {{ user.whenCreated[0] if user.whenCreated }}</p>
                                     <p><strong>Modified:</strong> {{ user.whenChanged[0] if user.whenChanged }}</p>
                                     <p><strong>Last Logon:</strong> {{ user.lastLogonTimestamp[0] if user.lastLogonTimestamp }}</p>
+                                </div>
+
+                                <!-- Password Tab -->
+                                <div class="tab-pane fade" id="password" role="tabpanel">
+                                    <h5 class="mb-3">Password Information</h5>
+                                    {% if password_info %}
+                                        <div class="mb-3">
+                                            {% if password_expired %}
+                                                <div class="alert alert-danger">
+                                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                                    <strong>Password Expired</strong>
+                                                    <span class="ms-2">User's password has expired and must be reset.</span>
+                                                </div>
+                                            {% elif password_expiring_soon %}
+                                                <div class="alert alert-warning">
+                                                    <i class="fas fa-clock me-2"></i>
+                                                    <strong>Password Expiring Soon</strong>
+                                                    <span class="ms-2">Password will expire in {{ days_until_reset }} days.</span>
+                                                </div>
+                                            {% elif password_never_expires %}
+                                                <div class="alert alert-info">
+                                                    <i class="fas fa-infinity me-2"></i>
+                                                    <strong>Password Never Expires</strong>
+                                                </div>
+                                            {% else %}
+                                                <div class="alert alert-success">
+                                                    <i class="fas fa-check-circle me-2"></i>
+                                                    <strong>Password Status: Good</strong>
+                                                    {% if days_until_reset is not none %}
+                                                        <span class="ms-2">{{ days_until_reset }} days until expiry.</span>
+                                                    {% endif %}
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="row mb-3">
+                                            <div class="col-md-6">
+                                                <div class="mb-2"><strong>Last Set:</strong> {{ password_info.pwd_last_set.strftime('%Y-%m-%d %H:%M UTC') if password_info.pwd_last_set else 'N/A' }}</div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-2"><strong>Days Since Last Set:</strong> {{ password_info.days_since_last_set if password_info.days_since_last_set is not none else 'N/A' }}</div>
+                                            </div>
+                                        </div>
+                                        <div class="row mb-3">
+                                            <div class="col-md-6">
+                                                <div class="mb-2"><strong>Expires:</strong> 
+                                                    {% if password_never_expires %}
+                                                        Never
+                                                    {% elif days_until_reset is not none %}
+                                                        In {{ days_until_reset }} days
+                                                    {% else %}
+                                                        N/A
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-2"><strong>Policy Max Age:</strong> {{ policy.max_age_days if policy and policy.max_age_days is not none else 'N/A' }} days</div>
+                                            </div>
+                                        </div>
+                                        {% if policy %}
+                                            <div class="mb-2"><strong>Password Policy:</strong></div>
+                                            <ul>
+                                                <li>Minimum Length: {{ policy.min_length }}</li>
+                                                <li>History Count: {{ policy.history_count }}</li>
+                                                <li>Complexity Required: {{ 'Yes' if policy.complexity else 'No' }}</li>
+                                                <li>Warning Days: {{ policy.warning_days }}</li>
+                                            </ul>
+                                        {% endif %}
+                                    {% else %}
+                                        <div class="alert alert-warning">
+                                            <i class="fas fa-exclamation-triangle me-2"></i>
+                                            Password information is not available for this user.
+                                        </div>
+                                    {% endif %}
                                 </div>
 
                                 <!-- Groups Tab -->

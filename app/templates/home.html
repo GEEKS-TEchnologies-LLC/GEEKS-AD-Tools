@@ -8,46 +8,238 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #1a1a1a;
+            color: #ffd700;
             min-height: 100vh;
-            padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
+        
         .main-container {
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
-            padding: 3rem;
-            margin: 2rem auto;
             max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
         }
-        .btn-custom {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            color: white;
-            padding: 12px 30px;
-            border-radius: 25px;
-            margin: 5px;
-            transition: all 0.3s ease;
-        }
-        .btn-custom:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-            color: white;
-        }
-        .feature-card {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 1.5rem;
-            margin: 1rem 0;
-            border-left: 4px solid #667eea;
-        }
+        
         .hero-section {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 3rem;
             text-align: center;
-            padding: 2rem 0;
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border-radius: 15px;
+            margin-bottom: 2rem;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero-section::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
+        }
+        
+        .hero-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .logo-section {
             margin-bottom: 2rem;
         }
+        
+        .logo-section img {
+            max-height: 100px;
+            width: auto;
+            margin-bottom: 1rem;
+        }
+        
+        .logo-text {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 3rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            color: #ccc;
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+        }
+        
+        .description {
+            color: #aaa;
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .glass-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffd700;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
+        }
+        
+        .glass-card .card-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .feature-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.25);
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 15px;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(255, 215, 0, 0.2);
+        }
+        
+        .feature-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .feature-card h5 {
+            color: #ffd700;
+            margin-bottom: 1rem;
+        }
+        
+        .feature-card p {
+            color: #ccc;
+            margin-bottom: 1rem;
+        }
+        
+        .btn-custom {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #1a1a1a;
+            padding: 10px 25px;
+            border-radius: 20px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 215, 0, 0.3);
+            color: #1a1a1a;
+        }
+        
+        .btn-outline-custom {
+            background: transparent;
+            border: 2px solid #ffd700;
+            color: #ffd700;
+            padding: 10px 25px;
+            border-radius: 20px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-outline-custom:hover {
+            background: #ffd700;
+            color: #1a1a1a;
+            transform: translateY(-1px);
+        }
+        
+        .status-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.25);
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .status-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 15px;
+        }
+        
+        .status-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .status-success {
+            border-left: 4px solid #28a745;
+        }
+        
+        .status-warning {
+            border-left: 4px solid #ffc107;
+        }
+        
+        .alert {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #fff;
+        }
+        
+        .text-success {
+            color: #28a745 !important;
+        }
+        
+        .text-warning {
+            color: #ffc107 !important;
+        }
+        
+        .text-muted {
+            color: #aaa !important;
+        }
+        
         /* Make all muted/secondary text white with a black outline for readability */
         .text-muted, .text-secondary, .text-muted *, .text-secondary * {
             color: #fff !important;
@@ -68,6 +260,11 @@
             </h1>
             <p class="lead">Active Directory Password Reset Portal</p>
             <p class="text-muted">Secure, self-service password management for your organization</p>
+            <div class="d-flex justify-content-center gap-2 mt-3">
+                <a href="/login" class="btn btn-custom" style="font-size: 1.1rem;">
+                    <i class="fas fa-sign-in-alt"></i> Login Portal
+                </a>
+            </div>
         </div>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -85,90 +282,62 @@
             <div class="col-md-8">
                 <h2 class="mb-4">
                     <i class="fas fa-home text-primary"></i>
-                    Welcome to GEEKS-AD-Plus
+                    {{ branding.get('homepage_title', 'Welcome to GEEKS-AD-Plus') }}
                 </h2>
-                <p class="lead">This portal allows you to reset your Active Directory password securely and manage your organization's AD infrastructure.</p>
+                <p class="lead">{{ branding.get('homepage_subtitle', 'This portal allows you to reset your Active Directory password securely and manage your organization\'s AD infrastructure.') }}</p>
                 
                 <div class="row mt-4">
                     <div class="col-md-6">
                         <div class="feature-card">
-                            <h5><i class="fas fa-key text-success"></i> Password Reset</h5>
-                            <p class="text-muted">Securely reset your Active Directory password with self-service functionality.</p>
+                            <h5><i class="fas fa-key text-success"></i> {{ branding.get('password_reset_title', 'Password Reset') }}</h5>
+                            <p class="text-muted">{{ branding.get('password_reset_description', 'Securely reset your Active Directory password with self-service functionality.') }}</p>
                             <a href="/reset" class="btn btn-custom btn-sm">Reset Password</a>
                         </div>
                     </div>
+                    {% if branding.get('show_bug_reporting', True) %}
                     <div class="col-md-6">
                         <div class="feature-card">
-                            <h5><i class="fas fa-bug text-warning"></i> Bug Reporting</h5>
-                            <p class="text-muted">Report issues and bugs with detailed system information for quick resolution.</p>
-                            <a href="/bug-report" class="btn btn-custom btn-sm">Report Bug</a>
+                            <h5><i class="fas fa-bug text-warning"></i> {{ branding.get('bug_reporting_title', 'Bug Reporting') }}</h5>
+                            <p class="text-muted">{{ branding.get('bug_reporting_description', 'Report issues and bugs with detailed system information for quick resolution.') }}</p>
+                            <a href="{{ branding.get('bug_reporting_link', '/bug-report') }}" class="btn btn-custom btn-sm">Report Bug</a>
                         </div>
                     </div>
+                    {% endif %}
                 </div>
                 
                 <div class="row mt-3">
+                    {% if branding.get('show_custom_card_1', False) and branding.get('custom_card_1_title') %}
                     <div class="col-md-6">
                         <div class="feature-card">
-                            <h5><i class="fas fa-users text-info"></i> User Management</h5>
-                            <p class="text-muted">Comprehensive user management with search, create, and modify capabilities.</p>
+                            <h5><i class="{{ branding.get('custom_card_1_icon', 'fas fa-info') }} text-info"></i> {{ branding.get('custom_card_1_title') }}</h5>
+                            <p class="text-muted">{{ branding.get('custom_card_1_description', '') }}</p>
+                            {% if branding.get('custom_card_1_link') %}
+                            <a href="{{ branding.get('custom_card_1_link') }}" class="btn btn-custom btn-sm">Learn More</a>
+                            {% endif %}
                         </div>
                     </div>
+                    {% endif %}
+                    {% if branding.get('show_custom_card_2', False) and branding.get('custom_card_2_title') %}
                     <div class="col-md-6">
                         <div class="feature-card">
-                            <h5><i class="fas fa-chart-line text-primary"></i> AD Dashboard</h5>
-                            <p class="text-muted">Real-time Active Directory statistics and health monitoring.</p>
+                            <h5><i class="{{ branding.get('custom_card_2_icon', 'fas fa-info') }} text-primary"></i> {{ branding.get('custom_card_2_title') }}</h5>
+                            <p class="text-muted">{{ branding.get('custom_card_2_description', '') }}</p>
+                            {% if branding.get('custom_card_2_link') %}
+                            <a href="{{ branding.get('custom_card_2_link') }}" class="btn btn-custom btn-sm">Learn More</a>
+                            {% endif %}
                         </div>
                     </div>
+                    {% endif %}
                 </div>
             </div>
             
             <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0"><i class="fas fa-cogs"></i> Quick Actions</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="d-grid gap-2">
-                            <a href="/admin/login" class="btn btn-custom">
-                                <i class="fas fa-user-shield"></i> Admin Login
-                            </a>
-                            <a href="/admin/register" class="btn btn-outline-primary">
-                                <i class="fas fa-user-plus"></i> Create Admin
-                            </a>
-                            <a href="/setup" class="btn btn-outline-secondary">
-                                <i class="fas fa-cog"></i> Configure AD
-                            </a>
-                        </div>
-                    </div>
-                </div>
-                
-                {% if config %}
-                <div class="card mt-3">
-                    <div class="card-header bg-success text-white">
-                        <h6 class="mb-0"><i class="fas fa-check-circle"></i> AD Status</h6>
-                    </div>
-                    <div class="card-body">
-                        <p class="text-success mb-1"><strong>Connected</strong></p>
-                        <small class="text-muted">Server: {{ config.ad_server }}:{{ config.ad_port }}</small>
-                    </div>
-                </div>
-                {% else %}
-                <div class="card mt-3">
-                    <div class="card-header bg-warning text-white">
-                        <h6 class="mb-0"><i class="fas fa-exclamation-triangle"></i> AD Status</h6>
-                    </div>
-                    <div class="card-body">
-                        <p class="text-warning mb-1"><strong>Not Configured</strong></p>
-                        <small class="text-muted">Please configure Active Directory connection</small>
-                        <br>
-                        <a href="/setup" class="btn btn-warning btn-sm mt-2">Configure Now</a>
-                    </div>
-                </div>
-                {% endif %}
+                <!-- Quick Actions card removed as buttons are now in the top pane -->
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/flash-messages.js"></script>
 </body>
 </html> 

@@ -5,154 +5,310 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Configure Active Directory - GEEKS-AD-Plus</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #1a1a1a;
+            color: #ffd700;
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .setup-card {
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+        
+        .setup-container {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             padding: 3rem;
-            max-width: 600px;
+            max-width: 700px;
             width: 100%;
+            position: relative;
+            overflow: hidden;
         }
-        .btn-custom {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            color: white;
-            padding: 12px 30px;
-            border-radius: 25px;
-            margin-top: 1rem;
+        
+        .setup-container::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
         }
-        .btn-custom:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-            color: white;
+        
+        .setup-content {
+            position: relative;
+            z-index: 1;
         }
+        
+        .logo-section {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .logo-section img {
+            max-height: 80px;
+            width: auto;
+            margin-bottom: 1rem;
+        }
+        
+        .logo-text {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 2rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            color: #ccc;
+            font-size: 1.1rem;
+            margin-bottom: 2rem;
+        }
+        
         .form-label {
             font-weight: 600;
-            color: #333;
+            color: #ffd700;
+            margin-bottom: 0.5rem;
         }
+        
         .form-control {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
             border-radius: 10px;
-            border: 2px solid #e9ecef;
+            color: #fff;
             padding: 12px 15px;
+            transition: all 0.3s ease;
         }
+        
         .form-control:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #ffd700;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25);
+            color: #fff;
         }
-        /* Make all muted/secondary text white with a black outline for readability */
-        .text-muted, .text-secondary, .text-muted *, .text-secondary * {
-            color: #fff !important;
-            text-shadow:
-                -1px -1px 0 #000,
-                 1px -1px 0 #000,
-                -1px  1px 0 #000,
-                 1px  1px 0 #000;
+        
+        .form-control::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        .btn-custom {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #1a1a1a;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+        
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 215, 0, 0.3);
+            color: #1a1a1a;
+        }
+        
+        .btn-outline-custom {
+            background: transparent;
+            border: 2px solid #ffd700;
+            color: #ffd700;
+            padding: 10px 25px;
+            border-radius: 20px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-outline-custom:hover {
+            background: #ffd700;
+            color: #1a1a1a;
+            transform: translateY(-1px);
+        }
+        
+        .alert {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #fff;
+        }
+        
+        .info-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.25);
+            padding: 1.5rem;
+            margin: 2rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .info-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 15px;
+        }
+        
+        .info-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .text-muted {
+            color: #aaa !important;
+        }
+        
+        .form-text {
+            color: #aaa;
+            font-size: 0.875rem;
         }
     </style>
 </head>
 <body>
-    <div class="setup-card">
-        <div class="text-center mb-4">
-            <h2>Configure Active Directory</h2>
-            <p class="text-muted">Enter your Active Directory connection details</p>
-        </div>
-        
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
-                {{ message }}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-              </div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
-        
-        <form method="post">
-            <div class="row">
-                <div class="col-md-6 mb-3">
-                    <label for="ad_server" class="form-label">AD Server</label>
-                    <input type="text" class="form-control" id="ad_server" name="ad_server" 
-                           value="{{ config.ad_server if config else '' }}"
-                           placeholder="e.g., dc01.yourdomain.com" required>
+    <div class="setup-container">
+        <div class="setup-content">
+            <div class="logo-section">
+                <img src="/static/img/geeks_logo.png" alt="GEEKS-AD-Plus Logo">
+                <div class="logo-text">GEEKS-AD-Plus</div>
+                <div class="subtitle">Configure Active Directory</div>
+            </div>
+            
+            <div class="text-center mb-4">
+                <h2><i class="fas fa-cog text-warning me-2"></i>Configure Active Directory</h2>
+                <p class="text-muted">Enter your Active Directory connection details</p>
+            </div>
+            
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% if messages %}
+                {% for category, message in messages %}
+                  <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                    <i class="fas fa-{{ 'exclamation-triangle' if category == 'error' else 'check-circle' }} me-2"></i>
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                  </div>
+                {% endfor %}
+              {% endif %}
+            {% endwith %}
+            
+            <form method="post">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="ad_server" class="form-label">
+                            <i class="fas fa-server me-2"></i>AD Server
+                        </label>
+                        <input type="text" class="form-control" id="ad_server" name="ad_server" 
+                               value="{{ config.ad_server if config else '' }}"
+                               placeholder="e.g., dc01.yourdomain.com" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="ad_port" class="form-label">
+                            <i class="fas fa-network-wired me-2"></i>Port
+                        </label>
+                        <input type="number" class="form-control" id="ad_port" name="ad_port" 
+                               value="{{ config.ad_port if config else '389' }}" 
+                               placeholder="389 for LDAP, 636 for LDAPS" required>
+                    </div>
                 </div>
-                <div class="col-md-6 mb-3">
-                    <label for="ad_port" class="form-label">Port</label>
-                    <input type="number" class="form-control" id="ad_port" name="ad_port" 
-                           value="{{ config.ad_port if config else '389' }}" 
-                           placeholder="389 for LDAP, 636 for LDAPS" required>
+                
+                <div class="mb-3">
+                    <label for="ad_bind_dn" class="form-label">
+                        <i class="fas fa-user me-2"></i>Bind DN
+                    </label>
+                    <input type="text" class="form-control" id="ad_bind_dn" name="ad_bind_dn" 
+                           value="{{ config.ad_bind_dn if config else '' }}"
+                           placeholder="e.g., CN=Administrator,DC=yourdomain,DC=com" required>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="ad_password" class="form-label">
+                        <i class="fas fa-lock me-2"></i>Password
+                    </label>
+                    <input type="password" class="form-control" id="ad_password" name="ad_password" 
+                           value="{{ config.ad_password if config else '' }}"
+                           placeholder="Enter the password for the bind DN" required>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="ad_base_dn" class="form-label">
+                        <i class="fas fa-sitemap me-2"></i>Base DN
+                    </label>
+                    <input type="text" class="form-control" id="ad_base_dn" name="ad_base_dn" 
+                           value="{{ config.ad_base_dn if config else '' }}"
+                           placeholder="e.g., DC=yourdomain,DC=com" required>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="users_ou" class="form-label">
+                            <i class="fas fa-users me-2"></i>Users OU DN (Optional)
+                        </label>
+                        <input type="text" class="form-control" id="users_ou" name="users_ou" 
+                               value="{{ config.users_ou if config else '' }}"
+                               placeholder="e.g., OU=Users,DC=yourdomain,DC=com">
+                        <div class="form-text">If blank, Base DN will be used.</div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="groups_ou" class="form-label">
+                            <i class="fas fa-user-friends me-2"></i>Groups OU DN (Optional)
+                        </label>
+                        <input type="text" class="form-control" id="groups_ou" name="groups_ou" 
+                               value="{{ config.groups_ou if config else '' }}"
+                               placeholder="e.g., OU=Groups,DC=yourdomain,DC=com">
+                        <div class="form-text">If blank, Base DN will be used.</div>
+                    </div>
+                </div>
+                
+                <div class="text-center">
+                    <button type="submit" class="btn btn-custom">
+                        <i class="fas fa-save me-2"></i>Save & Test Connection
+                    </button>
+                </div>
+            </form>
+            
+            <div class="text-center mt-4">
+                <a href="{{ url_for('main.home') }}" class="btn btn-outline-custom">
+                    <i class="fas fa-home me-2"></i>Back to Home
+                </a>
+            </div>
+            
+            <div class="info-card">
+                <div class="info-content">
+                    <h6 class="text-warning mb-3">
+                        <i class="fas fa-info-circle me-2"></i>Connection Information
+                    </h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <ul class="text-muted small">
+                                <li><i class="fas fa-shield-alt text-success me-2"></i><strong>LDAP:</strong> Use port 389 for standard LDAP connections</li>
+                                <li><i class="fas fa-lock text-warning me-2"></i><strong>LDAPS:</strong> Use port 636 for secure LDAP connections</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <ul class="text-muted small">
+                                <li><i class="fas fa-user me-2"></i><strong>Bind DN:</strong> The distinguished name of the user account for binding</li>
+                                <li><i class="fas fa-sitemap me-2"></i><strong>Base DN:</strong> The root distinguished name of your Active Directory</li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
             </div>
-            
-            <div class="mb-3">
-                <label for="ad_bind_dn" class="form-label">Bind DN</label>
-                <input type="text" class="form-control" id="ad_bind_dn" name="ad_bind_dn" 
-                       value="{{ config.ad_bind_dn if config else '' }}"
-                       placeholder="e.g., CN=Administrator,DC=yourdomain,DC=com" required>
-            </div>
-            
-            <div class="mb-3">
-                <label for="ad_password" class="form-label">Password</label>
-                <input type="password" class="form-control" id="ad_password" name="ad_password" 
-                       value="{{ config.ad_password if config else '' }}"
-                       placeholder="Enter the password for the bind DN" required>
-            </div>
-            
-            <div class="mb-3">
-                <label for="ad_base_dn" class="form-label">Base DN</label>
-                <input type="text" class="form-control" id="ad_base_dn" name="ad_base_dn" 
-                       value="{{ config.ad_base_dn if config else '' }}"
-                       placeholder="e.g., DC=yourdomain,DC=com" required>
-            </div>
-            
-            <div class="row">
-                <div class="col-md-6 mb-3">
-                    <label for="users_ou" class="form-label">Users OU DN (Optional)</label>
-                    <input type="text" class="form-control" id="users_ou" name="users_ou" 
-                           value="{{ config.users_ou if config else '' }}"
-                           placeholder="e.g., OU=Users,DC=yourdomain,DC=com">
-                    <div class="form-text">If blank, Base DN will be used.</div>
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label for="groups_ou" class="form-label">Groups OU DN (Optional)</label>
-                    <input type="text" class="form-control" id="groups_ou" name="groups_ou" 
-                           value="{{ config.groups_ou if config else '' }}"
-                           placeholder="e.g., OU=Groups,DC=yourdomain,DC=com">
-                    <div class="form-text">If blank, Base DN will be used.</div>
-                </div>
-            </div>
-            
-            <div class="text-center">
-                <button type="submit" class="btn btn-custom">Save & Test Connection</button>
-            </div>
-        </form>
-        
-        <div class="text-center mt-4">
-            <a href="{{ url_for('main.home') }}" class="btn btn-outline-secondary">
-                Back to Home
-            </a>
-        </div>
-        
-        <div class="mt-4 p-3 bg-light rounded">
-            <h6 class="text-muted">Connection Information:</h6>
-            <ul class="text-muted small">
-                <li><strong>LDAP:</strong> Use port 389 for standard LDAP connections</li>
-                <li><strong>LDAPS:</strong> Use port 636 for secure LDAP connections</li>
-                <li><strong>Bind DN:</strong> The distinguished name of the user account for binding</li>
-                <li><strong>Base DN:</strong> The root distinguished name of your Active Directory</li>
-            </ul>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/flash-messages.js"></script>
 </body>
 </html> 
