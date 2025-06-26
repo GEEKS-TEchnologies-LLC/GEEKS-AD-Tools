@@ -8,70 +8,224 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #1a1a1a;
+            color: #ffd700;
             min-height: 100vh;
             padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
+        
         .main-container {
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
-            padding: 3rem;
-            margin: 2rem auto;
             max-width: 800px;
+            margin: 0 auto;
         }
-        .btn-custom {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            color: white;
-            padding: 12px 30px;
-            border-radius: 25px;
-            margin-top: 1rem;
+        
+        .hero-section {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 3rem;
+            text-align: center;
+            margin-bottom: 2rem;
+            position: relative;
+            overflow: hidden;
         }
-        .btn-custom:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-            color: white;
+        
+        .hero-section::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
         }
+        
+        .hero-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .logo-section {
+            margin-bottom: 2rem;
+        }
+        
+        .logo-section img {
+            max-height: 80px;
+            width: auto;
+            margin-bottom: 1rem;
+        }
+        
+        .logo-text {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 2.5rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            color: #ccc;
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+        }
+        
+        .glass-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffd700;
+            padding: 2rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
+        }
+        
+        .card-content {
+            position: relative;
+            z-index: 1;
+        }
+        
         .form-label {
             font-weight: 600;
-            color: #333;
+            color: #ffd700;
+            margin-bottom: 0.5rem;
         }
+        
         .form-control, .form-select {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
             border-radius: 10px;
-            border: 2px solid #e9ecef;
+            color: #fff;
             padding: 12px 15px;
+            transition: all 0.3s ease;
         }
+        
         .form-control:focus, .form-select:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #ffd700;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25);
+            color: #fff;
         }
+        
+        .form-control::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
         .form-check-input:checked {
-            background-color: #667eea;
-            border-color: #667eea;
+            background-color: #ffd700;
+            border-color: #ffd700;
         }
-        /* Make all muted/secondary text white with a black outline for readability */
-        .text-muted, .text-secondary, .text-muted *, .text-secondary * {
-            color: #fff !important;
-            text-shadow:
-                -1px -1px 0 #000,
-                 1px -1px 0 #000,
-                -1px  1px 0 #000,
-                 1px  1px 0 #000;
+        
+        .form-check-input {
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .form-check-label {
+            color: #ccc;
+        }
+        
+        .btn-custom {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #1a1a1a;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+        
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 215, 0, 0.3);
+            color: #1a1a1a;
+        }
+        
+        .btn-outline-custom {
+            background: transparent;
+            border: 2px solid #ffd700;
+            color: #ffd700;
+            padding: 10px 25px;
+            border-radius: 20px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-outline-custom:hover {
+            background: #ffd700;
+            color: #1a1a1a;
+            transform: translateY(-1px);
+        }
+        
+        .alert {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #fff;
+        }
+        
+        .alert-warning {
+            background: rgba(255, 193, 7, 0.2);
+            border-color: rgba(255, 193, 7, 0.3);
+        }
+        
+        .alert-info {
+            background: rgba(13, 202, 240, 0.2);
+            border-color: rgba(13, 202, 240, 0.3);
+        }
+        
+        .text-muted {
+            color: #aaa !important;
+        }
+        
+        .form-text {
+            color: #aaa;
+            font-size: 0.875rem;
         }
     </style>
 </head>
 <body>
     <div class="main-container">
-        <div class="text-center mb-4">
-            <h2><i class="fas fa-bug text-warning"></i> Submit Bug Report</h2>
-            <p class="text-muted">Help us improve GEEKS-AD-Plus by reporting issues</p>
+        <div class="hero-section">
+            <div class="hero-content">
+                <div class="logo-section">
+                    <img src="/static/img/geeks_logo.png" alt="GEEKS-AD-Plus Logo">
+                    <div class="logo-text">GEEKS-AD-Plus</div>
+                    <div class="subtitle">Bug Report Portal</div>
+                </div>
+                
+                <h2><i class="fas fa-bug text-warning me-2"></i>Submit Bug Report</h2>
+                <p class="text-muted">Help us improve GEEKS-AD-Plus by reporting issues</p>
+            </div>
         </div>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
             {% for category, message in messages %}
               <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                <i class="fas fa-{{ 'exclamation-triangle' if category == 'error' else 'check-circle' }} me-2"></i>
                 {{ message }}
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
               </div>
@@ -79,97 +233,98 @@
           {% endif %}
         {% endwith %}
         
-        <form method="post">
-            <div class="mb-4">
-                <label for="description" class="form-label">
-                    <i class="fas fa-comment"></i> Description of the Issue
-                </label>
-                <textarea class="form-control" name="description" id="description" rows="6" required 
-                          placeholder="Please describe the issue you encountered, including steps to reproduce..."></textarea>
-                <div class="form-text">Be as detailed as possible to help us resolve the issue quickly.</div>
-            </div>
-            
-            <div class="mb-4">
-                <label for="email" class="form-label">
-                    <i class="fas fa-envelope"></i> Your Email (optional)
-                </label>
-                <input type="email" class="form-control" name="email" id="email" 
-                       placeholder="your.email@example.com">
-                <div class="form-text">We'll use this to contact you for additional information if needed.</div>
-            </div>
-            
-            <div class="mb-4">
-                <h6 class="form-label"><i class="fas fa-cog"></i> Include Additional Information</h6>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" name="include_logs" id="include_logs" checked>
-                    <label class="form-check-label" for="include_logs">
-                        <strong>Include recent logs</strong> (recommended for debugging)
-                    </label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" name="include_config" id="include_config" checked>
-                    <label class="form-check-label" for="include_config">
-                        <strong>Include system configuration</strong> (sanitized, no passwords)
-                    </label>
-                </div>
-            </div>
-            
-            <div class="text-center">
-                <button type="submit" class="btn btn-custom">
-                    <i class="fas fa-paper-plane"></i> Submit Bug Report
-                </button>
-            </div>
-        </form>
-        
-        <div class="mt-5">
-            <div class="card">
-                <div class="card-header bg-info text-white">
-                    <h5 class="mb-0"><i class="fas fa-info-circle"></i> What's Included in Bug Reports</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <ul class="list-unstyled">
-                                <li class="mb-2">
-                                    <i class="fas fa-server text-primary"></i>
-                                    <strong>System Information:</strong> Platform, Python version, app version
-                                </li>
-                                <li class="mb-2">
-                                    <i class="fas fa-file-alt text-success"></i>
-                                    <strong>Recent Logs:</strong> Application and audit logs (if selected)
-                                </li>
-                            </ul>
+        <div class="glass-card">
+            <div class="card-content">
+                <form method="post">
+                    <div class="mb-4">
+                        <label for="description" class="form-label">
+                            <i class="fas fa-comment me-2"></i>Description of the Issue
+                        </label>
+                        <textarea class="form-control" name="description" id="description" rows="6" required 
+                                  placeholder="Please describe the issue you encountered, including steps to reproduce..."></textarea>
+                        <div class="form-text">Be as detailed as possible to help us resolve the issue quickly.</div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label for="email" class="form-label">
+                            <i class="fas fa-envelope me-2"></i>Your Email (optional)
+                        </label>
+                        <input type="email" class="form-control" name="email" id="email" 
+                               placeholder="your.email@example.com">
+                        <div class="form-text">We'll use this to contact you for additional information if needed.</div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <h6 class="form-label"><i class="fas fa-cog me-2"></i>Include Additional Information</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="include_logs" id="include_logs" checked>
+                            <label class="form-check-label" for="include_logs">
+                                <strong>Include recent logs</strong> (recommended for debugging)
+                            </label>
                         </div>
-                        <div class="col-md-6">
-                            <ul class="list-unstyled">
-                                <li class="mb-2">
-                                    <i class="fas fa-cogs text-warning"></i>
-                                    <strong>Configuration:</strong> AD settings and app config (sanitized, if selected)
-                                </li>
-                                <li class="mb-2">
-                                    <i class="fas fa-globe text-info"></i>
-                                    <strong>Request Information:</strong> Browser, IP address, URL
-                                </li>
-                            </ul>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="include_config" id="include_config" checked>
+                            <label class="form-check-label" for="include_config">
+                                <strong>Include system configuration</strong> (sanitized, no passwords)
+                            </label>
                         </div>
                     </div>
-                </div>
-            </div>
-            
-            <div class="alert alert-warning mt-3" role="alert">
-                <i class="fas fa-shield-alt"></i>
-                <strong>Privacy Notice:</strong> Bug reports are stored locally and can be viewed by administrators. 
-                No sensitive information like passwords is included.
+                    
+                    <div class="text-center">
+                        <button type="submit" class="btn btn-custom">
+                            <i class="fas fa-paper-plane me-2"></i>Submit Bug Report
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
         
+        <div class="glass-card">
+            <div class="card-content">
+                <h5 class="mb-3"><i class="fas fa-info-circle text-info me-2"></i>What's Included in Bug Reports</h5>
+                <div class="row">
+                    <div class="col-md-6">
+                        <ul class="list-unstyled">
+                            <li class="mb-2">
+                                <i class="fas fa-server text-primary me-2"></i>
+                                <strong>System Information:</strong> Platform, Python version, app version
+                            </li>
+                            <li class="mb-2">
+                                <i class="fas fa-file-alt text-success me-2"></i>
+                                <strong>Recent Logs:</strong> Application and audit logs (if selected)
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <ul class="list-unstyled">
+                            <li class="mb-2">
+                                <i class="fas fa-cogs text-warning me-2"></i>
+                                <strong>Configuration:</strong> AD settings and app config (sanitized, if selected)
+                            </li>
+                            <li class="mb-2">
+                                <i class="fas fa-globe text-info me-2"></i>
+                                <strong>Request Information:</strong> Browser, IP address, URL
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="alert alert-warning" role="alert">
+            <i class="fas fa-shield-alt me-2"></i>
+            <strong>Privacy Notice:</strong> Bug reports are stored locally and can be viewed by administrators. 
+            No sensitive information like passwords is included.
+        </div>
+        
         <div class="text-center mt-4">
-            <a href="{{ url_for('main.home') }}" class="btn btn-outline-secondary">
-                <i class="fas fa-home"></i> Back to Home
+            <a href="{{ url_for('main.home') }}" class="btn btn-outline-custom">
+                <i class="fas fa-home me-2"></i>Back to Home
             </a>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/flash-messages.js"></script>
 </body>
 </html> 

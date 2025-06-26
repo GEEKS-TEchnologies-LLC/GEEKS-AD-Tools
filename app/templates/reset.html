@@ -8,73 +8,490 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #1a1a1a;
+            color: #ffd700;
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .reset-card {
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+        
+        .reset-container {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             padding: 3rem;
-            max-width: 500px;
+            max-width: 550px;
             width: 100%;
             text-align: center;
+            position: relative;
+            overflow: hidden;
         }
-        .btn-custom {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            color: white;
-            padding: 12px 30px;
-            border-radius: 25px;
-            margin-top: 1rem;
+        
+        .reset-container::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
         }
-        .btn-custom:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-            color: white;
+        
+        .reset-content {
+            position: relative;
+            z-index: 1;
         }
+        
+        .logo-section {
+            margin-bottom: 2rem;
+        }
+        
+        .logo-section img {
+            max-height: 80px;
+            width: auto;
+            margin-bottom: 1rem;
+        }
+        
+        .logo-text {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 2rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            color: #ccc;
+            font-size: 1.1rem;
+            margin-bottom: 2rem;
+        }
+        
         .coming-soon-icon {
             font-size: 4rem;
-            color: #667eea;
+            color: #ffd700;
             margin-bottom: 1rem;
+        }
+        
+        .btn-custom {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #1a1a1a;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 215, 0, 0.3);
+            color: #1a1a1a;
+        }
+        
+        .alert {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #fff;
+        }
+        
+        .alert-info {
+            background: rgba(13, 202, 240, 0.2);
+            border-color: rgba(13, 202, 240, 0.3);
+        }
+        
+        .info-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.25);
+            padding: 1.5rem;
+            margin: 2rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .info-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 15px;
+        }
+        
+        .info-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .text-muted {
+            color: #aaa !important;
+        }
+        
+        /* Form styling for dark theme */
+        .form-control, select {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border-radius: 10px;
+        }
+        
+        select.form-control, select {
+            background-color: #232323 !important;
+            color: #ffd700 !important;
+        }
+        
+        select.form-control option, select option {
+            background-color: #232323;
+            color: #ffd700;
+        }
+        
+        select.form-control option:hover, select option:hover {
+            background-color: #444444;
+            color: #fff;
+        }
+        
+        .form-control:focus {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #ffd700;
+            color: #fff;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25);
+        }
+        
+        .form-control::placeholder {
+            color: #aaa;
+        }
+        
+        .form-label {
+            color: #ffd700;
+            font-weight: 600;
+        }
+        
+        .form-text {
+            color: #aaa !important;
+        }
+        
+        .btn-outline-custom {
+            background: transparent;
+            border: 2px solid #ffd700;
+            color: #ffd700;
+            padding: 12px 30px;
+            border-radius: 25px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-outline-custom:hover {
+            background: #ffd700;
+            color: #1a1a1a;
+            transform: translateY(-1px);
         }
     </style>
 </head>
 <body>
-    <div class="reset-card">
-        <div class="coming-soon-icon">
-            <i class="fas fa-clock"></i>
-        </div>
-        
-        <h2 class="mb-3">Reset Password</h2>
-        <p class="lead text-muted mb-4">This feature is coming soon!</p>
-        
-        <div class="alert alert-info" role="alert">
-            <i class="fas fa-info-circle"></i>
-            <strong>Coming Soon:</strong> Self-service password reset functionality will be available in the next update.
-        </div>
-        
-        <div class="mt-4">
-            <a href="{{ url_for('main.home') }}" class="btn btn-custom">
-                <i class="fas fa-home"></i> Back to Home
-            </a>
-        </div>
-        
-        <div class="mt-4 p-3 bg-light rounded">
-            <h6 class="text-muted">What's Coming:</h6>
-            <ul class="text-muted small text-start">
-                <li>Secure password reset via Active Directory</li>
-                <li>Multi-factor authentication support</li>
-                <li>Password policy enforcement</li>
-                <li>Email notifications</li>
-            </ul>
+    <div class="reset-container">
+        <div class="reset-content">
+            <div class="logo-section">
+                <img src="/static/img/geeks_logo.png" alt="GEEKS-AD-Plus Logo">
+                <div class="logo-text">GEEKS-AD-Plus</div>
+                <div class="subtitle">Password Reset Portal</div>
+            </div>
+            
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% if messages %}
+                {% for category, message in messages %}
+                  <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                  </div>
+                {% endfor %}
+              {% endif %}
+            {% endwith %}
+            
+            {% if step == 'security' and user %}
+                <!-- Security Verification Step -->
+                <div class="info-card">
+                    <div class="info-content">
+                        <h4 class="mb-3">
+                            <i class="fas fa-shield-alt text-warning me-2"></i>Security Verification
+                        </h4>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p class="mb-1"><strong>Username:</strong></p>
+                                <p class="text-muted">{{ user.username }}</p>
+                            </div>
+                            <div class="col-md-6">
+                                <p class="mb-1"><strong>Display Name:</strong></p>
+                                <p class="text-muted">{{ user.displayName or 'N/A' }}</p>
+                            </div>
+                        </div>
+                        {% if user.mail %}
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p class="mb-1"><strong>Email:</strong></p>
+                                <p class="text-muted">{{ user.mail }}</p>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                {% if security_question %}
+                    <!-- User has security question set up -->
+                    <form method="POST" class="mt-4">
+                        <input type="hidden" name="action" value="verify">
+                        <input type="hidden" name="user_dn" value="{{ user.dn }}">
+                        <input type="hidden" name="expected_captcha" value="{{ captcha_answer }}">
+                        
+                        <div class="mb-3">
+                            <label class="form-label">
+                                <i class="fas fa-question-circle me-2"></i>Security Question
+                            </label>
+                            <p class="text-muted">{{ security_question.question }}</p>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="security_answer" class="form-label">
+                                <i class="fas fa-key me-2"></i>Your Answer
+                            </label>
+                            <input type="text" class="form-control" id="security_answer" name="security_answer" 
+                                   required placeholder="Enter your answer">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">
+                                <i class="fas fa-calculator me-2"></i>Security CAPTCHA
+                            </label>
+                            <p class="text-muted">Please solve: {{ captcha_num1 }} + {{ captcha_num2 }} = ?</p>
+                            <input type="number" class="form-control" id="captcha_answer" name="captcha_answer" 
+                                   required placeholder="Enter the answer">
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-custom">
+                                <i class="fas fa-check me-2"></i>Verify & Continue
+                            </button>
+                            <a href="{{ url_for('main.reset') }}" class="btn btn-outline-custom">
+                                <i class="fas fa-arrow-left me-2"></i>Back to Search
+                            </a>
+                        </div>
+                    </form>
+                {% else %}
+                    <!-- User needs to set up security question -->
+                    {% if current_user.is_authenticated %}
+                        <!-- Logged in user can set up security question -->
+                        <div class="alert alert-info" role="alert">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>First Time Setup:</strong> You need to set up a security question before you can reset your password.
+                        </div>
+                        
+                        <form method="POST" class="mt-4">
+                            <input type="hidden" name="action" value="setup_question">
+                            <input type="hidden" name="user_dn" value="{{ user.dn }}">
+                            <input type="hidden" name="expected_captcha" value="{{ captcha_answer }}">
+                            
+                            <div class="mb-3">
+                                <label for="question" class="form-label">
+                                    <i class="fas fa-question-circle me-2"></i>Security Question
+                                </label>
+                                <select class="form-control" id="question" name="question" required>
+                                    <option value="">Select a security question...</option>
+                                    <option value="What was the name of your first pet?">What was the name of your first pet?</option>
+                                    <option value="In what city were you born?">In what city were you born?</option>
+                                    <option value="What was your mother's maiden name?">What was your mother's maiden name?</option>
+                                    <option value="What was the name of your first school?">What was the name of your first school?</option>
+                                    <option value="What is your favorite color?">What is your favorite color?</option>
+                                    <option value="What was the make of your first car?">What was the make of your first car?</option>
+                                    <option value="What is your favorite movie?">What is your favorite movie?</option>
+                                    <option value="What is the name of the street you grew up on?">What is the name of the street you grew up on?</option>
+                                </select>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="answer" class="form-label">
+                                    <i class="fas fa-key me-2"></i>Your Answer
+                                </label>
+                                <input type="text" class="form-control" id="answer" name="answer" 
+                                       required placeholder="Enter your answer">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">
+                                    <i class="fas fa-calculator me-2"></i>Security CAPTCHA
+                                </label>
+                                <p class="text-muted">Please solve: {{ captcha_num1 }} + {{ captcha_num2 }} = ?</p>
+                                <input type="number" class="form-control" id="captcha_answer" name="captcha_answer" 
+                                       required placeholder="Enter the answer">
+                            </div>
+                            
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-custom">
+                                    <i class="fas fa-save me-2"></i>Set Up Security Question
+                                </button>
+                                <a href="{{ url_for('main.reset') }}" class="btn btn-outline-custom">
+                                    <i class="fas fa-arrow-left me-2"></i>Back to Search
+                                </a>
+                            </div>
+                        </form>
+                    {% else %}
+                        <!-- User not logged in - direct to login -->
+                        <div class="alert alert-warning" role="alert">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>Authentication Required:</strong> You must be logged in to set up security questions for your account.
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <a href="{{ url_for('main.user_login') }}" class="btn btn-custom">
+                                <i class="fas fa-sign-in-alt me-2"></i>Log In to Set Up Security Question
+                            </a>
+                            <a href="{{ url_for('main.reset') }}" class="btn btn-outline-custom">
+                                <i class="fas fa-arrow-left me-2"></i>Back to Search
+                            </a>
+                        </div>
+                        
+                        <div class="alert alert-info mt-3" role="alert">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Need Help?</strong> If you don't have a security question set up and can't log in, please contact your IT administrator for assistance.
+                        </div>
+                    {% endif %}
+                {% endif %}
+            {% elif step == 'reset' and user %}
+                <!-- Password Reset Step -->
+                <div class="info-card">
+                    <div class="info-content">
+                        <h4 class="mb-3">
+                            <i class="fas fa-user-check text-success me-2"></i>Reset Password
+                        </h4>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p class="mb-1"><strong>Username:</strong></p>
+                                <p class="text-muted">{{ user.username }}</p>
+                            </div>
+                            <div class="col-md-6">
+                                <p class="mb-1"><strong>Display Name:</strong></p>
+                                <p class="text-muted">{{ user.displayName or 'N/A' }}</p>
+                            </div>
+                        </div>
+                        {% if user.mail %}
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p class="mb-1"><strong>Email:</strong></p>
+                                <p class="text-muted">{{ user.mail }}</p>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <form method="POST" class="mt-4">
+                    <input type="hidden" name="action" value="reset">
+                    <input type="hidden" name="user_dn" value="{{ user.dn }}">
+                    
+                    <div class="mb-3">
+                        <label for="new_password" class="form-label">
+                            <i class="fas fa-key me-2"></i>New Password
+                        </label>
+                        <input type="password" class="form-control" id="new_password" name="new_password" 
+                               required minlength="8" placeholder="Enter new password">
+                        <div class="form-text text-muted">Password must be at least 8 characters long</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="confirm_password" class="form-label">
+                            <i class="fas fa-lock me-2"></i>Confirm Password
+                        </label>
+                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" 
+                               required minlength="8" placeholder="Confirm new password">
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-custom">
+                            <i class="fas fa-save me-2"></i>Reset Password
+                        </button>
+                        <a href="{{ url_for('main.reset') }}" class="btn btn-outline-custom">
+                            <i class="fas fa-arrow-left me-2"></i>Back to Search
+                        </a>
+                    </div>
+                </form>
+            {% else %}
+                <!-- User Search Step -->
+                <h2 class="mb-3">Reset Password</h2>
+                <p class="lead text-muted mb-4">Enter your username or email to reset your password</p>
+                
+                <form method="POST" class="mt-4">
+                    <input type="hidden" name="action" value="search">
+                    
+                    <div class="mb-3">
+                        <label for="username" class="form-label">
+                            <i class="fas fa-user me-2"></i>Username
+                        </label>
+                        <input type="text" class="form-control" id="username" name="username" 
+                               placeholder="Enter your username">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="email" class="form-label">
+                            <i class="fas fa-envelope me-2"></i>Email Address
+                        </label>
+                        <input type="email" class="form-control" id="email" name="email" 
+                               placeholder="Enter your email address">
+                    </div>
+                    
+                    <div class="alert alert-info" role="alert">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Note:</strong> You can search by either username or email address. At least one field is required.
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-custom">
+                            <i class="fas fa-search me-2"></i>Search Account
+                        </button>
+                        <a href="{{ url_for('main.home') }}" class="btn btn-outline-custom">
+                            <i class="fas fa-home me-2"></i>Back to Home
+                        </a>
+                    </div>
+                </form>
+                
+                <div class="info-card mt-4">
+                    <div class="info-content">
+                        <h6 class="text-warning mb-3">
+                            <i class="fas fa-shield-alt me-2"></i>Security Information
+                        </h6>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <ul class="text-muted small">
+                                    <li><i class="fas fa-check text-success me-2"></i>Secure password reset via Active Directory</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Security question verification required</li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <ul class="text-muted small">
+                                    <li><i class="fas fa-check text-success me-2"></i>CAPTCHA protection against automated attacks</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Audit logging enabled</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/flash-messages.js"></script>
 </body>
 </html> 

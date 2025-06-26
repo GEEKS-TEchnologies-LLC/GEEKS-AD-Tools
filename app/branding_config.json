@@ -1,0 +1,12 @@
+{
+    "company_name": "Geeks Technologies",
+    "primary_color": "#ffd700",
+    "logo_url": "/static/img/geeks_logo.png",
+    "theme": "dark",
+    "secondary_color": "#ffb347",
+    "custom_css": "",
+    "flash_countdown": true,
+    "debug_mode": false,
+    "flash_timeout": 180,
+    "log_level": "INFO"
+}

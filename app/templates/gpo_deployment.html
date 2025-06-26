@@ -2,106 +2,378 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Group Policy Deployment - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: #1a1a1a;
+            color: #ffd700;
+            min-height: 100vh;
+            padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .main-container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        .hero-section {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 3rem;
+            text-align: center;
+            margin-bottom: 2rem;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero-section::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
+        }
+        
+        .hero-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .logo-section {
+            margin-bottom: 2rem;
+        }
+        
+        .logo-section img {
+            max-height: 80px;
+            width: auto;
+            margin-bottom: 1rem;
+        }
+        
+        .logo-text {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 2.5rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            color: #ccc;
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+        }
+        
+        .glass-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffd700;
+            padding: 2rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
+        }
+        
+        .card-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .form-label {
+            font-weight: 600;
+            color: #ffd700;
+            margin-bottom: 0.5rem;
+        }
+        
+        .form-control {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #fff;
+            padding: 12px 15px;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+        
+        .form-control:focus {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #ffd700;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25);
+            color: #fff;
+        }
+        
+        .form-control::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        .btn-custom {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #1a1a1a;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+        
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 215, 0, 0.3);
+            color: #1a1a1a;
+        }
+        
+        .btn-outline-custom {
+            background: transparent;
+            border: 2px solid #ffd700;
+            color: #ffd700;
+            padding: 10px 25px;
+            border-radius: 20px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-outline-custom:hover {
+            background: #ffd700;
+            color: #1a1a1a;
+            transform: translateY(-1px);
+        }
+        
+        .alert {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #fff;
+        }
+        
+        .text-muted {
+            color: #aaa !important;
+        }
+        
+        .form-text {
+            color: #aaa;
+            font-size: 0.875rem;
+        }
+        
+        .instruction-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.25);
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .instruction-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 15px;
+        }
+        
+        .instruction-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        code {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffd700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        ul, ol {
+            color: #ccc;
+        }
+        
+        li {
+            margin-bottom: 0.5rem;
+        }
+    </style>
 </head>
 <body>
-    <h1>Group Policy Deployment</h1>
-    
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <ul>
-        {% for category, message in messages %}
-          <li><strong>{{ category.title() }}:</strong> {{ message }}</li>
-        {% endfor %}
-        </ul>
-      {% endif %}
-    {% endwith %}
-    
-    <h2>GEEKS Credential Provider Deployment</h2>
-    <p>Generate a custom Group Policy deployment script for the Windows Credential Provider.</p>
-    
-    <form method="post" action="/admin/generate-gpo-script">
-        <div>
-            <label for="domain_controller"><strong>Domain Controller:</strong></label><br>
-            <input type="text" name="domain_controller" id="domain_controller" required 
-                   placeholder="dc.yourdomain.com" style="width: 300px;">
-            <br><small>Enter the FQDN of your domain controller</small>
+    <div class="main-container">
+        <div class="hero-section">
+            <div class="hero-content">
+                <div class="logo-section">
+                    <img src="/static/img/geeks_logo.png" alt="GEEKS-AD-Plus Logo">
+                    <div class="logo-text">GEEKS-AD-Plus</div>
+                    <div class="subtitle">Group Policy Deployment</div>
+                </div>
+                
+                <h1><i class="fas fa-cogs text-warning me-2"></i>Group Policy Deployment</h1>
+                <p class="lead text-muted">Generate a custom Group Policy deployment script for the Windows Credential Provider.</p>
+            </div>
         </div>
-        <br>
-        <div>
-            <label for="gpo_name"><strong>GPO Name:</strong></label><br>
-            <input type="text" name="gpo_name" id="gpo_name" 
-                   value="GEEKS-CredentialProvider" style="width: 300px;">
-            <br><small>Name for the Group Policy Object</small>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                <i class="fas fa-{{ 'exclamation-triangle' if category == 'error' else 'check-circle' }} me-2"></i>
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        
+        <div class="glass-card">
+            <div class="card-content">
+                <h2><i class="fas fa-download text-warning me-2"></i>GEEKS Credential Provider Deployment</h2>
+                <p class="text-muted">Generate a custom Group Policy deployment script for the Windows Credential Provider.</p>
+                
+                <form method="post" action="/admin/generate-gpo-script">
+                    <div class="mb-3">
+                        <label for="domain_controller" class="form-label">
+                            <i class="fas fa-server me-2"></i>Domain Controller
+                        </label>
+                        <input type="text" class="form-control" name="domain_controller" id="domain_controller" required 
+                               placeholder="dc.yourdomain.com">
+                        <div class="form-text">Enter the FQDN of your domain controller</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="gpo_name" class="form-label">
+                            <i class="fas fa-tag me-2"></i>GPO Name
+                        </label>
+                        <input type="text" class="form-control" name="gpo_name" id="gpo_name" 
+                               value="GEEKS-CredentialProvider">
+                        <div class="form-text">Name for the Group Policy Object</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="portal_url" class="form-label">
+                            <i class="fas fa-globe me-2"></i>Portal URL
+                        </label>
+                        <input type="url" class="form-control" name="portal_url" id="portal_url" 
+                               value="http://localhost:5000/reset-password">
+                        <div class="form-text">URL where users will be directed for password reset</div>
+                    </div>
+                    
+                    <div class="text-center">
+                        <button type="submit" class="btn btn-custom">
+                            <i class="fas fa-download me-2"></i>Generate GPO Deployment Script
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
-        <br>
-        <div>
-            <label for="portal_url"><strong>Portal URL:</strong></label><br>
-            <input type="url" name="portal_url" id="portal_url" 
-                   value="http://localhost:5000/reset-password" style="width: 300px;">
-            <br><small>URL where users will be directed for password reset</small>
+        
+        <div class="instruction-card">
+            <div class="instruction-content">
+                <h3><i class="fas fa-list-ol text-warning me-2"></i>Deployment Instructions</h3>
+                <ol>
+                    <li><strong>Build the Credential Provider:</strong>
+                        <ul>
+                            <li>Open Visual Studio 2019 or later</li>
+                            <li>Open the project in <code>windows-credential-provider/</code></li>
+                            <li>Build the solution in Release mode</li>
+                            <li>Ensure <code>GEEKS-CredentialProvider.dll</code> is generated</li>
+                        </ul>
+                    </li>
+                    <li><strong>Generate Deployment Script:</strong>
+                        <ul>
+                            <li>Fill in the form above with your domain details</li>
+                            <li>Click "Generate GPO Deployment Script"</li>
+                            <li>Save the downloaded PowerShell script</li>
+                        </ul>
+                    </li>
+                    <li><strong>Deploy via Group Policy:</strong>
+                        <ul>
+                            <li>Copy the credential provider DLL to the same directory as the script</li>
+                            <li>Run the script as Administrator on your domain controller</li>
+                            <li>Link the created GPO to target Organizational Units</li>
+                            <li>Force a Group Policy update on target computers</li>
+                        </ul>
+                    </li>
+                    <li><strong>Test the Deployment:</strong>
+                        <ul>
+                            <li>Lock a workstation or restart a computer</li>
+                            <li>Look for the "Forgot Password?" option on the lock screen</li>
+                            <li>Click it to launch the password reset portal</li>
+                        </ul>
+                    </li>
+                </ol>
+            </div>
         </div>
-        <br>
-        <button type="submit">Generate GPO Deployment Script</button>
-    </form>
-    
-    <h3>Deployment Instructions</h3>
-    <ol>
-        <li><strong>Build the Credential Provider:</strong>
-            <ul>
-                <li>Open Visual Studio 2019 or later</li>
-                <li>Open the project in <code>windows-credential-provider/</code></li>
-                <li>Build the solution in Release mode</li>
-                <li>Ensure <code>GEEKS-CredentialProvider.dll</code> is generated</li>
-            </ul>
-        </li>
-        <li><strong>Generate Deployment Script:</strong>
-            <ul>
-                <li>Fill in the form above with your domain details</li>
-                <li>Click "Generate GPO Deployment Script"</li>
-                <li>Save the downloaded PowerShell script</li>
-            </ul>
-        </li>
-        <li><strong>Deploy via Group Policy:</strong>
-            <ul>
-                <li>Copy the credential provider DLL to the same directory as the script</li>
-                <li>Run the script as Administrator on your domain controller</li>
-                <li>Link the created GPO to target Organizational Units</li>
-                <li>Force a Group Policy update on target computers</li>
-            </ul>
-        </li>
-        <li><strong>Test the Deployment:</strong>
-            <ul>
-                <li>Lock a workstation or restart a computer</li>
-                <li>Look for the "Forgot Password?" option on the lock screen</li>
-                <li>Click it to launch the password reset portal</li>
-            </ul>
-        </li>
-    </ol>
-    
-    <h3>Manual Installation</h3>
-    <p>For individual computers or testing, you can also use the manual installation scripts:</p>
-    <ul>
-        <li><strong>Install:</strong> <code>.\install.ps1 -PortalURL "http://your-portal-url"</code></li>
-        <li><strong>Uninstall:</strong> <code>.\uninstall.ps1</code></li>
-    </ul>
-    
-    <h3>Configuration Options</h3>
-    <p>The credential provider can be configured via registry:</p>
-    <ul>
-        <li><strong>Portal URL:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\PortalURL</code></li>
-        <li><strong>Enable/Disable:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\Enabled</code></li>
-        <li><strong>Debug Mode:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\Debug</code></li>
-    </ul>
-    
-    <h3>Troubleshooting</h3>
-    <ul>
-        <li>Check Windows Event Logs for credential provider errors</li>
-        <li>Verify the portal URL is accessible from target computers</li>
-        <li>Ensure the DLL is properly registered and signed</li>
-        <li>Test browser launch permissions on the lock screen</li>
-    </ul>
-    
-    <a href="/admin/dashboard">Back to Dashboard</a>
+        
+        <div class="instruction-card">
+            <div class="instruction-content">
+                <h3><i class="fas fa-tools text-warning me-2"></i>Manual Installation</h3>
+                <p class="text-muted">For individual computers or testing, you can also use the manual installation scripts:</p>
+                <ul>
+                    <li><strong>Install:</strong> <code>.\install.ps1 -PortalURL "http://your-portal-url"</code></li>
+                    <li><strong>Uninstall:</strong> <code>.\uninstall.ps1</code></li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="instruction-card">
+            <div class="instruction-content">
+                <h3><i class="fas fa-cog text-warning me-2"></i>Configuration Options</h3>
+                <p class="text-muted">The credential provider can be configured via registry:</p>
+                <ul>
+                    <li><strong>Portal URL:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\PortalURL</code></li>
+                    <li><strong>Enable/Disable:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\Enabled</code></li>
+                    <li><strong>Debug Mode:</strong> <code>HKLM\SOFTWARE\GEEKS\CredentialProvider\Debug</code></li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="instruction-card">
+            <div class="instruction-content">
+                <h3><i class="fas fa-exclamation-triangle text-warning me-2"></i>Troubleshooting</h3>
+                <ul>
+                    <li>Check Windows Event Logs for credential provider errors</li>
+                    <li>Verify the portal URL is accessible from target computers</li>
+                    <li>Ensure the DLL is properly registered and signed</li>
+                    <li>Test browser launch permissions on the lock screen</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="text-center mt-4">
+            <a href="/admin/dashboard" class="btn btn-outline-custom">
+                <i class="fas fa-arrow-left me-2"></i>Back to Dashboard
+            </a>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/flash-messages.js"></script>
 </body>
 </html> 

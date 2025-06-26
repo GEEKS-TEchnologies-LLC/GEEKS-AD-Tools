@@ -300,12 +300,22 @@ The build system creates:
 - ✅ **Bug Reporting System** - Built-in bug report collection with logs and system info
 - ✅ **Automated Build System** - Complete build automation with cross-platform support
 
+### Authentication & Security
+- ✅ **Unified Login System** - Single login page that automatically detects admin/user roles
+- ✅ **Multiple Security Questions** - Support for 3 security questions per user with cycling
+- ✅ **Password Policy Integration** - Real-time AD password policy enforcement
+- ✅ **Password Status Display** - Show password expiry, last set date, and policy info
+- ✅ **Secure Authentication** - Admin and user authentication flows with session management
+- ✅ **View Switching** - Admins can switch between admin and user views seamlessly
+
 ### Admin Management
 - ✅ **Admin Authentication** - Separate admin login with AD group-based permissions
 - ✅ **User Management** - Search, create, delete, enable/disable AD users
 - ✅ **Group Management** - Configure admin groups and manage AD groups
 - ✅ **Password Operations** - Reset passwords, force password changes
 - ✅ **Admin Dashboard** - Centralized admin interface with statistics
+- ✅ **User Details View** - Comprehensive user information including password status
+- ✅ **Password Info Display** - Show password expiry, policy, and status in user details
 
 ### Active Directory Features
 - ✅ **AD Dashboard** - Real-time statistics and health monitoring
@@ -313,6 +323,8 @@ The build system creates:
 - ✅ **Computer Management** - Computer counts and status
 - ✅ **Health Monitoring** - AD connection status and performance metrics
 - ✅ **Interactive Charts** - Visual representation of AD data using Chart.js
+- ✅ **Password Policy Display** - Show domain password policies and user compliance
+- ✅ **Password Expiry Tracking** - Real-time password expiry calculations
 
 ### Windows Integration
 - ✅ **Windows Credential Provider** - C++ component for lock screen integration
@@ -325,10 +337,18 @@ The build system creates:
 - ✅ **Audit Trail** - Complete audit logging with export capabilities
 - ✅ **Configuration Management** - Secure storage of AD credentials
 - ✅ **Privacy Protection** - Sensitive data redaction in bug reports
+- ✅ **Security Question Management** - Secure storage and validation of security questions
+
+### User Experience
+- ✅ **Modern UI/UX** - Glassmorphism design with responsive layout
+- ✅ **Unified Interface** - Single login page with role-based view switching
+- ✅ **Password Status Indicators** - Visual indicators for password expiry and status
+- ✅ **Security Question Setup** - User-friendly security question configuration
+- ✅ **Profile Management** - User profile pages with password and account information
 
 ### Future Features
 - ⏳ **Multi-Factor Authentication** - SMS/email verification for password resets
-- ⏳ **Password Policy Enforcement** - Custom password complexity requirements
+- ⏳ **Advanced Password Policies** - Custom password complexity requirements
 - ⏳ **User Self-Service** - Account unlock and profile management
 - ⏳ **Email Notifications** - Password change confirmations and alerts
 - ⏳ **API Integration** - REST API for external system integration
@@ -429,6 +449,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **v1.2.0** - Added AD dashboard and Windows Credential Provider
 - **v1.3.0** - Added bug reporting system and enhanced security
 - **v1.4.0** - Added comprehensive automated build system and Docker support
+- **v1.5.0** - Added unified login system, multiple security questions, and password info display
+- **v1.5.1** - Enhanced user experience with view switching and improved password status tracking
 
 ## Quick Reference
 
@@ -533,6 +555,7 @@ venv/bin/python app.py
 Once started, you can access the system at:
 - **Local Access**: http://localhost:5000
 - **Network Access**: http://YOUR_SERVER_IP:5000
+- **Unified Login**: http://YOUR_SERVER_IP:5000/login
 - **Admin Login**: http://YOUR_SERVER_IP:5000/admin/login
 - **Setup Page**: http://YOUR_SERVER_IP:5000/setup
 
@@ -573,12 +596,16 @@ make network-info
 ## Dashboard & UI (2025)
 
 - **Modern Admin Dashboard**: Black/gold Geeks Technologies branding, responsive layout
+- **Unified Login Interface**: Single login page with automatic role detection
+- **View Switching**: Admins can switch between admin and user views seamlessly
 - **Collapsible Sidebar**: Left-justified icons/text when open, centered icons when collapsed
 - **Top Bar**: Always-visible logo, gold gradient text, AD health status light (right side), user dropdown (profile/logout)
 - **Stat Cards**: Total Users, Computers, Groups, OUs
 - **Interactive Charts**: User Status, Server OS, Client OS, User Types (with drilldown via Chart.js)
 - **Recent Log Reports**: Last 10 log lines in a dashboard card
 - **Quick Audit Results**: Audit stats (total, success, failure, top actions) in a dashboard card
+- **Password Status Display**: Visual indicators for password expiry and policy compliance
+- **Security Question Management**: User-friendly setup and management of security questions
 - **Settings Page**: For admin/config and branding (planned)
 - **Fully Responsive**: Bootstrap grid, mobile-friendly
 

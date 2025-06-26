@@ -481,6 +481,63 @@ def add_user_to_group_route():
     
     return jsonify({'success': ok, 'message': msg})
 
+@main.route('/admin/dashboard')
+@login_required
+@admin_required
+def admin_dashboard():
+    # Example: Read last 20 log lines
+    log_path = 'app/logs/app.log'
+    logs = []
+    if os.path.exists(log_path):
+        with open(log_path, 'r') as f:
+            logs = f.readlines()[-20:]
+    
+    # Get audit statistics
+    audit_stats = get_audit_stats(days=30)
+    
+    # Get AD statistics if configured
+    ad_stats = None
+    ad_health = None
+    config = get_ad_config()
+    if config:
+        ok, stats = get_ad_statistics(
+            server=config['ad_server'],
+            port=config['ad_port'],
+            bind_user=config['ad_bind_dn'],
+            bind_password=config['ad_password'],
+            base_dn=config['ad_base_dn']
+        )
+        if ok:
+            ad_stats = stats
+        
+        # Get AD health status
+        ok, health = get_ad_health_status(
+            server=config['ad_server'],
+            port=config['ad_port'],
+            bind_user=config['ad_bind_dn'],
+            bind_password=config['ad_password'],
+            base_dn=config['ad_base_dn']
+        )
+        if ok:
+            ad_health = health
+    
+    # Example: System status (placeholder)
+    status = {
+        'AD Configured': bool(config),
+        'Admin Groups': get_admin_groups(),
+    }
+
+    # Load branding config
+    branding = get_branding_config()
+
+    return render_template('admin_dashboard.html', logs=logs, status=status, audit_stats=audit_stats, ad_stats=ad_stats, ad_health=ad_health, branding=branding)
+
+@main.route('/admin/ad-dashboard')
+@login_required
+@admin_required
+def ad_dashboard():
+    """Detailed AD dashboard with charts and statistics"""
+    config = get_ad_config()
     if not config:
         flash('AD not configured. Please complete setup first.', 'warning')
         return redirect(url_for('main.setup'))
@@ -729,41 +786,6 @@ def user_details(user_dn):
     is_disabled = bool(uac & 2)
     is_locked = bool(uac & 16) # LOCKOUT bit
 
-    # Get password information
-    password_info = None
-    password_expired = False
-    password_expiring_soon = False
-    password_never_expires = False
-    days_until_reset = None
-    policy = None
-    
-    try:
-        # Get password information using the same logic as user_profile
-        from app.models import get_ad_password_info, get_ad_password_policy
-        
-        # Get user password info
-        password_info = get_ad_password_info(user_dn)
-        
-        if password_info:
-            # Get domain password policy
-            policy = get_ad_password_policy(user_dn)
-            
-            if policy and password_info.get('pwd_last_set'):
-                # Calculate password status
-                if policy.get('max_age_days', 0) == 0:
-                    password_never_expires = True
-                else:
-                    days_until_reset = password_info.get('days_until_expiry')
-                    
-                    if days_until_reset is not None:
-                        if days_until_reset < 0:
-                            password_expired = True
-                        elif days_until_reset <= 14:  # Default warning threshold
-                            password_expiring_soon = True
-    except Exception as e:
-        print(f"Error getting password info: {e}")
-        # Continue without password info if there's an error
-
     return render_template(
         'user_details.html', 
         user=user, 
@@ -773,13 +795,7 @@ def user_details(user_dn):
         is_locked=is_locked,
         group_type_counts=group_type_counts,
         os_breakdown=os_breakdown,
-        manager_display_name=manager_display_name,
-        password_info=password_info,
-        password_expired=password_expired,
-        password_expiring_soon=password_expiring_soon,
-        password_never_expires=password_never_expires,
-        days_until_reset=days_until_reset,
-        policy=policy
+        manager_display_name=manager_display_name
     )
 
 @main.route('/admin/create_user', methods=['GET', 'POST'])
