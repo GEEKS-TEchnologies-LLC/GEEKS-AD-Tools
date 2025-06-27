@@ -155,7 +155,7 @@ def is_password_expiring_soon(username):
     days_until = calculate_days_until_reset(username)
     return 0 < days_until <= policy['warning_days']
 
-def get_ad_password_policy(username=None):
+def get_ad_password_policy(username_or_dn=None):
     """Get password policy from Active Directory"""
     from app.views import get_ad_config, search_users
     
@@ -202,20 +202,29 @@ def get_ad_password_policy(username=None):
             }
             
             # If we have a specific user, also check their account settings
-            if username:
-                users = search_users(username, **{
-                    'server': config['ad_server'],
-                    'port': int(config['ad_port']),
-                    'bind_user': config['ad_bind_dn'],
-                    'bind_password': config['ad_password'],
-                    'base_dn': config['ad_base_dn']
-                })
+            if username_or_dn:
+                user_dn = None
+                if username_or_dn.startswith('CN=') or ',' in username_or_dn:
+                    # This looks like a DN, use it directly
+                    user_dn = username_or_dn
+                else:
+                    # This is a username, search for the user
+                    users = search_users(username_or_dn, **{
+                        'server': config['ad_server'],
+                        'port': int(config['ad_port']),
+                        'bind_user': config['ad_bind_dn'],
+                        'bind_password': config['ad_password'],
+                        'base_dn': config['ad_base_dn']
+                    })
+                    
+                    if users:
+                        user_dn = users[0]['dn']
                 
-                if users:
-                    user_dn = users[0]['dn']
+                if user_dn:
                     conn.search(user_dn, '(objectClass=user)', 
                               attributes=['pwdLastSet', 'userAccountControl', 
-                                        'lockoutTime', 'accountExpires', 'lastLogon', 'lastLogonTimestamp'])
+                                        'lockoutTime', 'accountExpires', 'lastLogon', 'lastLogonTimestamp',
+                                        'whenChanged', 'whenCreated', 'pwdHistoryLength'])
                     
                     if conn.entries:
                         user = conn.entries[0]
@@ -322,7 +331,7 @@ def get_dynamic_password_requirements(username=None):
         'source': 'active_directory'
     }
 
-def get_ad_password_info(username):
+def get_ad_password_info(username_or_dn):
     """Get detailed password information from Active Directory"""
     from app.views import get_ad_config, search_users
     
@@ -342,25 +351,32 @@ def get_ad_password_info(username):
                          password=config['ad_password'], 
                          auto_bind=True)
         
-        # Search for user
-        users = search_users(username, **{
-            'server': config['ad_server'],
-            'port': int(config['ad_port']),
-            'bind_user': config['ad_bind_dn'],
-            'bind_password': config['ad_password'],
-            'base_dn': config['ad_base_dn']
-        })
-        
-        if not users:
-            conn.unbind()
-            return None
-        
-        user_dn = users[0]['dn']
+        # Determine if we have a DN or username
+        user_dn = None
+        if username_or_dn.startswith('CN=') or ',' in username_or_dn:
+            # This looks like a DN, use it directly
+            user_dn = username_or_dn
+        else:
+            # This is a username, search for the user
+            users = search_users(username_or_dn, **{
+                'server': config['ad_server'],
+                'port': int(config['ad_port']),
+                'bind_user': config['ad_bind_dn'],
+                'bind_password': config['ad_password'],
+                'base_dn': config['ad_base_dn']
+            })
+            
+            if not users:
+                conn.unbind()
+                return None
+            
+            user_dn = users[0]['dn']
         
         # Get user's password-related attributes
         conn.search(user_dn, '(objectClass=user)', 
                    attributes=['pwdLastSet', 'userAccountControl', 
-                             'lockoutTime', 'accountExpires', 'lastLogon', 'lastLogonTimestamp'])
+                             'lockoutTime', 'accountExpires', 'lastLogon', 'lastLogonTimestamp',
+                             'whenChanged', 'whenCreated', 'pwdHistoryLength'])
         
         if not conn.entries:
             conn.unbind()
@@ -410,7 +426,21 @@ def get_ad_password_info(username):
                 seconds_since_1601 = ad_time // (10**7)
                 seconds_since_1970 = seconds_since_1601 - 11644473600
                 pwd_last_set = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
-        print(f"DEBUG: pwdLastSet raw: {getattr(user.pwdLastSet, 'value', None)} parsed: {pwd_last_set}")
+
+        # Parse whenChanged as potential password change indicator
+        when_changed = None
+        if hasattr(user, 'whenChanged') and user.whenChanged and hasattr(user.whenChanged, 'value') and user.whenChanged.value:
+            when_changed = user.whenChanged.value
+            if isinstance(when_changed, str):
+                # Parse string format
+                try:
+                    when_changed = datetime.fromisoformat(when_changed.replace('Z', '+00:00'))
+                except:
+                    when_changed = None
+
+        # If whenChanged is more recent than pwdLastSet, use whenChanged as password change time
+        if when_changed and (pwd_last_set is None or when_changed > pwd_last_set):
+            pwd_last_set = when_changed
 
         # Parse lockout time
         lockout_time = None
@@ -422,7 +452,6 @@ def get_ad_password_info(username):
                 seconds_since_1601 = ad_time // (10**7)
                 seconds_since_1970 = seconds_since_1601 - 11644473600
                 lockout_time = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
-        print(f"DEBUG: lockoutTime raw: {getattr(user.lockoutTime, 'value', None)} parsed: {lockout_time}")
 
         # Parse account expiration
         account_expires = None
@@ -434,7 +463,6 @@ def get_ad_password_info(username):
                 seconds_since_1601 = ad_time // (10**7)
                 seconds_since_1970 = seconds_since_1601 - 11644473600
                 account_expires = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
-        print(f"DEBUG: accountExpires raw: {getattr(user.accountExpires, 'value', None)} parsed: {account_expires}")
 
         # Parse last logon times
         last_logon = None
@@ -446,7 +474,6 @@ def get_ad_password_info(username):
                 seconds_since_1601 = ad_time // (10**7)
                 seconds_since_1970 = seconds_since_1601 - 11644473600
                 last_logon = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
-        print(f"DEBUG: lastLogon raw: {getattr(user.lastLogon, 'value', None)} parsed: {last_logon}")
 
         last_logon_timestamp = None
         if user.lastLogonTimestamp and hasattr(user.lastLogonTimestamp, 'value') and user.lastLogonTimestamp.value and user.lastLogonTimestamp.value != 0:
@@ -457,7 +484,6 @@ def get_ad_password_info(username):
                 seconds_since_1601 = ad_time // (10**7)
                 seconds_since_1970 = seconds_since_1601 - 11644473600
                 last_logon_timestamp = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
-        print(f"DEBUG: lastLogonTimestamp raw: {getattr(user.lastLogonTimestamp, 'value', None)} parsed: {last_logon_timestamp}")
         
         # Fix maxPwdAge to integer days
         max_pwd_age_days = None
@@ -490,9 +516,23 @@ def get_ad_password_info(username):
         days_until_expiry = None
         days_since_last_set = None
         
-        if pwd_last_set:
-            days_since_last_set = (datetime.now(timezone.utc) - pwd_last_set).days
+        # Check local password reset history for more accurate information
+        local_last_reset = get_last_password_reset(username_or_dn.split(',')[0].replace('CN=', '') if ',' in username_or_dn else username_or_dn)
+        
+        if local_last_reset and local_last_reset.reset_at:
+            local_days_since = (datetime.now(timezone.utc) - local_last_reset.reset_at).days
             
+            # If local reset is more recent than AD pwdLastSet, use local data
+            if pwd_last_set is None or local_last_reset.reset_at > pwd_last_set:
+                pwd_last_set = local_last_reset.reset_at
+                days_since_last_set = local_days_since
+            else:
+                days_since_last_set = (datetime.now(timezone.utc) - pwd_last_set).days
+        else:
+            if pwd_last_set:
+                days_since_last_set = (datetime.now(timezone.utc) - pwd_last_set).days
+        
+        if pwd_last_set:
             if password_never_expires:
                 password_status = "never_expires"
             elif domain_policy and max_pwd_age_days and max_pwd_age_days > 0:
@@ -512,43 +552,29 @@ def get_ad_password_info(username):
         
         conn.unbind()
         
-        # Debug logging for troubleshooting expiry logic
-        print(f"DEBUG: pwdLastSet: {pwd_last_set}")
-        if domain_policy:
-            print(f"DEBUG: maxPwdAge (raw): {domain.maxPwdAge.value if 'domain' in locals() and hasattr(domain, 'maxPwdAge') and domain.maxPwdAge else 'N/A'}")
-            print(f"DEBUG: maxPwdAge (days): {domain_policy['max_age_days']}")
-        print(f"DEBUG: days_since_last_set: {days_since_last_set}")
-        print(f"DEBUG: days_until_expiry: {days_until_expiry}")
-        
-        # Calculate is_locked_out safely
-        is_locked_out = False
-        if isinstance(lockout_time, datetime):
-            is_locked_out = lockout_time > datetime.now(timezone.utc) - timedelta(minutes=30)
-        # If lockout_time is not a datetime, treat as not locked out
-        
         return {
-            'username': username,
+            'pwd_last_set': pwd_last_set,
+            'days_since_last_set': days_since_last_set,
+            'days_until_expiry': days_until_expiry,
             'password_status': password_status,
             'password_never_expires': password_never_expires,
             'account_disabled': account_disabled,
             'password_not_required': password_not_required,
             'smart_card_required': smart_card_required,
-            'pwd_last_set': pwd_last_set,
-            'pwd_must_change': pwd_must_change,
-            'pwd_can_change': pwd_can_change,
             'lockout_time': lockout_time,
             'account_expires': account_expires,
             'last_logon': last_logon,
             'last_logon_timestamp': last_logon_timestamp,
-            'days_since_last_set': days_since_last_set,
-            'days_until_expiry': days_until_expiry,
-            'domain_policy': domain_policy,
-            'is_locked_out': is_locked_out
+            'pwd_must_change': pwd_must_change,
+            'pwd_can_change': pwd_can_change,
+            'domain_policy': domain_policy
         }
         
     except Exception as e:
         print(f"Error retrieving AD password info: {e}")
         return None
+    
+    return None
 
 def get_ad_password_history(username):
     """Get password history from AD (if available)"""

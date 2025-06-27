@@ -1,0 +1,17 @@
+[Unit]
+Description=GEEKS-AD-Plus Flask App
+After=network.target
+
+[Service]
+Type=simple
+User=bphillips
+WorkingDirectory=/home/bphillips/GEEKS-AD-Plus
+Environment=VIRTUAL_ENV=/home/bphillips/GEEKS-AD-Plus/venv
+Environment=PATH=/home/bphillips/GEEKS-AD-Plus/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHONPATH=/home/bphillips/GEEKS-AD-Plus:/home/bphillips/GEEKS-AD-Plus/venv/lib/python3.12/site-packages
+ExecStart=/bin/bash -c 'env > /tmp/geeksad-debug.txt; /home/bphillips/GEEKS-AD-Plus/venv/bin/python -c "import sys; f=open(\"/tmp/geeksad-debug.txt\",\"a\"); f.write(str(sys.path)+\"\\n\"); f.close()"; /home/bphillips/GEEKS-AD-Plus/venv/bin/python /home/bphillips/GEEKS-AD-Plus/app.py'
+Restart=on-failure
+Environment=FLASK_ENV=production
+
+[Install]
+WantedBy=multi-user.target 

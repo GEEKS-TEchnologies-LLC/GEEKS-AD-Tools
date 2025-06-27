@@ -114,4 +114,37 @@ else
     echo
     print_error "Build failed! Check the build.log file for details"
     exit 1
-fi 
+fi
+
+# --- Systemd Service Setup ---
+SERVICE_NAME=geeksadplus
+SERVICE_FILE=/etc/systemd/system/$SERVICE_NAME.service
+WORKING_DIR=$(pwd)
+USER=$(whoami)
+
+set -e
+trap 'echo "[ERROR] Service setup failed."; exit 1' ERR
+
+echo "[INFO] Writing systemd service file to $SERVICE_FILE ..."
+echo "[Unit]
+Description=GEEKS-AD-Plus Flask App
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$WORKING_DIR
+ExecStart=/usr/bin/make start
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target" | sudo tee $SERVICE_FILE > /dev/null
+
+sudo systemctl daemon-reload
+sudo systemctl enable $SERVICE_NAME
+sudo systemctl restart $SERVICE_NAME
+
+echo "[SUCCESS] Service $SERVICE_NAME installed and started."
+trap - ERR 

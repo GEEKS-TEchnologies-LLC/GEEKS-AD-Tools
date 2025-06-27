@@ -1,1 +1,272 @@
- 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assign New Task - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background: #181818; color: #ffd700; }
+        .glass-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffd700;
+            padding: 2rem;
+            margin: 2rem auto;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn-custom {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #1a1a1a;
+            padding: 8px 20px;
+            border-radius: 15px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 215, 0, 0.3);
+            color: #1a1a1a;
+        }
+        .form-label { color: #ffd700; font-weight: 600; }
+        .form-control, .form-select {
+            background: #232323 !important;
+            color: #ffd700 !important;
+            border: 1px solid #ffd700 !important;
+        }
+        .form-control::placeholder {
+            color: rgba(255, 215, 0, 0.6) !important;
+        }
+        .form-control:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px #ffd70044;
+            border-color: #ffd700;
+        }
+        .alert { color: #222; }
+        /* Custom dropdown style */
+        .custom-dropdown {
+            position: relative;
+        }
+        .custom-dropdown-list {
+            position: absolute;
+            z-index: 1000;
+            width: 100%;
+            max-height: 200px;
+            overflow-y: auto;
+            background: #232323;
+            border: 1px solid #ffd700;
+            border-radius: 0 0 10px 10px;
+            display: none;
+        }
+        .custom-dropdown-list.show {
+            display: block;
+        }
+        .custom-dropdown-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            color: #ffd700;
+            background: #232323;
+        }
+        .custom-dropdown-item:hover, .custom-dropdown-item.active {
+            background: #ffd700;
+            color: #181818;
+        }
+        .custom-dropdown-search {
+            width: 100%;
+            border: none;
+            border-bottom: 1px solid #ffd700;
+            background: #232323;
+            color: #ffd700;
+            padding: 8px 12px;
+            border-radius: 10px 10px 0 0;
+            outline: none;
+        }
+        .custom-dropdown .form-control[readonly] {
+            background: #232323 !important;
+            color: #ffd700 !important;
+            border: 1px solid #ffd700;
+        }
+        .custom-dropdown .form-control[readonly]::placeholder {
+            color: rgba(255, 215, 0, 0.6);
+        }
+        .btn-cancel {
+            background: #232323 !important;
+            color: #ffd700 !important;
+            border: 1.5px solid #ffd700 !important;
+            border-radius: 8px;
+            padding: 8px 24px;
+            font-weight: 600;
+            transition: background 0.2s, color 0.2s;
+        }
+        .btn-cancel:hover, .btn-cancel:focus {
+            background: #ffd700 !important;
+            color: #232323 !important;
+            border-color: #ffd700 !important;
+        }
+    </style>
+</head>
+<body>
+<div class="container py-4">
+    <div class="glass-card" style="max-width: 600px; margin: 0 auto;">
+        <h2 class="mb-4"><i class="fas fa-plus"></i> Assign New Task</h2>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                <i class="fas fa-{{ 'exclamation-triangle' if category == 'error' else 'check-circle' }} me-2"></i>
+                <span class="alert-message">{{ message }}</span>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        <form method="post" autocomplete="off">
+            <div class="mb-3">
+                <label for="username" class="form-label">Assign To User</label>
+                <div class="custom-dropdown" id="userDropdown">
+                    <input type="text" class="form-control" id="userDropdownInput" placeholder="Type to search users..." autocomplete="off" readonly required>
+                    <input type="hidden" name="username" id="username" required>
+                    <div class="custom-dropdown-list" id="userDropdownList">
+                        <input type="text" class="custom-dropdown-search" id="userDropdownSearch" placeholder="Search...">
+                        {% for user in users %}
+                            <div class="custom-dropdown-item" data-username="{{ user.username }}">{{ user.displayName or user.username }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label for="task_type" class="form-label">Task Type</label>
+                <div class="custom-dropdown" id="taskTypeDropdown">
+                    <input type="text" class="form-control" id="taskTypeDropdownInput" placeholder="Type to search task types..." autocomplete="off" readonly required>
+                    <input type="hidden" name="task_type" id="task_type" required>
+                    <div class="custom-dropdown-list" id="taskTypeDropdownList">
+                        <input type="text" class="custom-dropdown-search" id="taskTypeDropdownSearch" placeholder="Search...">
+                        <div class="custom-dropdown-item" data-value="security_question">Set Up Security Question</div>
+                        <div class="custom-dropdown-item" data-value="verify_info">Verify Info</div>
+                        <div class="custom-dropdown-item" data-value="custom">Custom</div>
+                    </div>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label for="title" class="form-label">Title</label>
+                <input type="text" class="form-control" id="title" name="title" required maxlength="256">
+            </div>
+            <div class="mb-3">
+                <label for="description" class="form-label">Description</label>
+                <textarea class="form-control" id="description" name="description" rows="3" maxlength="1000"></textarea>
+            </div>
+            <div class="mb-3">
+                <label for="priority" class="form-label">Priority</label>
+                <select class="form-select" id="priority" name="priority">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                    <option value="urgent">Urgent</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label for="due_date" class="form-label">Due Date</label>
+                <input type="date" class="form-control" id="due_date" name="due_date">
+            </div>
+            <div class="d-flex justify-content-between">
+                <button type="button" class="btn btn-secondary btn-cancel" onclick="window.location.href='/admin/tasks'">Cancel</button>
+                <button type="submit" class="btn btn-custom"><i class="fas fa-check"></i> Assign Task</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Custom dropdown logic for user
+const userDropdown = document.getElementById('userDropdown');
+const userInput = document.getElementById('userDropdownInput');
+const userHiddenInput = document.getElementById('username');
+const userList = document.getElementById('userDropdownList');
+const userSearch = document.getElementById('userDropdownSearch');
+const userItems = userList.querySelectorAll('.custom-dropdown-item[data-username]');
+
+userInput.addEventListener('focus', () => {
+    userList.classList.add('show');
+    userSearch.value = '';
+    filterDropdown(userItems, '');
+    userSearch.focus();
+});
+userInput.addEventListener('click', () => {
+    userList.classList.add('show');
+    userSearch.value = '';
+    filterDropdown(userItems, '');
+    userSearch.focus();
+});
+document.addEventListener('click', (e) => {
+    if (!userDropdown.contains(e.target)) {
+        userList.classList.remove('show');
+    }
+});
+userSearch.addEventListener('input', (e) => {
+    filterDropdown(userItems, e.target.value);
+});
+function filterDropdown(items, val) {
+    const v = val.toLowerCase();
+    items.forEach(item => {
+        if (item.textContent.toLowerCase().includes(v)) {
+            item.style.display = '';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+userItems.forEach(item => {
+    item.addEventListener('click', () => {
+        userInput.value = item.textContent;
+        userHiddenInput.value = item.getAttribute('data-username');
+        userList.classList.remove('show');
+    });
+});
+
+// Custom dropdown logic for task type
+const taskTypeDropdown = document.getElementById('taskTypeDropdown');
+const taskTypeInput = document.getElementById('taskTypeDropdownInput');
+const taskTypeHiddenInput = document.getElementById('task_type');
+const taskTypeList = document.getElementById('taskTypeDropdownList');
+const taskTypeSearch = document.getElementById('taskTypeDropdownSearch');
+const taskTypeItems = taskTypeList.querySelectorAll('.custom-dropdown-item[data-value]');
+
+taskTypeInput.addEventListener('focus', () => {
+    taskTypeList.classList.add('show');
+    taskTypeSearch.value = '';
+    filterDropdown(taskTypeItems, '');
+    taskTypeSearch.focus();
+});
+taskTypeInput.addEventListener('click', () => {
+    taskTypeList.classList.add('show');
+    taskTypeSearch.value = '';
+    filterDropdown(taskTypeItems, '');
+    taskTypeSearch.focus();
+});
+document.addEventListener('click', (e) => {
+    if (!taskTypeDropdown.contains(e.target)) {
+        taskTypeList.classList.remove('show');
+    }
+});
+taskTypeSearch.addEventListener('input', (e) => {
+    filterDropdown(taskTypeItems, e.target.value);
+});
+taskTypeItems.forEach(item => {
+    item.addEventListener('click', () => {
+        taskTypeInput.value = item.textContent;
+        taskTypeHiddenInput.value = item.getAttribute('data-value');
+        taskTypeList.classList.remove('show');
+    });
+});
+</script>
+</body>
+</html> 
