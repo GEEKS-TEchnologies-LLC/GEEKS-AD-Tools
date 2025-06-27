@@ -5,7 +5,7 @@
     "theme": "dark",
     "secondary_color": "#ffb347",
     "custom_css": "",
-    "flash_countdown": true,
+    "flash_countdown": false,
     "debug_mode": false,
     "flash_timeout": 180,
     "log_level": "INFO"

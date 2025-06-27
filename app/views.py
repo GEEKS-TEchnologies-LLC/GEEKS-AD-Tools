@@ -1514,30 +1514,44 @@ def drilldown_users():
         'bind_password': config['ad_password'],
         'base_dn': config['ad_base_dn']
     }
-    from .ad import ad_connection
+    from .ad import ad_connection, get_admin_groups
     users = []
     admin_groups = get_admin_groups()
-    
     with ad_connection(**ad_args) as conn:
-        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'memberOf'])
+        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'memberOf', 'objectClass'])
         for entry in conn.entries:
-            if hasattr(entry, "objectClass") and entry.objectClass.value and 'user' in entry.objectClass.value and 'computer' not in entry.objectClass.value:
-                # Check if user is in any admin group
-                is_admin = False
-                if hasattr(entry, 'memberOf') and entry.memberOf:
-                    user_groups = [str(group) for group in entry.memberOf.values]
-                    for admin_group in admin_groups:
-                        if any(admin_group.lower() in group.lower() for group in user_groups):
-                            is_admin = True
-                            break
-                
-                # Add user based on type filter
-                if (user_type == 'Admin Users' and is_admin) or (user_type == 'Regular Users' and not is_admin):
-                    users.append({
-                        'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
-                        'displayName': entry.displayName.value if entry.displayName else entry.sAMAccountName.value if entry.sAMAccountName else 'Unknown'
-                    })
-    
+            # Only process real users (not computer accounts)
+            is_user = False
+            debug_msg = ''
+            if hasattr(entry, 'objectClass') and entry.objectClass.value:
+                object_classes = entry.objectClass.value
+                if isinstance(object_classes, list):
+                    is_user = 'user' in object_classes and 'computer' not in object_classes
+                    debug_msg = f"objectClass(list): {object_classes} -> is_user={is_user}"
+                else:
+                    object_classes_str = str(object_classes).lower()
+                    is_user = 'user' in object_classes_str and 'computer' not in object_classes_str
+                    debug_msg = f"objectClass(str): {object_classes_str} -> is_user={is_user}"
+            else:
+                debug_msg = f"No objectClass for {getattr(entry, 'sAMAccountName', 'UNKNOWN')}"
+            if not is_user:
+                print(f"DEBUG: Skipping {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
+                continue
+            print(f"DEBUG: Including {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
+            # Check if user is in any admin group
+            is_admin = False
+            if hasattr(entry, 'memberOf') and entry.memberOf:
+                user_groups = [str(group) for group in entry.memberOf.values]
+                for admin_group in admin_groups:
+                    if any(admin_group.lower() in group.lower() for group in user_groups):
+                        is_admin = True
+                        break
+            # Add user based on type filter
+            if (user_type == 'Admin Users' and is_admin) or (user_type == 'Regular Users' and not is_admin):
+                users.append({
+                    'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                    'displayName': entry.displayName.value if entry.displayName else entry.sAMAccountName.value if entry.sAMAccountName else 'Unknown'
+                })
     return {"users": users}
 
 @main.route('/admin/settings', methods=['GET', 'POST'])
@@ -1819,53 +1833,87 @@ def dashboard():
         return user_dashboard_content()
 
 def admin_dashboard_content():
-    """Admin dashboard content - extracted from original admin_dashboard route"""
-    # Example: Read last 20 log lines
-    log_path = 'app/logs/app.log'
-    logs = []
-    if os.path.exists(log_path):
-        with open(log_path, 'r') as f:
-            logs = f.readlines()[-20:]
+    """Generate content for admin dashboard"""
+    from app.ad import get_ad_statistics, get_ad_health_status
+    from app.models import AuditLog, Task, PasswordReset
+    from datetime import datetime, timezone, timedelta
+    import json
+    from .audit import get_audit_stats
     
     # Get audit statistics
     audit_stats = get_audit_stats(days=30)
     
-    # Get AD statistics if configured
-    ad_stats = None
-    ad_health = None
+    # Get AD configuration
     config = get_ad_config()
-    if config:
-        ok, stats = get_ad_statistics(
-            server=config['ad_server'],
-            port=config['ad_port'],
-            bind_user=config['ad_bind_dn'],
-            bind_password=config['ad_password'],
-            base_dn=config['ad_base_dn']
-        )
-        if ok:
-            ad_stats = stats
-        
-        # Get AD health status
-        ok, health = get_ad_health_status(
-            server=config['ad_server'],
-            port=config['ad_port'],
-            bind_user=config['ad_bind_dn'],
-            bind_password=config['ad_password'],
-            base_dn=config['ad_base_dn']
-        )
-        if ok:
-            ad_health = health
+    if not config:
+        return render_template('admin_dashboard.html', 
+                             error="AD not configured. Please complete setup first.",
+                             stats=None, health=None, recent_activity=None, 
+                             pending_tasks=None, password_stats=None, branding=get_branding_config(), audit_stats=None)
     
-    # Example: System status (placeholder)
-    status = {
-        'AD Configured': bool(config),
-        'Admin Groups': get_admin_groups(),
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
     }
-
+    
+    # Get AD statistics and health status
+    success, stats = get_ad_statistics(**ad_args)
+    health = get_ad_health_status(**ad_args)
+    
+    # Get recent activity (last 24 hours, fallback to most recent if empty)
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+    recent_activity = AuditLog.query.filter(
+        AuditLog.timestamp >= yesterday
+    ).order_by(AuditLog.timestamp.desc()).limit(10).all()
+    print(f"DEBUG: Recent logs in last 24h: {len(recent_activity)}")
+    if not recent_activity:
+        recent_activity = AuditLog.query.order_by(AuditLog.timestamp.desc()).limit(10).all()
+        print(f"DEBUG: Fallback to most recent logs: {len(recent_activity)}")
+    
+    # Get pending tasks
+    pending_tasks = Task.query.filter(
+        Task.status == 'pending'
+    ).order_by(Task.assigned_at.desc()).limit(5).all()
+    
+    # Get password statistics with caching (cache for 5 minutes)
+    cache_key = 'password_stats_cache'
+    cache_timeout = 300  # 5 minutes
+    
+    # Check if we have cached password stats
+    from flask import g
+    if hasattr(g, cache_key):
+        cached_data = getattr(g, cache_key)
+        if cached_data and (datetime.now(timezone.utc) - cached_data['timestamp']).total_seconds() < cache_timeout:
+            password_stats = cached_data['stats']
+        else:
+            password_stats = get_password_status_stats()
+            setattr(g, cache_key, {
+                'stats': password_stats,
+                'timestamp': datetime.now(timezone.utc)
+            })
+    else:
+        password_stats = get_password_status_stats()
+        setattr(g, cache_key, {
+            'stats': password_stats,
+            'timestamp': datetime.now(timezone.utc)
+        })
+    
     # Load branding config
     branding = get_branding_config()
-
-    return render_template('admin_dashboard.html', logs=logs, status=status, audit_stats=audit_stats, ad_stats=ad_stats, ad_health=ad_health, branding=branding)
+    
+    return render_template('admin_dashboard.html', 
+                         ad_stats=stats if success else None, 
+                         ad_health=health,
+                         recent_activity=recent_activity,
+                         pending_tasks=pending_tasks,
+                         password_stats=password_stats,
+                         branding=branding,
+                         audit_stats=audit_stats,
+                         logs=recent_activity  # For compatibility with the template
+    )
 
 def user_dashboard_content():
     """User dashboard content - extracted from original user_dashboard route"""
@@ -2541,3 +2589,579 @@ def get_user_info(username):
         if users:
             return users[0]
     return None
+
+@main.route('/test-password-info/<path:user_dn>')
+def test_password_info(user_dn):
+    """Test route to verify password info functionality without authentication"""
+    from app.models import get_ad_password_info, get_ad_password_policy, get_last_password_reset
+    
+    try:
+        # Extract username from DN
+        username = user_dn.split(',')[0].replace('CN=', '') if ',' in user_dn else user_dn
+        
+        # Test the password info function
+        password_info = get_ad_password_info(user_dn)
+        policy = get_ad_password_policy(user_dn)
+        
+        result = {
+            'user_dn': user_dn,
+            'password_info_found': password_info is not None,
+            'policy_found': policy is not None,
+            'password_info': password_info,
+            'policy': policy
+        }
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'user_dn': user_dn
+        }), 500
+
+def get_password_status_stats():
+    """Get password status statistics for all users in AD - OPTIMIZED VERSION"""
+    from datetime import datetime, timezone, timedelta
+    import ldap3
+    from ldap3 import Server, Connection, ALL, SUBTREE
+    from flask import request, session
+    
+    config = get_ad_config()
+    if not config:
+        return None
+    
+    # Check if debug is enabled
+    debug_enabled = request.args.get('debug') == '1' or session.get('dashboard_debug')
+    
+    try:
+        # Connect to AD once
+        server = Server(config['ad_server'], port=int(config['ad_port']), get_info=ALL)
+        conn = Connection(server, 
+                         user=config['ad_bind_dn'], 
+                         password=config['ad_password'], 
+                         auto_bind=True)
+        
+        # Get domain password policy first
+        domain_dn = config['ad_base_dn']
+        conn.search(domain_dn, '(objectClass=domain)', 
+                   attributes=['maxPwdAge', 'minPwdLength', 'pwdHistoryLength'])
+        
+        max_pwd_age_days = 90  # Default
+        if conn.entries:
+            domain = conn.entries[0]
+            if domain.maxPwdAge and domain.maxPwdAge.value != 0:
+                max_age = domain.maxPwdAge.value
+                if isinstance(max_age, timedelta):
+                    max_pwd_age_days = int(max_age.total_seconds() // 86400)
+                elif isinstance(max_age, (int, float)):
+                    max_pwd_age_days = abs(max_age) // (10**7 * 60 * 60 * 24)
+        
+        # Get all users with password attributes in a single query
+        conn.search(config['ad_base_dn'], 
+                   '(objectClass=user)', 
+                   search_scope=SUBTREE,
+                   attributes=['sAMAccountName', 'displayName', 'distinguishedName', 
+                             'pwdLastSet', 'userAccountControl', 'whenChanged', 'whenCreated', 'objectClass'])
+        
+        password_stats = {
+            'valid': 0,
+            'expiring_soon': 0,
+            'expired': 0,
+            'never_expires': 0,
+            'unknown': 0,
+            'total': 0
+        }
+        
+        now = datetime.now(timezone.utc)
+        
+        for entry in conn.entries:
+            # Only process real users (not computer accounts)
+            is_user = False
+            debug_msg = ''
+            if hasattr(entry, 'objectClass') and entry.objectClass.value:
+                object_classes = entry.objectClass.value
+                if isinstance(object_classes, list):
+                    is_user = 'user' in object_classes and 'computer' not in object_classes
+                    debug_msg = f"objectClass(list): {object_classes} -> is_user={is_user}"
+                else:
+                    object_classes_str = str(object_classes).lower()
+                    is_user = 'user' in object_classes_str and 'computer' not in object_classes_str
+                    debug_msg = f"objectClass(str): {object_classes_str} -> is_user={is_user}"
+            else:
+                debug_msg = f"No objectClass for {getattr(entry, 'sAMAccountName', 'UNKNOWN')}"
+            if not is_user:
+                if debug_enabled:
+                    print(f"DEBUG: Skipping {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
+                continue
+            if debug_enabled:
+                print(f"DEBUG: Including {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
+            password_stats['total'] += 1
+            # Parse user account control
+            uac = entry.userAccountControl.value if entry.userAccountControl else 0
+            password_never_expires = bool(uac & 0x10000)  # DONT_EXPIRE_PASSWORD
+            # Parse password last set
+            pwd_last_set = None
+            if entry.pwdLastSet and entry.pwdLastSet.value and entry.pwdLastSet.value != 0:
+                ad_time = entry.pwdLastSet.value
+                if isinstance(ad_time, datetime):
+                    pwd_last_set = ad_time
+                elif isinstance(ad_time, int) and ad_time > 0:
+                    seconds_since_1601 = ad_time // (10**7)
+                    seconds_since_1970 = seconds_since_1601 - 11644473600
+                    pwd_last_set = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+            # Use whenChanged as fallback if more recent than pwdLastSet
+            if entry.whenChanged and entry.whenChanged.value:
+                when_changed = entry.whenChanged.value
+                if isinstance(when_changed, datetime):
+                    if pwd_last_set is None or when_changed > pwd_last_set:
+                        pwd_last_set = when_changed
+                elif isinstance(when_changed, int) and when_changed > 0:
+                    seconds_since_1601 = when_changed // (10**7)
+                    seconds_since_1970 = seconds_since_1601 - 11644473600
+                    when_changed_dt = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                    if pwd_last_set is None or when_changed_dt > pwd_last_set:
+                        pwd_last_set = when_changed_dt
+            # Calculate password status
+            user_data = {
+                'dn': entry.distinguishedName.value,
+                'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                'displayName': entry.displayName.value if entry.displayName else ''
+            }
+            user_status = None
+            if password_never_expires:
+                user_status = 'never_expires'
+                password_stats['never_expires'] += 1
+            elif pwd_last_set:
+                days_since_last_set = (now - pwd_last_set).days
+                days_until_expiry = max_pwd_age_days - days_since_last_set
+                if days_until_expiry <= 0:
+                    user_status = 'expired'
+                    password_stats['expired'] += 1
+                elif days_until_expiry <= 14:  # Default warning threshold
+                    user_status = 'expiring_soon'
+                    password_stats['expiring_soon'] += 1
+                else:
+                    user_status = 'valid'
+                    password_stats['valid'] += 1
+            else:
+                user_status = 'unknown'
+                password_stats['unknown'] += 1
+            if debug_enabled:
+                print(f"DEBUG: user={user_data['username']} status={user_status}")
+        
+        conn.unbind()
+        return password_stats
+        
+    except Exception as e:
+        print(f"Error getting password status stats: {e}")
+        return None
+
+@main.route('/admin/drilldown/passwords/<status>')
+@login_required
+@admin_required
+def drilldown_passwords(status):
+    """Drilldown view for password status categories - OPTIMIZED VERSION"""
+    from datetime import datetime, timezone, timedelta
+    import ldap3
+    from ldap3 import Server, Connection, ALL, SUBTREE
+    
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    debug_enabled = request.args.get('debug') == '1' or session.get('dashboard_debug')
+    if 'debug' in request.args:
+        session['dashboard_debug'] = request.args.get('debug') == '1'
+    
+    # Simple caching for drilldown data (cache for 2 minutes)
+    cache_key = f'drilldown_cache_{status}'
+    cache_timeout = 120  # 2 minutes
+    
+    from flask import g
+    if hasattr(g, cache_key):
+        cached_data = getattr(g, cache_key)
+        if cached_data and (datetime.now(timezone.utc) - cached_data['timestamp']).total_seconds() < cache_timeout:
+            if request.args.get('modal') == '1':
+                return render_template('drilldown_passwords.html', users=cached_data['users'], status=status, title=cached_data['title'], modal=True)
+            else:
+                return render_template('drilldown_passwords.html', users=cached_data['users'], status=status, title=cached_data['title'], modal=False)
+    
+    try:
+        # Connect to AD once
+        server = Server(config['ad_server'], port=int(config['ad_port']), get_info=ALL)
+        conn = Connection(server, 
+                         user=config['ad_bind_dn'], 
+                         password=config['ad_password'], 
+                         auto_bind=True)
+        
+        # Get domain password policy first
+        domain_dn = config['ad_base_dn']
+        conn.search(domain_dn, '(objectClass=domain)', 
+                   attributes=['maxPwdAge', 'minPwdLength', 'pwdHistoryLength'])
+        
+        max_pwd_age_days = 90  # Default
+        if conn.entries:
+            domain = conn.entries[0]
+            if domain.maxPwdAge and domain.maxPwdAge.value != 0:
+                max_age = domain.maxPwdAge.value
+                if isinstance(max_age, timedelta):
+                    max_pwd_age_days = int(max_age.total_seconds() // 86400)
+                elif isinstance(max_age, (int, float)):
+                    max_pwd_age_days = abs(max_age) // (10**7 * 60 * 60 * 24)
+        
+        # Get all users with password attributes in a single query
+        conn.search(config['ad_base_dn'], 
+                   '(objectClass=user)', 
+                   search_scope=SUBTREE,
+                   attributes=['sAMAccountName', 'displayName', 'distinguishedName', 'mail',
+                             'pwdLastSet', 'userAccountControl', 'whenChanged', 'whenCreated',
+                             'lockoutTime', 'accountExpires', 'lastLogon', 'lastLogonTimestamp', 'objectClass'])
+        
+        filtered_users = []
+        now = datetime.now(timezone.utc)
+        
+        for entry in conn.entries:
+            # Only process real users (not computer accounts)
+            is_user = False
+            debug_msg = ''
+            if hasattr(entry, 'objectClass') and entry.objectClass.value:
+                object_classes = entry.objectClass.value
+                if isinstance(object_classes, list):
+                    is_user = 'user' in object_classes and 'computer' not in object_classes
+                    debug_msg = f"objectClass(list): {object_classes} -> is_user={is_user}"
+                else:
+                    object_classes_str = str(object_classes).lower()
+                    is_user = 'user' in object_classes_str and 'computer' not in object_classes_str
+                    debug_msg = f"objectClass(str): {object_classes_str} -> is_user={is_user}"
+            else:
+                debug_msg = f"No objectClass for {getattr(entry, 'sAMAccountName', 'UNKNOWN')}"
+            if not is_user:
+                if debug_enabled:
+                    print(f"DEBUG: Skipping {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
+                continue
+            if debug_enabled:
+                print(f"DEBUG: Including {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
+            
+            # Parse user account control
+            uac = entry.userAccountControl.value if entry.userAccountControl else 0
+            password_never_expires = bool(uac & 0x10000)  # DONT_EXPIRE_PASSWORD
+            
+            # Parse password last set
+            pwd_last_set = None
+            if entry.pwdLastSet and entry.pwdLastSet.value and entry.pwdLastSet.value != 0:
+                ad_time = entry.pwdLastSet.value
+                if isinstance(ad_time, datetime):
+                    pwd_last_set = ad_time
+                elif isinstance(ad_time, int) and ad_time > 0:
+                    seconds_since_1601 = ad_time // (10**7)
+                    seconds_since_1970 = seconds_since_1601 - 11644473600
+                    pwd_last_set = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+            
+            # Use whenChanged as fallback if more recent than pwdLastSet
+            if entry.whenChanged and entry.whenChanged.value:
+                when_changed = entry.whenChanged.value
+                if isinstance(when_changed, datetime):
+                    if pwd_last_set is None or when_changed > pwd_last_set:
+                        pwd_last_set = when_changed
+                elif isinstance(when_changed, int) and when_changed > 0:
+                    seconds_since_1601 = when_changed // (10**7)
+                    seconds_since_1970 = seconds_since_1601 - 11644473600
+                    when_changed_dt = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                    if pwd_last_set is None or when_changed_dt > pwd_last_set:
+                        pwd_last_set = when_changed_dt
+            
+            # Calculate password status
+            user_status = 'unknown'
+            days_until_expiry = None
+            days_since_last_set = None
+            
+            if password_never_expires:
+                user_status = 'never_expires'
+            elif pwd_last_set:
+                days_since_last_set = (now - pwd_last_set).days
+                days_until_expiry = max_pwd_age_days - days_since_last_set
+                
+                if days_until_expiry <= 0:
+                    user_status = 'expired'
+                elif days_until_expiry <= 14:  # Warning threshold
+                    user_status = 'expiring_soon'
+                else:
+                    user_status = 'valid'
+            
+            # Only include users matching the requested status
+            if user_status == status:
+                # Parse additional attributes for display
+                lockout_time = None
+                if entry.lockoutTime and entry.lockoutTime.value and entry.lockoutTime.value != 0:
+                    ad_time = entry.lockoutTime.value
+                    if isinstance(ad_time, datetime):
+                        lockout_time = ad_time
+                    elif isinstance(ad_time, int) and ad_time > 0:
+                        seconds_since_1601 = ad_time // (10**7)
+                        seconds_since_1970 = seconds_since_1601 - 11644473600
+                        lockout_time = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                
+                account_expires = None
+                if entry.accountExpires and entry.accountExpires.value and entry.accountExpires.value != 0:
+                    ad_time = entry.accountExpires.value
+                    if isinstance(ad_time, datetime):
+                        account_expires = ad_time
+                    elif isinstance(ad_time, int) and ad_time > 0:
+                        seconds_since_1601 = ad_time // (10**7)
+                        seconds_since_1970 = seconds_since_1601 - 11644473600
+                        account_expires = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                
+                last_logon = None
+                if entry.lastLogon and entry.lastLogon.value and entry.lastLogon.value != 0:
+                    ad_time = entry.lastLogon.value
+                    if isinstance(ad_time, datetime):
+                        last_logon = ad_time
+                    elif isinstance(ad_time, int) and ad_time > 0:
+                        seconds_since_1601 = ad_time // (10**7)
+                        seconds_since_1970 = seconds_since_1601 - 11644473600
+                        last_logon = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                    # If it's a string, try to parse as int
+                    elif isinstance(ad_time, str):
+                        try:
+                            ad_time_int = int(ad_time)
+                            if ad_time_int > 0:
+                                seconds_since_1601 = ad_time_int // (10**7)
+                                seconds_since_1970 = seconds_since_1601 - 11644473600
+                                last_logon = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                        except Exception:
+                            last_logon = None
+                
+                last_logon_timestamp = None
+                if entry.lastLogonTimestamp and entry.lastLogonTimestamp.value and entry.lastLogonTimestamp.value != 0:
+                    ad_time = entry.lastLogonTimestamp.value
+                    if isinstance(ad_time, datetime):
+                        last_logon_timestamp = ad_time
+                    elif isinstance(ad_time, int) and ad_time > 0:
+                        seconds_since_1601 = ad_time // (10**7)
+                        seconds_since_1970 = seconds_since_1601 - 11644473600
+                        last_logon_timestamp = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                
+                # Create user data with password info
+                user_data = {
+                    'dn': entry.distinguishedName.value,
+                    'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                    'displayName': entry.displayName.value if entry.displayName else '',
+                    'mail': entry.mail.value if entry.mail else '',
+                    'ou': '',  # You can parse OU from DN if needed
+                    'password_info': {
+                        'pwd_last_set': pwd_last_set,
+                        'days_since_last_set': days_since_last_set,
+                        'days_until_expiry': days_until_expiry,
+                        'password_status': user_status,
+                        'password_never_expires': password_never_expires,
+                        'lockout_time': lockout_time,
+                        'account_expires': account_expires,
+                        'last_logon_timestamp': last_logon_timestamp
+                    }
+                }
+                
+                filtered_users.append(user_data)
+        
+        conn.unbind()
+        
+        # Sort users appropriately
+        if status in ['expiring_soon', 'expired']:
+            filtered_users.sort(key=lambda x: x['password_info']['days_until_expiry'] or 999)
+        elif status == 'valid':
+            filtered_users.sort(key=lambda x: x['password_info']['days_until_expiry'] or 0, reverse=True)
+        else:
+            filtered_users.sort(key=lambda x: x['username'])
+        
+        status_titles = {
+            'valid': 'Valid Passwords',
+            'expiring_soon': 'Passwords Expiring Soon',
+            'expired': 'Expired Passwords',
+            'never_expires': 'Passwords Never Expire',
+            'unknown': 'Unknown Password Status'
+        }
+        
+        title = status_titles.get(status, status.title())
+        
+        # Cache the results
+        setattr(g, cache_key, {
+            'users': filtered_users,
+            'title': title,
+            'timestamp': datetime.now(timezone.utc)
+        })
+        
+        if request.args.get('modal') == '1':
+            return render_template('drilldown_passwords_table.html', users=filtered_users, status=status, title=title, modal=True)
+        else:
+            return render_template('drilldown_passwords.html', users=filtered_users, status=status, title=title, modal=False)
+        
+    except Exception as e:
+        print(f"Error in drilldown_passwords: {e}")
+        flash(f'Error retrieving password data: {e}', 'error')
+        return redirect(url_for('main.admin_dashboard'))
+
+@main.route('/test-password-stats')
+def test_password_stats():
+    """Test route to verify password status statistics functionality"""
+    try:
+        password_stats = get_password_status_stats()
+        
+        if password_stats:
+            result = {
+                'total_users': password_stats['total'],
+                'valid_passwords': len(password_stats['valid']),
+                'expiring_soon': len(password_stats['expiring_soon']),
+                'expired_passwords': len(password_stats['expired']),
+                'never_expires': len(password_stats['never_expires']),
+                'unknown': len(password_stats['unknown']),
+                'sample_users': {
+                    'valid': [user['username'] for user in password_stats['valid'][:3]],
+                    'expiring_soon': [user['username'] for user in password_stats['expiring_soon'][:3]],
+                    'expired': [user['username'] for user in password_stats['expired'][:3]]
+                }
+            }
+        else:
+            result = {'error': 'Failed to get password statistics'}
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@main.route('/admin/drilldown/userstatus/<status>')
+@login_required
+@admin_required
+def drilldown_userstatus(status):
+    from datetime import datetime, timezone
+    import ldap3
+    from ldap3 import Server, Connection, ALL, SUBTREE
+    
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    debug_enabled = request.args.get('debug') == '1' or session.get('dashboard_debug')
+    if 'debug' in request.args:
+        session['dashboard_debug'] = request.args.get('dashboard_debug') == '1'
+    
+    filtered_users = []
+    try:
+        server = Server(config['ad_server'], get_info=ALL)
+        conn = Connection(server, user=config['ad_bind_dn'], password=config['ad_password'], auto_bind=True)
+        
+        conn.search(config['ad_base_dn'], '(objectClass=user)', search_scope=SUBTREE,
+                   attributes=['sAMAccountName', 'displayName', 'distinguishedName', 'mail', 'userAccountControl', 'lockoutTime', 'lastLogon', 'objectClass'])
+        
+        for entry in conn.entries:
+            # Only process real users (not computer accounts)
+            is_user = False
+            debug_msg = ''
+            if hasattr(entry, 'objectClass') and entry.objectClass.value:
+                object_classes = entry.objectClass.value
+                if isinstance(object_classes, list):
+                    is_user = 'user' in object_classes and 'computer' not in object_classes
+                    debug_msg = f"objectClass(list): {object_classes} -> is_user={is_user}"
+                else:
+                    object_classes_str = str(object_classes).lower()
+                    is_user = 'user' in object_classes_str and 'computer' not in object_classes_str
+                    debug_msg = f"objectClass(str): {object_classes_str} -> is_user={is_user}"
+            else:
+                debug_msg = f"No objectClass for {getattr(entry, 'sAMAccountName', 'UNKNOWN')}"
+            
+            if not is_user:
+                if debug_enabled:
+                    print(f"DEBUG: Skipping {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
+                continue
+            
+            if debug_enabled:
+                print(f"DEBUG: Including {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
+            
+            # Determine user status
+            uac = entry.userAccountControl.value if hasattr(entry, 'userAccountControl') and entry.userAccountControl else 0
+            # Robust lockoutTime check
+            locked = False
+            if hasattr(entry, 'lockoutTime') and entry.lockoutTime and entry.lockoutTime.value:
+                lockout_val = entry.lockoutTime.value
+                if isinstance(lockout_val, int):
+                    locked = lockout_val != 0
+                elif isinstance(lockout_val, str):
+                    try:
+                        locked = int(lockout_val) != 0
+                    except Exception:
+                        locked = False
+                elif isinstance(lockout_val, datetime):
+                    # If it's a datetime, treat as locked if not epoch
+                    locked = lockout_val.timestamp() > 0
+            expired_password = False  # You may want to add logic for this if available
+            enabled = not (uac & 2)
+            disabled = (uac & 2) != 0
+            
+            # Map to status label
+            user_status = None
+            if locked:
+                user_status = 'locked'
+            elif disabled:
+                user_status = 'disabled'
+            elif expired_password:
+                user_status = 'expired_password'
+            elif enabled:
+                user_status = 'enabled'
+            else:
+                user_status = 'unknown'
+            
+            if user_status != status:
+                continue
+            
+            # Last logon
+            last_logon = None
+            if hasattr(entry, 'lastLogon') and entry.lastLogon and entry.lastLogon.value:
+                ad_time = entry.lastLogon.value
+                if isinstance(ad_time, datetime):
+                    last_logon = ad_time
+                elif isinstance(ad_time, int) and ad_time > 0:
+                    seconds_since_1601 = ad_time // (10**7)
+                    seconds_since_1970 = seconds_since_1601 - 11644473600
+                    last_logon = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                # If it's a string, try to parse as int
+                elif isinstance(ad_time, str):
+                    try:
+                        ad_time_int = int(ad_time)
+                        if ad_time_int > 0:
+                            seconds_since_1601 = ad_time_int // (10**7)
+                            seconds_since_1970 = seconds_since_1601 - 11644473600
+                            last_logon = datetime.fromtimestamp(seconds_since_1970, tz=timezone.utc)
+                    except Exception:
+                        last_logon = None
+            
+            user_data = {
+                'dn': entry.distinguishedName.value,
+                'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                'displayName': entry.displayName.value if entry.displayName else '',
+                'mail': entry.mail.value if entry.mail else '',
+                'ou': '',  # You can parse OU from DN if needed
+                'status': user_status,
+                'last_logon': last_logon
+            }
+            
+            filtered_users.append(user_data)
+        
+        conn.unbind()
+        
+        status_titles = {
+            'enabled': 'Enabled Users',
+            'disabled': 'Disabled Users',
+            'locked': 'Locked Users',
+            'expired_password': 'Users with Expired Passwords',
+            'unknown': 'Unknown Status Users'
+        }
+        
+        title = status_titles.get(status, status.title())
+        
+        if request.args.get('modal') == '1':
+            return render_template('drilldown_userstatus_table.html', users=filtered_users, status=status, title=title, modal=True)
+        else:
+            return render_template('drilldown_userstatus.html', users=filtered_users, status=status, title=title, modal=False)
+            
+    except Exception as e:
+        print(f"Error in drilldown_userstatus: {e}")
+        flash(f'Error retrieving user status data: {e}', 'error')
+        return redirect(url_for('main.admin_dashboard'))

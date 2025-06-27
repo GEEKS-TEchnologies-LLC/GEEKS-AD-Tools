@@ -78,16 +78,9 @@ def search_users(query, **ad_args):
     filter_str = f'(|(sAMAccountName=*{escaped_query}*)(displayName=*{escaped_query}*)(mail=*{escaped_query}*))' if escaped_query else '(objectClass=user)'
     base_dn = _get_base_dn(ad_args)
     
-    print(f"DEBUG: Search query: '{query}'")
-    print(f"DEBUG: Escaped query: '{escaped_query}'")
-    print(f"DEBUG: Filter string: '{filter_str}'")
-    print(f"DEBUG: Base DN: '{base_dn}'")
-    
     with ad_connection(**ad_args) as conn:
         try:
-            print(f"DEBUG: Starting LDAP search...")
             conn.search(base_dn, filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass'])
-            print(f"DEBUG: Found {len(conn.entries)} total entries")
             
             for entry in conn.entries:
                 # Check if this is a user object
@@ -116,8 +109,6 @@ def search_users(query, **ad_args):
                         'mail': entry.mail.value if entry.mail else '',
                         'ou': ou_display
                     })
-            
-            print(f"DEBUG: Found {len(users)} user objects")
         except LDAPException as e:
             print(f"Error searching users: {e}") # Log error
             return []
@@ -465,16 +456,16 @@ def get_ad_statistics(**ad_args):
     return True, stats
 
 def get_ad_health_status(**ad_args):
-    health = {'status': 'healthy', 'alerts': [], 'warnings': []}
-    # This is a placeholder. A real health check would be more complex.
     try:
-        with ad_connection(**ad_args):
-            pass # Connection success is our basic health check for now
+        with ad_connection(**ad_args) as conn:
+            # Simple health check: can we bind and search the root?
+            base_dn = ad_args.get('base_dn')
+            if conn.search(base_dn, '(objectClass=domain)', attributes=['distinguishedName']):
+                return {'status': 'healthy'}
+            else:
+                return {'status': 'unhealthy'}
     except Exception as e:
-        health['status'] = 'error'
-        health['alerts'].append(parse_ldap_error(e))
-        return False, health
-    return True, health
+        return {'status': 'unhealthy', 'error': str(e)}
 
 def create_ad_group(group_name, server, port, bind_dn, password, base_dn):
     config = get_ad_config()
@@ -710,23 +701,34 @@ def get_user_types_breakdown(**ad_args):
     admin_groups = get_admin_groups()
     
     with ad_connection(**ad_args) as conn:
-        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'memberOf'])
+        conn.search(ad_args['base_dn'], '(objectClass=user)', search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'memberOf', 'objectClass'])
         for entry in conn.entries:
-            if hasattr(entry, "objectClass") and entry.objectClass.value and 'user' in entry.objectClass.value and 'computer' not in entry.objectClass.value:
-                # Check if user is in any admin group
-                is_admin = False
-                if hasattr(entry, 'memberOf') and entry.memberOf:
-                    user_groups = [str(group) for group in entry.memberOf.values]
-                    for admin_group in admin_groups:
-                        if any(admin_group.lower() in group.lower() for group in user_groups):
-                            is_admin = True
-                            break
-                
-                if is_admin:
-                    admin_users += 1
+            # Only count real users (not computer accounts)
+            is_user = False
+            is_computer = False
+            if hasattr(entry, 'objectClass') and entry.objectClass.value:
+                object_classes = entry.objectClass.value
+                if isinstance(object_classes, list):
+                    is_user = 'user' in object_classes
+                    is_computer = 'computer' in object_classes
                 else:
-                    regular_users += 1
-    
+                    object_classes_str = str(object_classes).lower()
+                    is_user = 'user' in object_classes_str
+                    is_computer = 'computer' in object_classes_str
+            if not is_user or is_computer:
+                continue
+            # Check if user is in any admin group
+            is_admin = False
+            if hasattr(entry, 'memberOf') and entry.memberOf:
+                user_groups = [str(group) for group in entry.memberOf.values]
+                for admin_group in admin_groups:
+                    if any(admin_group.lower() in group.lower() for group in user_groups):
+                        is_admin = True
+                        break
+            if is_admin:
+                admin_users += 1
+            else:
+                regular_users += 1
     return {
         'Admin Users': admin_users,
         'Regular Users': regular_users

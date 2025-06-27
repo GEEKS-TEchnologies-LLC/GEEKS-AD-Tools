@@ -13,6 +13,7 @@ import json
 import platform
 from pathlib import Path
 from datetime import datetime
+import getpass
 
 class GEEKSBuildSystem:
     def __init__(self):
@@ -715,4 +716,45 @@ def main():
         sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
-    main() 
+    main()
+
+SERVICE_NAME = "geeksadplus"
+SERVICE_FILE = f"/etc/systemd/system/{SERVICE_NAME}.service"
+WORKING_DIR = os.path.abspath(os.path.dirname(__file__))
+USER = getpass.getuser()  # Or hardcode 'bphillips' if needed
+
+service_content = f"""[Unit]
+Description=GEEKS-AD-Plus Flask App
+After=network.target
+
+[Service]
+Type=simple
+User={USER}
+WorkingDirectory={WORKING_DIR}
+ExecStart=/usr/bin/make start
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+def setup_service():
+    try:
+        print(f"[INFO] Writing systemd service file to {SERVICE_FILE} ...")
+        with open("temp_service.service", "w") as f:
+            f.write(service_content)
+        subprocess.run(["sudo", "mv", "temp_service.service", SERVICE_FILE], check=True)
+        subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
+        subprocess.run(["sudo", "systemctl", "enable", SERVICE_NAME], check=True)
+        subprocess.run(["sudo", "systemctl", "restart", SERVICE_NAME], check=True)
+        print(f"[SUCCESS] Service {SERVICE_NAME} installed and started.")
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Command failed: {e.cmd}\nReturn code: {e.returncode}")
+    except Exception as e:
+        print(f"[ERROR] Failed to set up systemd service: {e}")
+
+if __name__ == "__main__":
+    # ... your existing build logic ...
+    setup_service() 

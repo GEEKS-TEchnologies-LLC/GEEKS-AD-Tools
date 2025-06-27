@@ -1,0 +1,103 @@
+<style>
+    .status-badge {
+        padding: 4px 8px;
+        border-radius: 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .status-enabled {
+        background: rgba(40, 167, 69, 0.2);
+        color: #28a745;
+        border: 1px solid #28a745;
+    }
+    .status-disabled {
+        background: rgba(255, 193, 7, 0.2);
+        color: #ffc107;
+        border: 1px solid #ffc107;
+    }
+    .status-locked {
+        background: rgba(220, 53, 69, 0.2);
+        color: #dc3545;
+        border: 1px solid #dc3545;
+    }
+    .status-expired-password {
+        background: rgba(23, 162, 184, 0.2);
+        color: #17a2b8;
+        border: 1px solid #17a2b8;
+    }
+</style>
+
+{% if users %}
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Display Name</th>
+                    <th>Email</th>
+                    <th>OU</th>
+                    <th>User Status</th>
+                    <th>Last Logon</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td><strong>{{ user.username }}</strong></td>
+                    <td>{{ user.displayName or 'N/A' }}</td>
+                    <td>
+                        {% if user.mail %}
+                            <a href="mailto:{{ user.mail }}" class="text-warning">
+                                <i class="fas fa-envelope me-1"></i>{{ user.mail }}
+                            </a>
+                        {% else %}
+                            <span class="text-muted">N/A</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user.ou or 'N/A' }}</td>
+                    <td>
+                        {% if user.status == 'enabled' %}
+                            <span class="status-badge status-enabled">
+                                <i class="fas fa-check-circle me-1"></i>Enabled
+                            </span>
+                        {% elif user.status == 'disabled' %}
+                            <span class="status-badge status-disabled">
+                                <i class="fas fa-ban me-1"></i>Disabled
+                            </span>
+                        {% elif user.status == 'locked' %}
+                            <span class="status-badge status-locked">
+                                <i class="fas fa-lock me-1"></i>Locked
+                            </span>
+                        {% elif user.status == 'expired_password' %}
+                            <span class="status-badge status-expired-password">
+                                <i class="fas fa-exclamation-triangle me-1"></i>Expired Password
+                            </span>
+                        {% else %}
+                            <span class="badge bg-secondary">Unknown</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if user.last_logon %}
+                            <small>{{ user.last_logon.strftime('%Y-%m-%d %H:%M') }}</small>
+                        {% else %}
+                            <span class="text-muted">N/A</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="/user_details/{{ user.dn|urlencode }}" class="btn btn-sm btn-custom">
+                            <i class="fas fa-eye me-1"></i>Details
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% else %}
+    <div class="text-center py-5">
+        <i class="fas fa-users text-muted" style="font-size: 3rem;"></i>
+        <h5 class="mt-3">No Users Found</h5>
+        <p class="text-muted">No users match the selected user status criteria.</p>
+    </div>
+{% endif %} 
