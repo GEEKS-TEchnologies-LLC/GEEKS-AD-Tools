@@ -2,6 +2,28 @@
 
 A comprehensive Linux-based web application for Active Directory password management and user administration. This system provides a secure, self-updating portal that integrates directly with Active Directory for password resets, user management, and administrative tasks. It includes a Windows Credential Provider for seamless lock screen integration.
 
+## Recent Updates (2025-06-27)
+
+- **Systemd Service Reliability:**
+  - The app can now be reliably run as a systemd service using the virtual environment's Python.
+  - Troubleshooting steps for systemd/venv issues are included at the end of this README.
+- **UI/UX Improvements:**
+  - High-contrast, modernized form fields and dropdowns for all admin pages.
+  - Custom, searchable dropdowns for user and task type assignment.
+  - Consistent dark theme and improved accessibility across the dashboard.
+- **Modal and Table Fixes:**
+  - Modal popups for drilldowns now have fixed headers, sticky table headers, and improved readability.
+  - Table header colors and modal overlays are now high-contrast and visually consistent.
+- **Audit and Log Reporting:**
+  - Quick Audit Results and Recent Log Reports panes are more readable and always show the 10 most recent logs if none in the last 24h.
+  - Recent Log Reports now show a table of audit events instead of raw log lines.
+- **General Debugging and Robustness:**
+  - Debug output added to backend logic for easier troubleshooting.
+  - All changes made with error handling and user experience in mind.
+- **How to View Admin Users:**
+  - Use the admin dashboard's "User Drilldown" or "User Status" features and select "Admin Users" to see who has admin rights.
+  - Or visit `/admin/drilldown/users?type=Admin Users` for a JSON list.
+
 ## Quick Install
 
 ### Automated Build & Install (Recommended)
