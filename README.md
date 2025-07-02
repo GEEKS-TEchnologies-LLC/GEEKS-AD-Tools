@@ -4,6 +4,11 @@ A comprehensive Linux-based web application for Active Directory password manage
 
 ## Recent Updates (2025-06-27)
 
+- **License Key Workflow & Config Safety:**
+  - The system now requires valid license keys for activation. On first run, if `config.json` is missing, it is auto-created from `config.example.json`.
+  - License keys are never pushed to GitHub. `config.json` is gitignored; only `config.example.json` is tracked.
+  - The app will prompt for license keys via the web UI if missing or invalid, and will not start until a valid key is provided.
+  - Add-on license keys now use new context variable names: `plus_license_key` (email control add-on) and `reporting_license_key` (password reset add-on).
 - **Systemd Service Reliability:**
   - The app can now be reliably run as a systemd service using the virtual environment's Python.
   - Troubleshooting steps for systemd/venv issues are included at the end of this README.
@@ -397,10 +402,13 @@ The build system creates:
 - A template file, `config.example.json`, is provided and tracked in the repository.
 - On first run, if `config.json` does not exist, it will be created automatically from `config.example.json`.
 - **You must enter your license keys in `config.json` before the application will run.**
+- If you start the app without valid license keys, you will be prompted via the web UI to enter them before proceeding.
+- **To purchase a license key, email [store@geeks-tech.biz](mailto:store@geeks-tech.biz).**
+- *A website for purchasing license keys will be available soon.*
 - The required fields are:
   - `base_license_key`: Your main GEEKS-AD-Plus license key
-  - `plus_license_key`: (Optional) GEEKS-EXCHANGE-INJECTOR add-on key (email control)
-  - `reporting_license_key`: (Optional) GEEKS-RESET-TOOLS add-on key (password reset)
+  - `plus_license_key`: (Optional) Add-on key for email control features
+  - `reporting_license_key`: (Optional) Add-on key for password reset features
 
 #### Example:
 ```json
@@ -421,7 +429,7 @@ The build system creates:
 ```
 
 - If you update from a previous version, the system will automatically add any missing license key fields to your `config.json`.
-- If you clone the repository, copy `config.example.json` to `config.json` and fill in your keys.
+- If you clone the repository, copy `config.example.json` to `config.json` and fill in your keys, or start the app and enter them via the web UI when prompted.
 
 ### Active Directory Setup
 1. Copy `app/ad_config.example.json` to `app/ad_config.json`
@@ -666,6 +674,7 @@ make network-info
 ## Security & Sanitization for Open Source
 
 - **No secrets or credentials**: All `.env`, AD config, logs, bug reports, and instance data are deleted and ignored by `.gitignore`.
+- **No license keys in git**: `config.json` is always gitignored. Only `config.example.json` (with empty keys) is tracked. Never push active license keys to GitHub.
 - **Safe for GitHub**: You can now push this repo publicly without leaking sensitive data.
 - **How to keep it clean**: All sensitive runtime files are excluded by default. If you add new secrets/configs, add them to `.gitignore`.
 
