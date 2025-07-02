@@ -7,6 +7,9 @@ from flask_login import LoginManager
 from logging.handlers import RotatingFileHandler
 from .ad import get_ad_config, is_user_in_admin_group
 from flask_migrate import Migrate
+# License validation import
+from .license_utils import get_license_info, validate_license, is_base_activated
+import shutil
 
 # Initialize extensions
 mail = Mail()
@@ -15,7 +18,42 @@ migrate = Migrate()
 login_manager = LoginManager()
 login_manager.login_view = 'main.admin_login'
 
+# Add a global flag for license status
+LICENSE_VALID = False
+
+def ensure_config_json():
+    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+    example_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.example.json')
+    # Create config.json from example if missing
+    if not os.path.exists(config_path) and os.path.exists(example_path):
+        shutil.copy(example_path, config_path)
+    # Ensure required license key sections exist
+    import json
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        changed = False
+        for key in ['base_license_key', 'plus_license_key', 'reporting_license_key']:
+            if key not in config:
+                config[key] = ''
+                changed = True
+        if changed:
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"[WARNING] Could not ensure config.json structure: {e}")
+
 def create_app():
+    global LICENSE_VALID
+    ensure_config_json()
+    # Check base product activation
+    LICENSE_VALID = is_base_activated()
+    # Validate license before app creation
+    license_key, product_id = get_license_info()
+    if not validate_license(license_key, product_id):
+        print("\nWARNING: Invalid or expired license. The application will require license entry via the web UI.\n")
+    # Do not exit; always allow app to start
+
     app = Flask(__name__)
     
     base_dir = os.path.abspath(os.path.dirname(__file__))

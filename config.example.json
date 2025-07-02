@@ -1,0 +1,16 @@
+{
+  "ad_server": "localhost",
+  "ad_port": 389,
+  "ad_base_dn": "DC=example,DC=com",
+  "ad_bind_dn": "CN=Administrator,DC=example,DC=com",
+  "ad_bind_password": "",
+  "admin_groups": [
+    "Domain Admins"
+  ],
+  "debug": false,
+  "secret_key": "",
+  "portal_url": "http://localhost:5000",
+  "base_license_key": "",
+  "plus_license_key": "",
+  "reporting_license_key": ""
+} 
