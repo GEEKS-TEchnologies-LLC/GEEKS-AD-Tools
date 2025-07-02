@@ -32,6 +32,9 @@ import ldap3
 import json
 from datetime import datetime
 from flask import session
+# License validation import
+from .license_utils import get_license_info, validate_license, is_base_activated, is_plus_activated, is_reporting_activated, get_license_keys
+from app import LICENSE_VALID
 
 main = Blueprint('main', __name__)
 
@@ -64,22 +67,38 @@ def save_branding_config(branding_data):
 
 @main.before_app_request
 def enforce_setup():
-    # Allow access to setup, admin_register, admin_login, welcome, and static files without AD config
-    allowed_endpoints = ('main.setup', 'main.admin_register', 'main.admin_login', 'main.welcome', 'main.home', 'static')
+    # Allow access to setup, admin_register, admin_login, welcome, home, static, and license entry without AD config or valid license
+    allowed_endpoints = (
+        'main.setup', 'main.admin_register', 'main.admin_login', 'main.welcome', 'main.home', 'main.license_entry', 'static'
+    )
     if not get_ad_config() and request.endpoint not in allowed_endpoints:
         return redirect(url_for('main.home'))
 
 @main.route('/')
 def home():
+    if not is_base_activated() and request.endpoint != 'main.license_entry':
+        return redirect(url_for('main.license_entry'))
     config = get_ad_config()
     if not config:
         return render_template('welcome.html')
     branding = get_branding_config()
-    return render_template('home.html', config=config, branding=branding)
+    return render_template(
+        'home.html',
+        config=config,
+        branding=branding,
+        email_control_activated=is_plus_activated(),
+        password_reset_activated=is_reporting_activated()
+    )
 
 @main.route('/welcome')
 def welcome():
-    return render_template('welcome.html')
+    if not is_base_activated() and request.endpoint != 'main.license_entry':
+        return redirect(url_for('main.license_entry'))
+    return render_template(
+        'welcome.html',
+        email_control_activated=is_plus_activated(),
+        password_reset_activated=is_reporting_activated()
+    )
 
 def admin_required(f):
     @wraps(f)
@@ -3165,3 +3184,31 @@ def drilldown_userstatus(status):
         print(f"Error in drilldown_userstatus: {e}")
         flash(f'Error retrieving user status data: {e}', 'error')
         return redirect(url_for('main.admin_dashboard'))
+
+# Route for license entry
+@main.route('/license', methods=['GET', 'POST'])
+def license_entry():
+    # Do not redirect from here
+    message = None
+    if request.method == 'POST':
+        new_key = request.form.get('license_key', '').strip()
+        if new_key:
+            # Use correct absolute path for config.json
+            config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+            try:
+                import json
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                config['base_license_key'] = new_key
+                with open(config_path, 'w') as f:
+                    json.dump(config, f, indent=2)
+                # Re-validate
+                if is_base_activated():
+                    return redirect(url_for('main.home'))
+                else:
+                    message = 'Invalid license key.'
+            except Exception as e:
+                message = f'Error saving license: {e}'
+        else:
+            message = 'Please enter a license key.'
+    return render_template('license_entry.html', message=message)

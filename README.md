@@ -31,8 +31,8 @@ A comprehensive Linux-based web application for Active Directory password manage
 #### Universal Build (Works on all branches)
 ```bash
 # Clone the repository
-git clone https://github.com/manayethas/GEEKS-AD-Plus.git
-cd GEEKS-AD-Plus
+git clone https://github.com/GEEKS-TEchnologies-LLC/GEEKS-AD-Tools.git
+cd GEEKS-AD-Tools
 
 # Switch to desired branch
 git checkout Dev      # For development version
@@ -49,8 +49,8 @@ python3 build.py
 #### Windows
 ```bash
 # Clone the repository
-git clone https://github.com/manayethas/GEEKS-AD-Plus.git
-cd GEEKS-AD-Plus
+git clone https://github.com/GEEKS-TEchnologies-LLC/GEEKS-AD-Tools.git
+cd GEEKS-AD-Tools
 
 # Switch to desired branch
 git checkout Dev      # For development version
@@ -67,8 +67,8 @@ python build.py
 #### Linux/macOS
 ```bash
 # Clone the repository
-git clone https://github.com/manayethas/GEEKS-AD-Plus.git
-cd GEEKS-AD-Plus
+git clone https://github.com/GEEKS-TEchnologies-LLC/GEEKS-AD-Tools.git
+cd GEEKS-AD-Tools
 
 # Switch to desired branch
 git checkout Dev      # For development version
@@ -86,8 +86,8 @@ python3 build.py
 #### Using Makefile (Cross-platform)
 ```bash
 # Clone the repository
-git clone https://github.com/manayethas/GEEKS-AD-Plus.git
-cd GEEKS-AD-Plus
+git clone https://github.com/GEEKS-TEchnologies-LLC/GEEKS-AD-Tools.git
+cd GEEKS-AD-Tools
 
 # Switch to desired branch
 git checkout Dev      # For development version
@@ -184,8 +184,8 @@ python3 build.py
 ### Docker Installation
 ```bash
 # Clone the repository
-git clone https://github.com/manayethas/GEEKS-AD-Plus.git
-cd GEEKS-AD-Plus
+git clone https://github.com/GEEKS-TEchnologies-LLC/GEEKS-AD-Tools.git
+cd GEEKS-AD-Tools
 
 # Switch to desired branch
 git checkout Dev      # For development version
@@ -204,18 +204,18 @@ docker run -p 5000:5000 geeks-ad-plus
 
 #### Stable Branch (Manual)
 ```bash
-curl -sSL https://raw.githubusercontent.com/manayethas/GEEKS-AD-Plus/stable/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/GEEKS-TEchnologies-LLC/GEEKS-AD-Tools/stable/install.sh | bash
 ```
 
 #### Development Branch (Manual)
 ```bash
-curl -sSL https://raw.githubusercontent.com/manayethas/GEEKS-AD-Plus/dev/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/GEEKS-TEchnologies-LLC/GEEKS-AD-Tools/dev/install.sh | bash
 ```
 
 #### Manual Installation (No Build System)
 ```bash
-git clone https://github.com/manayethas/GEEKS-AD-Plus.git
-cd GEEKS-AD-Plus
+git clone https://github.com/GEEKS-TEchnologies-LLC/GEEKS-AD-Tools.git
+cd GEEKS-AD-Tools
 pip install -r requirements.txt
 python app.py
 ```
@@ -390,6 +390,38 @@ The build system creates:
 - **Build Tools**: Visual Studio Build Tools (Windows, for credential provider)
 
 ## Configuration
+
+### License and Application Configuration
+- The file `config.json` contains all application and license settings.
+- **`config.json` is ignored by git and will never be pushed to GitHub.**
+- A template file, `config.example.json`, is provided and tracked in the repository.
+- On first run, if `config.json` does not exist, it will be created automatically from `config.example.json`.
+- **You must enter your license keys in `config.json` before the application will run.**
+- The required fields are:
+  - `base_license_key`: Your main GEEKS-AD-Plus license key
+  - `plus_license_key`: (Optional) GEEKS-EXCHANGE-INJECTOR add-on key (email control)
+  - `reporting_license_key`: (Optional) GEEKS-RESET-TOOLS add-on key (password reset)
+
+#### Example:
+```json
+{
+  "ad_server": "localhost",
+  "ad_port": 389,
+  "ad_base_dn": "DC=example,DC=com",
+  "ad_bind_dn": "CN=Administrator,DC=example,DC=com",
+  "ad_bind_password": "",
+  "admin_groups": ["Domain Admins"],
+  "debug": false,
+  "secret_key": "",
+  "portal_url": "http://localhost:5000",
+  "base_license_key": "",
+  "plus_license_key": "",
+  "reporting_license_key": ""
+}
+```
+
+- If you update from a previous version, the system will automatically add any missing license key fields to your `config.json`.
+- If you clone the repository, copy `config.example.json` to `config.json` and fill in your keys.
 
 ### Active Directory Setup
 1. Copy `app/ad_config.example.json` to `app/ad_config.json`
