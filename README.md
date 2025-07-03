@@ -678,5 +678,43 @@ make network-info
 - **Safe for GitHub**: You can now push this repo publicly without leaking sensitive data.
 - **How to keep it clean**: All sensitive runtime files are excluded by default. If you add new secrets/configs, add them to `.gitignore`.
 
+## License Activation & Trial Setup
+
+### Product ID
+- The product ID for this software **must always be** `GEEKS-AD-PLUS`.
+- Do not change this value in `config.json`.
+
+### config.json Example (No Identifying Info)
+```
+{
+  "debug": false,
+  "secret_key": "",
+  "portal_url": "http://localhost:5000",
+  "license_key": "",
+  "product_id": "GEEKS-AD-PLUS",
+  "base_license_key": "",
+  "plus_license_key": "",
+  "reporting_license_key": "",
+  "company_name": "YOUR_COMPANY_NAME",
+  "contact_name": "YOUR_CONTACT_NAME",
+  "email": "your@email.com",
+  "phone": ""
+}
+```
+- **Do not commit real company, contact, or email info to version control.**
+- The app will prompt for this info on first run if missing.
+
+### Trial Activation Flow
+1. On first run, the app will prompt for company, contact, and email info if not present in `config.json`.
+2. When you request a trial, the app will send this info to the license server at `https://license.geeks-tech.win/api/activate-trial` with the correct product ID.
+3. If successful, a trial license key will be returned and saved in `config.json`.
+4. The app will then validate the trial key with the license server. If valid, you will be redirected to AD setup.
+
+**Note:**
+- All license and trial validation is performed against the license server using the product ID `GEEKS-AD-PLUS`.
+- If you need to reset the trial, remove the `trial_license_key` and `trial_start_date` fields from `config.json` and restart the app.
+
+---
+
 
 
