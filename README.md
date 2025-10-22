@@ -2,16 +2,38 @@
 
 A comprehensive Linux-based web application for Active Directory password management and user administration. This system provides a secure, self-updating portal that integrates directly with Active Directory for password resets, user management, and administrative tasks. It includes a Windows Credential Provider for seamless lock screen integration.
 
-## Recent Updates (2025-06-27)
+## Recent Updates (2025-10-22)
+
+- **Enhanced User Management Features:**
+  - **User Status Filtering**: Filter users by enabled/disabled status using LDAP `userAccountControl` attributes
+  - **OU-Based Filtering**: Focus on specific OUs (e.g., Sunray Users) with exclusion of disabled user containers
+  - **Exchange Migration Statistics**: Real-time counts of total users, active users, and users with/without email addresses
+  - **Sorting Preservation**: Maintains sort order and filters after user actions (move/disable/enable)
+  - **Clickable Status Toggle**: Direct status changes with AJAX for real-time updates without page refresh
+  - **Bulk Operations**: Select multiple users for bulk disable, enable, or move operations
+  - **Graceful Delete Fallback**: Automatically disables users when delete permissions are insufficient
+  - **CSV Import Functionality**: Bulk user creation from CSV files with validation and error reporting
+- **UI/UX Improvements:**
+  - **Dark Theme Consistency**: All modals, dropdowns, and forms now use consistent dark theme styling
+  - **Enhanced Dropdown Styling**: Proper contrast and readability for OU selection dropdowns
+  - **Toast Notifications**: Real-time feedback for user actions without page refreshes
+  - **Responsive Design**: Improved mobile and tablet compatibility
+  - **Accessibility**: Better contrast ratios and keyboard navigation support
+- **Systemd Service Reliability:**
+  - Fixed virtual environment path configuration for reliable service operation
+  - Proper dependency management and error handling
+- **Security & Error Handling:**
+  - Enhanced LDAP error handling with fallback mechanisms
+  - Improved permission checking and user feedback
+  - Secure credential management and sanitization
+
+## Previous Updates (2025-06-27)
 
 - **License Key Workflow & Config Safety:**
   - The system now requires valid license keys for activation. On first run, if `config.json` is missing, it is auto-created from `config.example.json`.
   - License keys are never pushed to GitHub. `config.json` is gitignored; only `config.example.json` is tracked.
   - The app will prompt for license keys via the web UI if missing or invalid, and will not start until a valid key is provided.
   - Add-on license keys now use new context variable names: `plus_license_key` (email control add-on) and `reporting_license_key` (password reset add-on).
-- **Systemd Service Reliability:**
-  - The app can now be reliably run as a systemd service using the virtual environment's Python.
-  - Troubleshooting steps for systemd/venv issues are included at the end of this README.
 - **UI/UX Improvements:**
   - High-contrast, modernized form fields and dropdowns for all admin pages.
   - Custom, searchable dropdowns for user and task type assignment.
@@ -338,11 +360,18 @@ The build system creates:
 ### Admin Management
 - ✅ **Admin Authentication** - Separate admin login with AD group-based permissions
 - ✅ **User Management** - Search, create, delete, enable/disable AD users
+- ✅ **Advanced User Filtering** - Filter by status (enabled/disabled) and OU location
+- ✅ **Bulk Operations** - Select multiple users for bulk disable, enable, or move operations
+- ✅ **Real-time Status Toggle** - Clickable status badges with AJAX updates
+- ✅ **OU-Based Management** - Focus on specific OUs with exclusion of disabled containers
+- ✅ **Exchange Migration Planning** - Statistics for total users, active users, and email status
+- ✅ **CSV Import** - Bulk user creation from CSV files with validation
 - ✅ **Group Management** - Configure admin groups and manage AD groups
 - ✅ **Password Operations** - Reset passwords, force password changes
 - ✅ **Admin Dashboard** - Centralized admin interface with statistics
 - ✅ **User Details View** - Comprehensive user information including password status
 - ✅ **Password Info Display** - Show password expiry, policy, and status in user details
+- ✅ **Graceful Error Handling** - Fallback mechanisms for insufficient permissions
 
 ### Active Directory Features
 - ✅ **AD Dashboard** - Real-time statistics and health monitoring
