@@ -8,8 +8,9 @@ from logging.handlers import RotatingFileHandler
 from .ad import get_ad_config, is_user_in_admin_group
 from flask_migrate import Migrate
 # License validation import
-from .license_utils import get_license_info, validate_license, is_base_activated
+from .license_utils import get_license_info, validate_license, is_license_or_trial_valid
 import shutil
+from flask_session import Session
 
 # Initialize extensions
 mail = Mail()
@@ -46,8 +47,8 @@ def ensure_config_json():
 def create_app():
     global LICENSE_VALID
     ensure_config_json()
-    # Check base product activation
-    LICENSE_VALID = is_base_activated()
+    # Check license or trial validity
+    LICENSE_VALID = is_license_or_trial_valid()
     # Validate license before app creation
     license_key, product_id = get_license_info()
     if not validate_license(license_key, product_id):
@@ -74,6 +75,10 @@ def create_app():
     mail.init_app(app)
     login_manager.init_app(app)
     migrate.init_app(app, db)
+    app.config['SESSION_TYPE'] = 'filesystem'
+    app.config['SESSION_FILE_DIR'] = os.path.join('/tmp', 'flask_session')
+    app.config['SESSION_PERMANENT'] = False
+    Session(app)
 
     # Database initialization with error handling
     with app.app_context():

@@ -33,8 +33,12 @@ import json
 from datetime import datetime
 from flask import session
 # License validation import
-from .license_utils import get_license_info, validate_license, is_base_activated, is_plus_activated, is_reporting_activated, get_license_keys
+from .license_utils import get_license_info, validate_license, is_license_or_trial_valid, is_plus_activated, is_reporting_activated
 from app import LICENSE_VALID
+import csv
+import io
+from werkzeug.utils import secure_filename
+import tempfile
 
 main = Blueprint('main', __name__)
 
@@ -76,7 +80,7 @@ def enforce_setup():
 
 @main.route('/')
 def home():
-    if not is_base_activated() and request.endpoint != 'main.license_entry':
+    if not is_license_or_trial_valid() and request.endpoint != 'main.license_entry':
         return redirect(url_for('main.license_entry'))
     config = get_ad_config()
     if not config:
@@ -92,7 +96,7 @@ def home():
 
 @main.route('/welcome')
 def welcome():
-    if not is_base_activated() and request.endpoint != 'main.license_entry':
+    if not is_license_or_trial_valid() and request.endpoint != 'main.license_entry':
         return redirect(url_for('main.license_entry'))
     return render_template(
         'welcome.html',
@@ -550,16 +554,28 @@ def user_search():
     }
     
     query = request.form.get('query', '') if request.method == 'POST' else request.args.get('query', '')
+    status_filter = request.form.get('status_filter', 'all') if request.method == 'POST' else request.args.get('status_filter', 'all')
+    
+    # Handle OU exclusions
+    exclude_ous = []
+    if request.method == 'POST':
+        exclude_ous_raw = request.form.get('exclude_ous', '')
+    else:
+        exclude_ous_raw = request.args.get('exclude_ous', '')
+    
+    if exclude_ous_raw:
+        exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+    
     users = []
     
     # Always search for users - if no query, search for all users
     if query:
-        users = search_users(query, **ad_args)
-        log_user_action('search', query, 'success' if users else 'no_results', {'query': query, 'results_count': len(users)})
+        users = search_users(query, status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
+        log_user_action('search', query, 'success' if users else 'no_results', {'query': query, 'status_filter': status_filter, 'exclude_ous': exclude_ous, 'results_count': len(users)})
     else:
         # Show all users when no query is provided
-        users = search_users('', **ad_args)
-        log_user_action('search', 'all_users', 'success' if users else 'no_results', {'query': 'all_users', 'results_count': len(users)})
+        users = search_users('', status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
+        log_user_action('search', 'all_users', 'success' if users else 'no_results', {'query': 'all_users', 'status_filter': status_filter, 'exclude_ous': exclude_ous, 'results_count': len(users)})
     
     # Server-side sorting
     sort_by = request.args.get('sort_by', 'username')
@@ -596,17 +612,47 @@ def user_search():
     # Get OUs for move user functionality
     ous = list_ous(**ad_args)
     
+    # Get user statistics for Exchange migration planning
+    user_stats = {
+        'total_enabled': 0,
+        'total_disabled': 0,
+        'with_email': 0,
+        'without_email': 0,
+        'active_users': 0,  # Enabled users not in Disabled Users OU
+        'sunray_users_total': 0  # Total users in Sunray Users OU
+    }
+    
+    # Count users by status and email
+    for user in users:
+        # All users shown are already filtered to be in Sunray Users OU and not in Disabled Users OU
+        user_stats['sunray_users_total'] += 1
+        
+        if user.get('accountStatus') == 'enabled':
+            user_stats['total_enabled'] += 1
+            user_stats['active_users'] += 1  # Active = enabled and not in disabled OU
+        else:
+            user_stats['total_disabled'] += 1
+            
+        if user.get('mail'):
+            user_stats['with_email'] += 1
+        else:
+            user_stats['without_email'] += 1
+    
     return render_template(
         'user_search.html', 
         users=users_page, 
         query=query, 
+        status_filter=status_filter,
+        exclude_ous=exclude_ous,
+        exclude_ous_str=','.join(exclude_ous),
         ous=ous, 
         base_dn=config['ad_base_dn'],
         page=page,
         total_pages=total_pages,
         total_users=total_users,
         sort_by=sort_by,
-        sort_order=sort_order
+        sort_order=sort_order,
+        user_stats=user_stats
     )
 
 @main.route('/user_details/<path:user_dn>', methods=['GET', 'POST'])
@@ -706,6 +752,14 @@ def user_details(user_dn):
         elif action == 'force_password_change':
             ok, msg = ad_force_password_change(user_dn, **ad_args)
             flash(msg, 'success' if ok else 'danger')
+        elif action == 'move_user':
+            new_ou_dn = request.form.get('new_ou')
+            if new_ou_dn:
+                ok, msg = move_user_to_ou(user_dn, new_ou_dn, **ad_args)
+                flash(msg, 'success' if ok else 'danger')
+                return redirect(url_for('main.user_details', user_dn=user_dn))
+            else:
+                flash('Please select a destination OU.', 'warning')
         elif action == 'delete':
             ok, msg = ad_delete_user(user_dn, **ad_args)
             if ok:
@@ -739,6 +793,9 @@ def user_details(user_dn):
 
     user_groups = get_user_groups(user_dn, **ad_args)
     all_groups = get_all_groups(**ad_args)
+    
+    # Get OUs for move user functionality
+    ous = list_ous(**ad_args)
     
     # Group type counts
     group_type_counts = get_group_types_for_user(user_groups, **ad_args)
@@ -788,6 +845,7 @@ def user_details(user_dn):
         user=user, 
         user_groups=user_groups,
         all_groups=all_groups,
+        ous=ous,
         is_disabled=is_disabled,
         is_locked=is_locked,
         group_type_counts=group_type_counts,
@@ -1417,6 +1475,54 @@ def create_ou_route():
     ous = list_ous(**ad_args)
     return render_template('create_ou.html', ous=ous, base_dn=config['ad_base_dn'])
 
+@main.route('/admin/disable_user', methods=['POST'])
+@login_required
+@admin_required
+def disable_user_route():
+    """Disable a user from the user search table"""
+    config = get_ad_config()
+    if not config:
+        return jsonify({'success': False, 'message': 'AD not configured. Please complete setup first.'}), 400
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    user_dn = request.form.get('user_dn')
+    if not user_dn:
+        return jsonify({'success': False, 'message': 'No user specified.'}), 400
+    
+    ok, msg = ad_disable_user(user_dn, **ad_args)
+    return jsonify({'success': ok, 'message': msg})
+
+@main.route('/admin/enable_user', methods=['POST'])
+@login_required
+@admin_required
+def enable_user_route():
+    """Enable a user from the user search table"""
+    config = get_ad_config()
+    if not config:
+        return jsonify({'success': False, 'message': 'AD not configured. Please complete setup first.'}), 400
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    user_dn = request.form.get('user_dn')
+    if not user_dn:
+        return jsonify({'success': False, 'message': 'No user specified.'}), 400
+    
+    ok, msg = ad_enable_user(user_dn, **ad_args)
+    return jsonify({'success': ok, 'message': msg})
+
 @main.route('/admin/move_user', methods=['POST'])
 @login_required
 @admin_required
@@ -1424,11 +1530,19 @@ def move_user_route():
     """Move a user to a different OU"""
     config = get_ad_config()
     if not config:
+        if request.headers.get('Content-Type') == 'application/x-www-form-urlencoded':
+            return jsonify({'success': False, 'message': 'AD not configured. Please complete setup first.'}), 400
         flash('AD not configured. Please complete setup first.', 'warning')
         return redirect(url_for('main.setup'))
     
-    user_dn = request.form['user_dn']
-    new_ou_dn = request.form['new_ou_dn']
+    user_dn = request.form.get('user_dn')
+    new_ou_dn = request.form.get('new_ou') or request.form.get('new_ou_dn')
+    
+    if not user_dn or not new_ou_dn:
+        if request.headers.get('Content-Type') == 'application/x-www-form-urlencoded':
+            return jsonify({'success': False, 'message': 'Missing required parameters.'}), 400
+        flash('Missing required parameters.', 'danger')
+        return redirect(url_for('main.user_search'))
     
     ad_args = {
         'server': config['ad_server'],
@@ -1439,9 +1553,30 @@ def move_user_route():
     }
     
     ok, msg = move_user_to_ou(user_dn, new_ou_dn, **ad_args)
+    
+    # Check if this is an AJAX request
+    if request.headers.get('Content-Type') == 'application/x-www-form-urlencoded':
+        return jsonify({'success': ok, 'message': msg})
+    
+    # Regular form submission
     flash(msg, 'success' if ok else 'danger')
     
-    return redirect(url_for('main.user_search'))
+    # Preserve current search parameters when redirecting
+    redirect_params = {}
+    if request.form.get('query'):
+        redirect_params['query'] = request.form['query']
+    if request.form.get('status_filter') and request.form['status_filter'] != 'all':
+        redirect_params['status_filter'] = request.form['status_filter']
+    if request.form.get('exclude_ous'):
+        redirect_params['exclude_ous'] = request.form['exclude_ous']
+    if request.form.get('sort_by'):
+        redirect_params['sort_by'] = request.form['sort_by']
+    if request.form.get('sort_order'):
+        redirect_params['sort_order'] = request.form['sort_order']
+    if request.form.get('page'):
+        redirect_params['page'] = request.form['page']
+    
+    return redirect(url_for('main.user_search', **redirect_params))
 
 @main.route('/admin/drilldown/computers')
 @login_required
@@ -3203,7 +3338,7 @@ def license_entry():
                 with open(config_path, 'w') as f:
                     json.dump(config, f, indent=2)
                 # Re-validate
-                if is_base_activated():
+                if is_license_or_trial_valid():
                     return redirect(url_for('main.home'))
                 else:
                     message = 'Invalid license key.'
@@ -3212,3 +3347,539 @@ def license_entry():
         else:
             message = 'Please enter a license key.'
     return render_template('license_entry.html', message=message)
+
+@main.route('/admin/csv-import', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def csv_import():
+    """CSV import for employee data with AD comparison"""
+    if request.method == 'POST':
+        print("DEBUG: CSV import POST request received")
+        
+        if 'csv_file' not in request.files:
+            print("DEBUG: No csv_file in request.files")
+            flash('No file selected', 'error')
+            return redirect(request.url)
+        
+        file = request.files['csv_file']
+        print(f"DEBUG: File received: {file.filename}")
+        
+        if file.filename == '':
+            print("DEBUG: Empty filename")
+            flash('No file selected', 'error')
+            return redirect(request.url)
+        
+        if not file.filename.endswith('.csv'):
+            print("DEBUG: Not a CSV file")
+            flash('Please upload a CSV file', 'error')
+            return redirect(request.url)
+        
+        try:
+            print("DEBUG: Starting CSV processing")
+            # Read CSV content
+            csv_content = file.read().decode('utf-8')
+            print(f"DEBUG: CSV content length: {len(csv_content)}")
+            print(f"DEBUG: First 500 characters of CSV: {repr(csv_content[:500])}")
+            
+            csv_reader = csv.DictReader(io.StringIO(csv_content))
+            print(f"DEBUG: CSV columns: {csv_reader.fieldnames}")
+            
+            # Extract employee data
+            csv_employees = []
+            row_count = 0
+            for row in csv_reader:
+                row_count += 1
+                print(f"DEBUG: Raw row {row_count}: {row}")
+                
+                # Skip completely empty rows
+                if not any(row.values()):
+                    print(f"DEBUG: Skipping empty row {row_count}")
+                    continue
+                
+                # Handle different possible column names
+                employee_id = row.get('Employee ID', row.get('Employee Id', row.get('employee_id', row.get('ID', ''))))
+                
+                # Handle separate first and last name columns
+                first_name = row.get('First Name', row.get('first_name', ''))
+                last_name = row.get('Last Name', row.get('last_name', ''))
+                full_name = row.get('Name', row.get('name', row.get('Full Name', '')))
+                
+                # Combine first and last name if they exist, otherwise use full_name
+                if first_name and last_name:
+                    name = f"{first_name.strip()} {last_name.strip()}"
+                else:
+                    name = full_name
+                
+                email = row.get('Email', row.get('email', ''))
+                job_title = row.get('Default Jobs (HR)', row.get('Job Title', row.get('job_title', '')))
+                
+                print(f"DEBUG: Processing row {row_count} - ID: '{employee_id}', First: '{first_name}', Last: '{last_name}', Full: '{full_name}', Combined: '{name}', Email: '{email}', Job: '{job_title}'")
+                print(f"DEBUG: Row {row_count} - All keys: {list(row.keys())}")
+                print(f"DEBUG: Row {row_count} - All values: {list(row.values())}")
+                
+                # Only show first few rows to avoid spam
+                if row_count <= 3:
+                    print(f"DEBUG: Row {row_count} - Raw row data: {row}")
+                
+                if employee_id and name:
+                    csv_employees.append({
+                        'employee_id': employee_id.strip(),
+                        'name': name.strip(),
+                        'email': email.strip() if email else '',
+                        'job_title': job_title.strip() if job_title else ''
+                    })
+            
+            print(f"DEBUG: Found {len(csv_employees)} valid CSV employees")
+            print(f"DEBUG: First few CSV employees:")
+            for i, emp in enumerate(csv_employees[:5]):
+                print(f"DEBUG:   {i+1}. {emp}")
+            if len(csv_employees) > 5:
+                print(f"DEBUG:   ... and {len(csv_employees) - 5} more employees")
+            
+            if not csv_employees:
+                flash('No valid employee data found in CSV', 'error')
+                return redirect(request.url)
+            
+            # Get AD users
+            print("DEBUG: Getting AD config")
+            config = get_ad_config()
+            if not config:
+                print("DEBUG: No AD config available")
+                flash('AD configuration not available', 'error')
+                return redirect(request.url)
+            
+            print(f"DEBUG: AD config found - server: {config['ad_server']}")
+            print(f"DEBUG: Full AD config: {config}")
+            
+            ad_args = {
+                'server': config['ad_server'],
+                'port': config['ad_port'],
+                'bind_user': config['ad_bind_dn'],
+                'bind_password': config['ad_password'],
+                'base_dn': config.get('ad_base_dn', config.get('base_dn'))
+            }
+            print(f"DEBUG: AD args prepared - server: {ad_args['server']}, port: {ad_args['port']}, base_dn: {ad_args['base_dn']}")
+            
+            # Search for all users in AD
+            print("DEBUG: Searching AD users")
+            ad_users = search_users('*', **ad_args)
+            print(f"DEBUG: Found {len(ad_users)} AD users")
+            if ad_users:
+                print(f"DEBUG: First few AD users:")
+                for i, user in enumerate(ad_users[:5]):
+                    print(f"DEBUG:   {i+1}. {user.get('displayName', 'N/A')} ({user.get('sAMAccountName', 'N/A')}) - Employee ID: {user.get('employeeID', 'N/A')}")
+            else:
+                print("ERROR: No AD users found from live AD. Check connection, credentials, or base DN.")
+                flash('No AD users found from Active Directory. Please check your AD connection, credentials, or base DN.', 'error')
+                return redirect(request.url)
+            
+            # Compare CSV with AD users
+            matched_users = []
+            unmatched_csv = []
+            unmatched_ad = []
+            
+            # Create lookup for AD users by name
+            ad_user_lookup = {}
+            print(f"DEBUG: Creating AD user lookup with {len(ad_users)} users")
+            for user in ad_users:
+                display_name = user.get('displayName', '')
+                sam_account = user.get('sAMAccountName', '')
+                employee_id = user.get('employeeID', '')
+                
+                # Add to lookup by display name
+                if display_name:
+                    ad_user_lookup[display_name.lower()] = user
+                
+                # Add to lookup by SAM account name
+                if sam_account:
+                    ad_user_lookup[sam_account.lower()] = user
+                
+                # Add to lookup by employee ID if it exists
+                if employee_id:
+                    ad_user_lookup[employee_id.lower()] = user
+                
+                print(f"DEBUG: Added to lookup - Display: '{display_name}', SAM: '{sam_account}', Employee ID: '{employee_id}'")
+            
+            print(f"DEBUG: AD user lookup created with {len(ad_user_lookup)} entries")
+            print(f"DEBUG: Sample lookup keys: {list(ad_user_lookup.keys())[:10]}")
+            
+            # Check each CSV employee
+            for csv_emp in csv_employees:
+                csv_name_lower = csv_emp['name'].lower()
+                csv_id_lower = csv_emp['employee_id'].lower()
+                
+                # Try to match by name or employee ID
+                print(f"DEBUG: Searching for AD user with name: '{csv_emp['name']}' (ID: '{csv_emp['employee_id']}')")
+                matched_user = None
+                
+                # First try exact employee ID match
+                if csv_emp['employee_id'] in ad_user_lookup:
+                    matched_user = ad_user_lookup[csv_emp['employee_id']]
+                    print(f"DEBUG: Found exact employee ID match: '{csv_emp['employee_id']}' -> {matched_user.get('sAMAccountName', 'N/A')}")
+                
+                # If no exact match, try name matching
+                if not matched_user:
+                    for ad_name, ad_user in ad_user_lookup.items():
+                        # Skip employee ID keys for name matching
+                        if ad_name.isdigit() or ad_name.startswith('emp'):
+                            continue
+                        
+                        # Try various name matching strategies
+                        if (csv_name_lower == ad_name or  # Exact match
+                            csv_name_lower in ad_name or  # CSV name is part of AD name
+                            ad_name in csv_name_lower):   # AD name is part of CSV name
+                            matched_user = ad_user
+                            print(f"DEBUG: Found name match: '{csv_name_lower}' matches '{ad_name}' -> {ad_user.get('sAMAccountName', 'N/A')}")
+                            break
+                
+                if not matched_user:
+                    print(f"DEBUG: No match found for '{csv_emp['name']}' (ID: '{csv_emp['employee_id']}')")
+                    print(f"DEBUG: Available AD names (first 10): {[k for k in ad_user_lookup.keys() if not k.isdigit() and not k.startswith('emp')][:10]}")
+                
+                if matched_user:
+                    # Update AD user with employee ID and job title if not present
+                    current_employee_id = matched_user.get('employeeID', '')
+                    current_title = matched_user.get('title', '')
+                    updates_made = []
+                    
+                    # Update employee ID if not present
+                    if not current_employee_id and csv_emp['employee_id']:
+                        try:
+                            update_user_employee_id(matched_user['distinguishedName'], csv_emp['employee_id'], **ad_args)
+                            matched_user['employeeID'] = csv_emp['employee_id']
+                            updates_made.append('employee_id')
+                        except Exception as e:
+                            print(f"Error updating employee ID for {matched_user['distinguishedName']}: {e}")
+                    
+                    # Update job title if provided and different
+                    if csv_emp.get('job_title') and csv_emp['job_title'] != current_title:
+                        try:
+                            update_user_attributes(matched_user['distinguishedName'], {'title': csv_emp['job_title']}, **ad_args)
+                            matched_user['title'] = csv_emp['job_title']
+                            updates_made.append('job_title')
+                        except Exception as e:
+                            print(f"Error updating job title for {matched_user['distinguishedName']}: {e}")
+                    
+                    matched_users.append({
+                        'csv_data': csv_emp,
+                        'ad_user': matched_user,
+                        'updated': len(updates_made) > 0,
+                        'updates': updates_made
+                    })
+                else:
+                    unmatched_csv.append(csv_emp)
+            
+            # Find AD users not in CSV
+            # Create a set of matched AD user DNs for efficient lookup
+            matched_ad_dns = {match['ad_user']['distinguishedName'] for match in matched_users}
+            
+            for ad_user in ad_users:
+                # If this AD user wasn't matched to any CSV user, it's AD-only
+                if ad_user['distinguishedName'] not in matched_ad_dns:
+                    unmatched_ad.append(ad_user)
+            
+            print(f"DEBUG: Processing complete - Matched: {len(matched_users)}, CSV-only: {len(unmatched_csv)}, AD-only: {len(unmatched_ad)}")
+            if matched_users:
+                print(f"DEBUG: Matched users:")
+                for i, match in enumerate(matched_users[:5]):
+                    print(f"DEBUG:   {i+1}. {match['csv_data']['name']} (ID: {match['csv_data']['employee_id']}) -> {match['ad_user']['sAMAccountName']}")
+                if len(matched_users) > 5:
+                    print(f"DEBUG:   ... and {len(matched_users) - 5} more matches")
+            
+            # Store only keys in session, full results in temp file
+            session['csv_import_results_keys'] = {
+                'matched_users': [u['csv_data']['employee_id'] for u in matched_users],
+                'unmatched_csv': [u['employee_id'] for u in unmatched_csv],
+                'unmatched_ad': [u['sAMAccountName'] for u in unmatched_ad],
+                'total_csv': len(csv_employees),
+                'total_ad': len(ad_users)
+            }
+            save_import_results({
+                'matched_users': matched_users,
+                'unmatched_csv': unmatched_csv,
+                'unmatched_ad': unmatched_ad,
+                'total_csv': len(csv_employees),
+                'total_ad': len(ad_users)
+            })
+            flash(f'CSV import completed: {len(matched_users)} matched, {len(unmatched_csv)} CSV-only, {len(unmatched_ad)} AD-only', 'success')
+            return redirect(url_for('main.csv_import_results'))
+            
+        except Exception as e:
+            print(f"DEBUG: Exception during CSV processing: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            flash(f'Error processing CSV: {str(e)}', 'error')
+            return redirect(request.url)
+    
+    return render_template('csv_import.html')
+
+@main.route('/admin/csv-import-results')
+@login_required
+@admin_required
+def csv_import_results():
+    """Display CSV import results"""
+    results = load_import_results()
+    if not results:
+        flash('No import results found. Please upload a CSV file first.', 'warning')
+        return redirect(url_for('main.csv_import'))
+    return render_template('csv_import_results.html', results=results)
+
+@main.route('/admin/bulk-disable-users', methods=['POST'])
+@login_required
+@admin_required
+def bulk_disable_users():
+    """Bulk disable users not in CSV and move to disabled OU"""
+    results = session.get('csv_import_results')
+    if not results:
+        flash('No import results found. Please upload a CSV file first.', 'warning')
+        return redirect(url_for('main.csv_import'))
+    
+    config = get_ad_config()
+    if not config:
+        flash('AD configuration not available', 'error')
+        return redirect(url_for('main.csv_import_results'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['base_dn']
+    }
+    
+    # Get disabled users OU
+    disabled_ou = request.form.get('disabled_ou', 'OU=Disabled Users,DC=sunray,DC=internal')
+    
+    success_count = 0
+    error_count = 0
+    errors = []
+    
+    # Process unmatched AD users
+    for user in results['unmatched_ad']:
+        try:
+            user_dn = user['distinguishedName']
+            
+            # Disable user
+            disable_user(user_dn, **ad_args)
+            
+            # Move to disabled OU
+            move_user_to_ou(user_dn, disabled_ou, **ad_args)
+            
+            success_count += 1
+            
+        except Exception as e:
+            error_count += 1
+            errors.append(f"Error processing {user.get('displayName', 'Unknown')}: {str(e)}")
+    
+    if success_count > 0:
+        flash(f'Successfully disabled and moved {success_count} users to {disabled_ou}', 'success')
+    
+    if error_count > 0:
+        flash(f'Failed to process {error_count} users. Check logs for details.', 'error')
+        for error in errors[:5]:  # Show first 5 errors
+            flash(error, 'error')
+    
+    return redirect(url_for('main.csv_import_results'))
+
+@main.route('/admin/export-unmatched-csv')
+@login_required
+@admin_required
+def export_unmatched_csv():
+    """Export unmatched CSV users to a new CSV file"""
+    results = session.get('csv_import_results')
+    if not results:
+        flash('No import results found', 'warning')
+        return redirect(url_for('main.csv_import'))
+    
+    # Create CSV content
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Employee ID', 'Name', 'Email', 'Status'])
+    
+    for user in results['unmatched_csv']:
+        writer.writerow([
+            user['employee_id'],
+            user['name'],
+            user['email'],
+            'Not in AD'
+        ])
+    
+    output.seek(0)
+    
+    from flask import Response
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=unmatched_users.csv'}
+    )
+
+@main.route('/admin/export-unmatched-ad')
+@login_required
+@admin_required
+def export_unmatched_ad():
+    """Export unmatched AD users to a CSV file"""
+    results = session.get('csv_import_results')
+    if not results:
+        flash('No import results found', 'warning')
+        return redirect(url_for('main.csv_import'))
+    
+    # Create CSV content
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Display Name', 'Username', 'Email', 'Employee ID', 'OU', 'Status'])
+    
+    for user in results['unmatched_ad']:
+        writer.writerow([
+            user.get('displayName', ''),
+            user.get('sAMAccountName', ''),
+            user.get('mail', ''),
+            user.get('employeeID', ''),
+            user.get('distinguishedName', '').split(',OU=')[-1] if ',OU=' in user.get('distinguishedName', '') else '',
+            'Not in CSV'
+        ])
+    
+    output.seek(0)
+    
+    from flask import Response
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=unmatched_ad_users.csv'}
+    )
+
+@main.route('/admin/bulk-action-ad-users', methods=['POST'])
+@login_required
+@admin_required
+def bulk_action_ad_users():
+    """Handle bulk actions on selected AD users"""
+    action_type = request.form.get('action_type')
+    selected_users = request.form.getlist('selected_users')
+    disabled_ou = request.form.get('disabled_ou', 'OU=Disabled Users,DC=sunray,DC=internal')
+    
+    if not action_type or not selected_users:
+        flash('No action or users selected', 'warning')
+        return redirect(url_for('main.csv_import_results'))
+    
+    config = get_ad_config()
+    if not config:
+        flash('AD configuration not available', 'error')
+        return redirect(url_for('main.csv_import_results'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    success_count = 0
+    error_count = 0
+    errors = []
+    
+    print(f"DEBUG: Bulk action '{action_type}' on {len(selected_users)} users")
+    
+    for user_dn in selected_users:
+        try:
+            if action_type == 'disable':
+                result, msg = disable_user(user_dn, **ad_args)
+                if result:
+                    success_count += 1
+                    print(f"DEBUG: Disabled user {user_dn}")
+                else:
+                    error_count += 1
+                    errors.append(f"Failed to disable {user_dn}: {msg}")
+                    
+            elif action_type == 'move_to_disabled':
+                result, msg = move_user_to_ou(user_dn, disabled_ou, **ad_args)
+                if result:
+                    success_count += 1
+                    print(f"DEBUG: Moved user {user_dn} to {disabled_ou}")
+                else:
+                    error_count += 1
+                    errors.append(f"Failed to move {user_dn}: {msg}")
+                    
+            elif action_type == 'delete':
+                result, msg = delete_user(user_dn, **ad_args)
+                if result:
+                    success_count += 1
+                    print(f"DEBUG: Deleted user {user_dn}")
+                else:
+                    error_count += 1
+                    errors.append(f"Failed to delete {user_dn}: {msg}")
+                    
+            elif action_type == 'export':
+                # This will be handled by the export function
+                success_count += 1
+                
+        except Exception as e:
+            error_count += 1
+            errors.append(f"Error processing {user_dn}: {str(e)}")
+            print(f"DEBUG: Exception processing {user_dn}: {str(e)}")
+    
+    # Handle export action
+    if action_type == 'export':
+        return export_selected_ad_users(selected_user_dns, **ad_args)
+    
+    # Show results
+    if success_count > 0:
+        action_descriptions = {
+            'disable': 'disabled',
+            'move_to_disabled': f'moved to {disabled_ou}',
+            'delete': 'deleted'
+        }
+        flash(f'Successfully {action_descriptions.get(action_type, "processed")} {success_count} users', 'success')
+    
+    if error_count > 0:
+        flash(f'Failed to process {error_count} users. Check logs for details.', 'error')
+        for error in errors[:5]:  # Show first 5 errors
+            flash(error, 'error')
+    
+    return redirect(url_for('main.csv_import_results'))
+
+def export_selected_ad_users(selected_user_dns, **ad_args):
+    """Export selected AD users to CSV"""
+    from flask import Response
+    
+    # Get user details for selected DNs
+    selected_users = []
+    for user_dn in selected_user_dns:
+        user_details = get_user_details(user_dn, **ad_args)
+        if user_details:
+            selected_users.append(user_details)
+    
+    # Create CSV content
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Display Name', 'Username', 'Email', 'Employee ID', 'OU', 'Status'])
+    
+    for user in selected_users:
+        display_name = user.get('displayName', [''])[0] if user.get('displayName') else ''
+        username = user.get('sAMAccountName', [''])[0] if user.get('sAMAccountName') else ''
+        email = user.get('mail', [''])[0] if user.get('mail') else ''
+        employee_id = user.get('employeeID', [''])[0] if user.get('employeeID') else ''
+        dn = user.get('distinguishedName', [''])[0] if user.get('distinguishedName') else ''
+        ou = dn.split(',OU=')[-1] if ',OU=' in dn else ''
+        
+        writer.writerow([display_name, username, email, employee_id, ou, 'Selected for Export'])
+    
+    output.seek(0)
+    
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=selected_ad_users.csv'}
+    )
+
+# Helper to store and load import results from a temp file
+IMPORT_RESULTS_FILE = os.path.join(tempfile.gettempdir(), 'geeks_ad_plus_import_results.json')
+
+def save_import_results(results):
+    with open(IMPORT_RESULTS_FILE, 'w') as f:
+        json.dump(results, f)
+
+def load_import_results():
+    if os.path.exists(IMPORT_RESULTS_FILE):
+        with open(IMPORT_RESULTS_FILE, 'r') as f:
+            return json.load(f)
+    return None

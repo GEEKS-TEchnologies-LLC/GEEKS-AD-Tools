@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Import - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: #181818;
+            min-height: 100vh;
+        }
+        .sidebar {
+            background: #111;
+            color: #ffd700;
+            min-height: 100vh;
+            width: 240px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1040;
+            transition: width 0.2s;
+        }
+        .sidebar.collapsed {
+            width: 60px;
+        }
+        .sidebar .nav-link {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            color: #ffd700;
+            font-weight: 500;
+            padding: 1rem 1.5rem;
+            transition: all 0.2s;
+        }
+        .sidebar .nav-link i {
+            font-size: 1.4rem;
+            margin-right: 1rem;
+            min-width: 24px;
+            text-align: center;
+            transition: margin 0.2s;
+        }
+        .sidebar .nav-link .nav-text {
+            transition: opacity 0.2s, width 0.2s;
+            white-space: nowrap;
+        }
+        .sidebar.collapsed .nav-link {
+            justify-content: center;
+            padding: 1rem 0;
+        }
+        .sidebar.collapsed .nav-link i {
+            margin-right: 0;
+        }
+        .sidebar.collapsed .nav-link .nav-text {
+            opacity: 0;
+            width: 0;
+            overflow: hidden;
+        }
+        .sidebar .sidebar-toggle {
+            color: #ffd700;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            margin: 1rem 0 1rem 1.5rem;
+            transition: margin 0.2s;
+        }
+        .sidebar.collapsed .sidebar-toggle {
+            margin: 1rem 0;
+        }
+        .topbar {
+            background: #222;
+            color: #ffd700;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            padding: 0 2rem 0 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 1030;
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+            margin-left: 240px;
+            transition: margin-left 0.3s;
+        }
+        .sidebar.collapsed ~ .topbar {
+            padding-left: 1.5rem;
+            margin-left: 60px;
+        }
+        .topbar .topbar-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .logo img {
+            max-height: 56px;
+            width: auto;
+            object-fit: contain;
+            vertical-align: middle;
+            margin-right: 0.75rem;
+        }
+        .logo-text {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: #ffd700;
+            font-size: 1.25rem;
+            font-weight: bold;
+            letter-spacing: 1px;
+            white-space: nowrap;
+            margin-right: 0.5rem;
+        }
+        .status-dot {
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+        .status-dot.green { background: #28a745; }
+        .status-dot.red { background: #dc3545; }
+        .user-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .user-dropdown-toggle {
+            background: none;
+            border: none;
+            color: #ffd700;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+        .user-dropdown-menu {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 120%;
+            background: #222;
+            color: #ffd700;
+            min-width: 160px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+            border-radius: 8px;
+            z-index: 2000;
+        }
+        .user-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1.25rem;
+            color: #ffd700;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .user-dropdown-menu a:hover {
+            background: #333;
+            color: #fff;
+        }
+        .user-dropdown.open .user-dropdown-menu {
+            display: block;
+        }
+        .main-content {
+            margin-left: 240px;
+            padding: 2rem;
+            transition: margin-left 0.2s;
+        }
+        .sidebar.collapsed ~ .main-content {
+            margin-left: 60px;
+        }
+        .glass-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffd700;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(120deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.05) 100%);
+            opacity: 0.5;
+            pointer-events: none;
+            border-radius: 18px;
+        }
+        .card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffd700;
+        }
+        .card-header {
+            background: rgba(0,0,0,0.25);
+            border-bottom: 1px solid rgba(255,255,255,0.12);
+            color: #ffd700;
+        }
+        .card-body {
+            color: #ffd700;
+        }
+        .form-label {
+            color: #ffd700;
+            font-weight: 600;
+        }
+        .form-control {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border-radius: 10px;
+        }
+        .form-control:focus {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #ffd700;
+            color: #fff;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #1a1a1a;
+            font-weight: 600;
+        }
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #ffb347 0%, #ffd700 100%);
+            color: #1a1a1a;
+            transform: translateY(-2px);
+        }
+        .table {
+            color: #ffd700;
+        }
+        .table thead th {
+            background: rgba(0,0,0,0.25);
+            border-color: rgba(255,255,255,0.12);
+            color: #ffd700;
+        }
+        .table tbody td {
+            border-color: rgba(255,255,255,0.12);
+        }
+        .alert {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #fff;
+        }
+        .btn-outline-warning {
+            border: 2px solid #ffc107;
+            color: #ffc107;
+            background: transparent;
+        }
+        .btn-outline-warning:hover {
+            background: #ffc107;
+            color: #1a1a1a;
+        }
+        .form-control-sm {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border-radius: 8px;
+        }
+        .form-control-sm:focus {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #ffd700;
+            color: #fff;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25);
+        }
+        .form-check-input {
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .form-check-input:checked {
+            background-color: #ffd700;
+            border-color: #ffd700;
+        }
+        .text-warning {
+            color: #ffc107 !important;
+        }
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+            border-radius: 0.375rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar" id="sidebar">
+        <button class="sidebar-toggle" id="sidebarToggle"><i class="fas fa-bars"></i></button>
+        <nav class="nav flex-column">
+            <a class="nav-link" href="/admin/users"><i class="fas fa-user-edit me-2"></i> <span class="nav-text">User Management</span></a>
+            <a class="nav-link active" href="/admin/csv-import"><i class="fas fa-upload me-2"></i> <span class="nav-text">CSV Import</span></a>
+            <a class="nav-link" href="/admin/ous"><i class="fas fa-folder-tree me-2"></i> <span class="nav-text">OU Management</span></a>
+            <a class="nav-link" href="/admin/audit"><i class="fas fa-clipboard-list me-2"></i> <span class="nav-text">Audit Logs</span></a>
+            <a class="nav-link" href="/admin/gpo-deployment"><i class="fas fa-download me-2"></i> <span class="nav-text">GPD</span></a>
+            <hr class="my-2" style="border-color: #ffd700;">
+            <a class="nav-link" href="/admin/tasks"><i class="fas fa-tasks me-2"></i> <span class="nav-text">Task Management</span></a>
+            <a class="nav-link" href="/admin/assign-task"><i class="fas fa-plus-circle me-2"></i> <span class="nav-text">Assign Task</span></a>
+            <hr class="my-2" style="border-color: #ffd700;">
+            <a class="nav-link" href="/admin/settings"><i class="fas fa-cog me-2"></i> <span class="nav-text">Settings</span></a>
+        </nav>
+    </div>
+    <div class="topbar" id="topbar">
+        <div class="logo">
+            <img src="/static/img/geeks_logo.png" alt="Logo">
+            <span class="logo-text">GEEKS-AD-Plus</span>
+        </div>
+        <div class="topbar-right">
+            <form class="d-flex me-3" style="max-width: 300px;">
+                <input class="form-control form-control-sm" type="search" placeholder="Search..." aria-label="Search">
+            </form>
+            <span class="status-dot green" title="AD Health"></span>
+            <a href="/dashboard" class="btn btn-outline-warning btn-sm me-3" title="Switch View">
+                <i class="fas fa-exchange-alt me-1"></i>
+                <span class="d-none d-md-inline">Switch to User View</span>
+            </a>
+            <div class="form-check form-switch me-3" title="Debug Mode">
+                <input class="form-check-input" type="checkbox" id="debugToggle" style="cursor: pointer;">
+                <label class="form-check-label text-warning" for="debugToggle" style="cursor: pointer; font-size: 0.9rem;">
+                    <i class="fas fa-bug me-1"></i>
+                    <span class="d-none d-md-inline">Debug</span>
+                </label>
+            </div>
+            <div class="user-dropdown" id="userDropdown">
+                <button class="user-dropdown-toggle" id="userDropdownToggle" type="button">
+                    <i class="fas fa-user-circle me-2"></i> <span class="d-none d-md-inline">Admin</span> <i class="fas fa-caret-down ms-1"></i>
+                </button>
+                <div class="user-dropdown-menu" id="userDropdownMenu">
+                    <a href="/admin/profile"><i class="fas fa-id-badge me-2"></i> Profile</a>
+                    <a href="/logout"><i class="fas fa-sign-out-alt me-2"></i> Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h4><i class="fas fa-upload"></i> CSV Import & AD Comparison</h4>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-8">
+                                    <form method="POST" enctype="multipart/form-data">
+                                        <div class="mb-4">
+                                            <label for="csv_file" class="form-label fw-bold">Upload Employee CSV File</label>
+                                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>
+                                            <div class="form-text">
+                                                Upload a CSV file containing employee data. The system will compare this with your Active Directory users.
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="mb-4">
+                                            <h5>Expected CSV Format:</h5>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-bordered">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th>Column Name</th>
+                                                            <th>Description</th>
+                                                            <th>Required</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr>
+                                                            <td><code>Employee ID</code> or <code>employee_id</code> or <code>ID</code></td>
+                                                            <td>Employee identification number</td>
+                                                            <td><span class="badge bg-success">Yes</span></td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td><code>Name</code> or <code>name</code> or <code>Full Name</code></td>
+                                                            <td>Employee's full name</td>
+                                                            <td><span class="badge bg-success">Yes</span></td>
+                                                        </tr>
+                                                                                                        <tr>
+                                                    <td><code>Email</code> or <code>email</code></td>
+                                                    <td>Employee's email address</td>
+                                                    <td><span class="badge bg-secondary">No</span></td>
+                                                </tr>
+                                                <tr>
+                                                    <td><code>Default Jobs (HR)</code> or <code>Job Title</code></td>
+                                                    <td>Employee's job title</td>
+                                                    <td><span class="badge bg-secondary">No</span></td>
+                                                </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="mb-4">
+                                            <h5>What This Tool Does:</h5>
+                                            <ul class="list-group list-group-flush">
+                                                <li class="list-group-item">
+                                                    <i class="fas fa-check text-success"></i> 
+                                                    <strong>Matches CSV employees with AD users</strong> by name or employee ID
+                                                </li>
+                                                                                        <li class="list-group-item">
+                                            <i class="fas fa-sync text-primary"></i> 
+                                            <strong>Updates employee IDs and job titles</strong> in AD for matched users
+                                        </li>
+                                                <li class="list-group-item">
+                                                    <i class="fas fa-list text-info"></i> 
+                                                    <strong>Generates two lists:</strong> users in CSV vs users not in CSV
+                                                </li>
+                                                <li class="list-group-item">
+                                                    <i class="fas fa-ban text-warning"></i> 
+                                                    <strong>Bulk operations:</strong> disable and move users not in CSV
+                                                </li>
+                                            </ul>
+                                        </div>
+                                        
+                                        <div class="d-grid gap-2">
+                                            <button type="submit" class="btn btn-primary btn-lg">
+                                                <i class="fas fa-upload"></i> Upload and Process CSV
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                                
+                                <div class="col-md-4">
+                                    <div class="card bg-light">
+                                        <div class="card-header">
+                                            <h6><i class="fas fa-info-circle"></i> Sample CSV Format</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <pre class="small"><code>Employee Id,First Name,Last Name,Default Jobs (HR)
+EMP001,John,Doe,Software Engineer
+EMP002,Jane,Smith,Project Manager
+EMP003,Bob,Johnson,System Administrator
+EMP004,Alice,Brown,Network Engineer
+EMP005,Charlie,Wilson,Database Administrator</code></pre>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="card bg-light mt-3">
+                                        <div class="card-header">
+                                            <h6><i class="fas fa-exclamation-triangle"></i> Important Notes</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <ul class="list-unstyled small">
+                                                <li><i class="fas fa-check text-success"></i> CSV must be UTF-8 encoded</li>
+                                                <li><i class="fas fa-check text-success"></i> Column names are case-insensitive</li>
+                                                <li><i class="fas fa-check text-success"></i> Employee ID and Name are required</li>
+                                                <li><i class="fas fa-check text-success"></i> Email is optional but recommended</li>
+                                                <li><i class="fas fa-exclamation text-warning"></i> Large files may take time to process</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Sidebar toggle functionality
+        document.getElementById('sidebarToggle').addEventListener('click', function() {
+            document.getElementById('sidebar').classList.toggle('collapsed');
+        });
+
+        // User dropdown functionality
+        document.getElementById('userDropdownToggle').addEventListener('click', function() {
+            document.getElementById('userDropdown').classList.toggle('open');
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(event) {
+            const dropdown = document.getElementById('userDropdown');
+            if (!dropdown.contains(event.target)) {
+                dropdown.classList.remove('open');
+            }
+        });
+
+        // Debug toggle functionality
+        document.getElementById('debugToggle').addEventListener('change', function() {
+            if (this.checked) {
+                console.log('Debug mode enabled');
+                // Add debug functionality here
+            } else {
+                console.log('Debug mode disabled');
+                // Remove debug functionality here
+            }
+        });
+    </script>
+</body>
+</html> 

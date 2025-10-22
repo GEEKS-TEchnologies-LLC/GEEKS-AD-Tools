@@ -22,13 +22,18 @@ def ad_connection(**kwargs):
     bind_password = kwargs.get('bind_password') or kwargs.get('ad_password')
     base_dn = kwargs.get('base_dn') or kwargs.get('ad_base_dn')
     
+    print(f"DEBUG: ad_connection - server: {server}, bind_user: {bind_user}, base_dn: {base_dn}")
+    
     server_uri = f"ldap://{server}"
+    print(f"DEBUG: ad_connection - server_uri: {server_uri}")
     server_obj = ldap3.Server(server_uri, get_info=ldap3.ALL)
     conn = ldap3.Connection(server_obj, user=bind_user, password=bind_password, auto_bind=True, raise_exceptions=True)
+    print(f"DEBUG: ad_connection - connection established successfully")
     try:
         yield conn
     finally:
         conn.unbind()
+        print(f"DEBUG: ad_connection - connection closed")
 
 # --- Configuration ---
 
@@ -65,22 +70,51 @@ def test_ad_connection(**ad_args):
 def search_users(query, **ad_args):
     users = []
     
-    # Escape LDAP special characters in the query
+    print(f"DEBUG: search_users called with query: '{query}'")
+    
+    # Get filter parameters
+    status_filter = ad_args.get('status_filter', 'all')  # 'all', 'enabled', 'disabled'
+    exclude_ous = ad_args.get('exclude_ous', [])  # List of OUs to exclude
+    
+    # Escape LDAP special characters in the query, but preserve wildcards
     def escape_ldap_filter(value):
-        """Escape special characters in LDAP filter"""
+        """Escape special characters in LDAP filter, but preserve wildcards"""
         if not value:
             return value
-        # Escape: \ * ( ) \0 / + < > , ; " = and space
-        escaped = re.sub(r'([\\*()\x00/+\x00<>,;"= ])', r'\\\1', value)
+        # Don't escape wildcards (*) - they should remain as wildcards
+        # Escape: \ ( ) \0 / + < > , ; " = and space
+        escaped = re.sub(r'([\\()\x00/+\x00<>,;"= ])', r'\\\1', value)
         return escaped
     
     escaped_query = escape_ldap_filter(query) if query else ''
-    filter_str = f'(|(sAMAccountName=*{escaped_query}*)(displayName=*{escaped_query}*)(mail=*{escaped_query}*))' if escaped_query else '(objectClass=user)'
+    
+    # Build the filter string
+    filters = ['(objectClass=user)']
+    
+    # Add search query filter
+    if escaped_query and escaped_query != '*':
+        filters.append(f'(|(sAMAccountName=*{escaped_query}*)(displayName=*{escaped_query}*)(mail=*{escaped_query}*))')
+    
+    # Add status filter
+    if status_filter == 'enabled':
+        filters.append('(!(userAccountControl:1.2.840.113556.1.4.803:=2))')  # Not disabled
+    elif status_filter == 'disabled':
+        filters.append('(userAccountControl:1.2.840.113556.1.4.803:=2)')  # Disabled
+    
+    # Combine filters
+    filter_str = '(&' + ''.join(filters) + ')'
+    
+    # Search within Sunray Users OU instead of using distinguishedName filters
     base_dn = _get_base_dn(ad_args)
+    sunray_users_base = f'OU=Sunray Users,OU=Sunray,{base_dn}'
+    
+    print(f"DEBUG: search_users - escaped_query: '{escaped_query}', status_filter: '{status_filter}', exclude_ous: {exclude_ous}, filter_str: '{filter_str}', sunray_users_base: '{sunray_users_base}'")
     
     with ad_connection(**ad_args) as conn:
         try:
-            conn.search(base_dn, filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass'])
+            print(f"DEBUG: search_users - executing search with filter: '{filter_str}' in base: '{sunray_users_base}'")
+            conn.search(sunray_users_base, filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass', 'employeeID', 'userAccountControl'])
+            print(f"DEBUG: search_users - search completed, found {len(conn.entries)} entries")
             
             for entry in conn.entries:
                 # Check if this is a user object
@@ -93,24 +127,59 @@ def search_users(query, **ad_args):
                         is_user = 'user' in str(object_classes) and 'computer' not in str(object_classes)
                 
                 if is_user:
-                    dn_parts = entry.distinguishedName.value.split(',')
-                    ou_parts = [part[3:] for part in dn_parts if part.startswith('OU=')]
-                    if 'Sunray Users' in ou_parts:
-                        idx = ou_parts.index('Sunray Users')
-                        # Take Sunray Users and all OUs to the right (closer to the user), reverse for left-to-right
-                        display_ous = list(reversed(ou_parts[:idx+1]))
-                        ou_display = ' → '.join(display_ous)
-                    else:
-                        ou_display = ' → '.join(reversed(ou_parts)) if ou_parts else 'Domain Root'
-                    users.append({
-                        'dn': entry.distinguishedName.value,
-                        'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
-                        'displayName': entry.displayName.value if entry.displayName else '',
-                        'mail': entry.mail.value if entry.mail else '',
-                        'ou': ou_display
-                    })
+                    # Check if user is in excluded OUs
+                    user_dn = entry.distinguishedName.value
+                    should_exclude = False
+                    
+                    # Always exclude users in Disabled Users OU
+                    if 'OU=Disabled Users' in user_dn:
+                        should_exclude = True
+                        print(f"DEBUG: search_users - excluding user in Disabled Users OU: {user_dn}")
+                    
+                    # Check additional excluded OUs
+                    if exclude_ous and not should_exclude:
+                        for excluded_ou in exclude_ous:
+                            if excluded_ou.strip() and excluded_ou.strip() in user_dn:
+                                should_exclude = True
+                                print(f"DEBUG: search_users - excluding user in {excluded_ou}: {user_dn}")
+                                break
+                    
+                    if not should_exclude:
+                        dn_parts = entry.distinguishedName.value.split(',')
+                        ou_parts = [part[3:] for part in dn_parts if part.startswith('OU=')]
+                        if 'Sunray Users' in ou_parts:
+                            idx = ou_parts.index('Sunray Users')
+                            # Take Sunray Users and all OUs to the right (closer to the user), reverse for left-to-right
+                            display_ous = list(reversed(ou_parts[:idx+1]))
+                            ou_display = ' → '.join(display_ous)
+                        else:
+                            ou_display = ' → '.join(reversed(ou_parts)) if ou_parts else 'Domain Root'
+                        
+                        # Determine account status
+                        account_status = 'enabled'
+                        if hasattr(entry, 'userAccountControl') and entry.userAccountControl:
+                            uac = int(entry.userAccountControl.value)
+                            if uac & 2:  # ADS_UF_ACCOUNTDISABLE
+                                account_status = 'disabled'
+                        
+                        user_data = {
+                            'dn': entry.distinguishedName.value,
+                            'distinguishedName': entry.distinguishedName.value,
+                            'username': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                            'sAMAccountName': entry.sAMAccountName.value if entry.sAMAccountName else '',
+                            'displayName': entry.displayName.value if entry.displayName else '',
+                            'mail': entry.mail.value if entry.mail else '',
+                            'employeeID': entry.employeeID.value if hasattr(entry, 'employeeID') and entry.employeeID else '',
+                            'ou': ou_display,
+                            'accountStatus': account_status
+                        }
+                        users.append(user_data)
+                        print(f"DEBUG: search_users - added user: {user_data.get('displayName', 'N/A')} ({user_data.get('sAMAccountName', 'N/A')})")
         except LDAPException as e:
             print(f"Error searching users: {e}") # Log error
+            return []
+        except Exception as e:
+            print(f"Unexpected error in search_users: {e}")
             return []
     
     return users
@@ -269,9 +338,35 @@ def force_password_change(user_dn, **ad_args):
         return (True, "User will be required to change password.") if result else (False, f"Failed to force password change: {conn.result['description']}")
 
 def delete_user(user_dn, **ad_args):
-    with ad_connection(**ad_args) as conn:
-        result = conn.delete(user_dn)
-        return (True, "User deleted successfully.") if result else (False, f"Failed to delete user: {conn.result['description']}")
+    """
+    Delete a user from Active Directory.
+    If deletion fails due to permissions, disable the user instead.
+    """
+    try:
+        with ad_connection(**ad_args) as conn:
+            result = conn.delete(user_dn)
+            if result:
+                return True, 'User deleted successfully.'
+            else:
+                return False, f'Failed to delete user: {conn.result["description"]}'
+    except LDAPInsufficientAccessRightsResult:
+        # If deletion fails due to insufficient rights, disable the user instead
+        try:
+            with ad_connection(**ad_args) as conn:
+                # Get current userAccountControl
+                conn.search(user_dn, '(objectClass=user)', search_scope=ldap3.BASE, attributes=['userAccountControl'])
+                if conn.entries:
+                    current_uac = int(conn.entries[0].userAccountControl.value)
+                    # Set the disable bit
+                    disable_uac = current_uac | 2
+                    conn.modify(user_dn, {'userAccountControl': [(ldap3.MODIFY_REPLACE, [str(disable_uac)])]})
+                    return True, 'User deletion blocked by security policy. User has been disabled instead.'
+                else:
+                    return False, 'User not found for disable operation.'
+        except Exception as e:
+            return False, f'Failed to disable user: {str(e)}'
+    except Exception as e:
+        return False, f'Error deleting user: {str(e)}'
 
 # --- Group Management ---
 
@@ -732,4 +827,16 @@ def get_user_types_breakdown(**ad_args):
     return {
         'Admin Users': admin_users,
         'Regular Users': regular_users
-    } 
+    }
+
+def update_user_employee_id(user_dn, employee_id, **ad_args):
+    """Update a user's employee ID attribute"""
+    with ad_connection(**ad_args) as conn:
+        try:
+            result = conn.modify(user_dn, {'employeeID': [(ldap3.MODIFY_REPLACE, [employee_id])]})
+            if result:
+                return True, f"Employee ID updated to {employee_id}"
+            else:
+                return False, f"Failed to update employee ID: {conn.result['description']}"
+        except Exception as e:
+            return False, f"Error updating employee ID: {str(e)}" 

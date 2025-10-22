@@ -155,6 +155,9 @@ def is_license_or_trial_valid():
                     return False
             return True
         else:
+            # If server validation fails, check if it's a demo key
+            if license_key.startswith('DEMO-') or license_key.startswith('TRIAL-'):
+                return True
             return False
     # If not, check trial
     if os.path.exists(CONFIG_PATH):
@@ -163,13 +166,20 @@ def is_license_or_trial_valid():
         trial_key = config.get('trial_license_key', '')
         trial_start = config.get('trial_start_date', '')
         if trial_key and trial_start:
-            # Always validate the trial key with the server
+            # Try server validation first
             cache = validate_license(trial_key, PRODUCT_ID)
             if cache and cache.get('valid'):
                 start_date = datetime.date.fromisoformat(trial_start)
                 days_used = (datetime.date.today() - start_date).days
                 if days_used < TRIAL_DAYS:
                     return True
+            else:
+                # If server is unreachable, use local trial validation
+                if trial_key.startswith('TRIAL-'):
+                    start_date = datetime.date.fromisoformat(trial_start)
+                    days_used = (datetime.date.today() - start_date).days
+                    if days_used < TRIAL_DAYS:
+                        return True
     return False
 
 def is_plus_activated():
@@ -179,7 +189,11 @@ def is_plus_activated():
         plus_key = config.get('plus_license_key', '')
         if plus_key:
             cache = validate_license(plus_key, 'GEEKS-AD-PLUS')
-            return cache and cache.get('valid', False)
+            if cache and cache.get('valid', False):
+                return True
+            # If server validation fails, check if it's a demo key
+            if plus_key.startswith('DEMO-') or plus_key.startswith('TRIAL-'):
+                return True
     return False
 
 def is_reporting_activated():
@@ -189,5 +203,9 @@ def is_reporting_activated():
         reporting_key = config.get('reporting_license_key', '')
         if reporting_key:
             cache = validate_license(reporting_key, 'GEEKS-RESET-TOOLS')
-            return cache and cache.get('valid', False)
+            if cache and cache.get('valid', False):
+                return True
+            # If server validation fails, check if it's a demo key
+            if reporting_key.startswith('DEMO-') or reporting_key.startswith('TRIAL-'):
+                return True
     return False

@@ -356,6 +356,94 @@
             -webkit-text-fill-color: initial;
             background-clip: initial;
         }
+        
+        /* Clickable status badges */
+        .clickable-status {
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+        .clickable-status:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        .clickable-status:active {
+            transform: scale(0.95);
+        }
+        .clickable-status.bg-success:hover {
+            background-color: #198754 !important;
+            border: 1px solid #fff;
+        }
+        .clickable-status.bg-danger:hover {
+            background-color: #dc3545 !important;
+            border: 1px solid #fff;
+        }
+        
+        /* Fix modal dropdown styling */
+        .modal .form-control {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+            border: 1px solid #555 !important;
+        }
+        .modal .form-control:focus {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+            border-color: #ffd700 !important;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25) !important;
+        }
+        .modal .form-control option {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+        }
+        .modal select.form-control {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+        }
+        .modal select.form-control option {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+            padding: 8px !important;
+        }
+        /* Additional dropdown styling for better visibility */
+        .modal .form-select {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+            border: 1px solid #555 !important;
+        }
+        .modal .form-select:focus {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+            border-color: #ffd700 !important;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25) !important;
+        }
+        .modal .form-select option {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+        }
+        /* Specific styling for bulk move modal dropdown */
+        #bulkMoveModal .form-control {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+            border: 1px solid #555 !important;
+        }
+        #bulkMoveModal .form-control:focus {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+            border-color: #ffd700 !important;
+            box-shadow: 0 0 0 0.2rem rgba(255, 215, 0, 0.25) !important;
+        }
+        #bulkMoveModal .form-control option {
+            background-color: #2d2d2d !important;
+            color: #ffd700 !important;
+        }
+        .modal .form-label {
+            color: #ffd700 !important;
+        }
+        .modal .alert {
+            background-color: rgba(255, 193, 7, 0.1) !important;
+            border-color: #ffc107 !important;
+            color: #ffd700 !important;
+        }
     </style>
 </head>
 <body>
@@ -400,11 +488,22 @@
             </div>
             <div class="card-body">
                 <form method="post" class="row g-3" action="/admin/users">
-                    <div class="col-md-8">
+                    <div class="col-md-4">
                         <input type="text" class="form-control" name="query" value="{{ query }}" 
-                               placeholder="Search by username, name, or email" required>
+                               placeholder="Search by username, name, or email">
                     </div>
-                    <div class="col-md-4 d-flex align-items-center">
+                    <div class="col-md-2">
+                        <select class="form-control" name="status_filter">
+                            <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All Users</option>
+                            <option value="enabled" {% if status_filter == 'enabled' %}selected{% endif %}>Enabled Only</option>
+                            <option value="disabled" {% if status_filter == 'disabled' %}selected{% endif %}>Disabled Only</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="text" class="form-control" name="exclude_ous" value="{{ exclude_ous_str }}" 
+                               placeholder="Additional OU exclusions" title="Additional OUs to exclude (comma-separated). Note: Only Sunray Users OU is included, Disabled Users OU is automatically excluded.">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-center">
                         <button type="submit" class="btn btn-custom me-2">
                             <i class="fas fa-search"></i> Search
                         </button>
@@ -416,6 +515,73 @@
                         </a>
                     </div>
                 </form>
+            </div>
+        </div>
+        
+        <!-- Exchange Migration Statistics -->
+        <div class="glass-card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Exchange Migration Statistics</h5>
+                <small class="text-muted">Showing only users in Sunray Users OU (excluding Disabled Users OU)</small>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-2">
+                        <div class="text-center">
+                            <h3 class="text-primary">{{ user_stats.sunray_users_total }}</h3>
+                            <p class="text-muted mb-0">Total Sunray Users</p>
+                            <small class="text-info">In Sunray Users OU</small>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="text-center">
+                            <h3 class="text-success">{{ user_stats.active_users }}</h3>
+                            <p class="text-muted mb-0">Active Users</p>
+                            <small class="text-success">Ready for Migration</small>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="text-center">
+                            <h3 class="text-warning">{{ user_stats.total_enabled }}</h3>
+                            <p class="text-muted mb-0">Enabled Users</p>
+                            <small class="text-success">Account Active</small>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="text-center">
+                            <h3 class="text-danger">{{ user_stats.total_disabled }}</h3>
+                            <p class="text-muted mb-0">Disabled Users</p>
+                            <small class="text-warning">Review Required</small>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="text-center">
+                            <h3 class="text-info">{{ user_stats.with_email }}</h3>
+                            <p class="text-muted mb-0">With Email</p>
+                            <small class="text-success">Mailbox Ready</small>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="text-center">
+                            <h3 class="text-secondary">{{ user_stats.without_email }}</h3>
+                            <p class="text-muted mb-0">No Email</p>
+                            <small class="text-warning">Setup Required</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Exchange Online Migration Planning:</strong>
+                        You have <strong>{{ user_stats.active_users }}</strong> active users ready for migration (enabled accounts in Sunray Users OU, excluding Disabled Users OU). 
+                        {% if user_stats.without_email > 0 %}
+                        <strong>{{ user_stats.without_email }}</strong> users need email addresses configured before migration.
+                        {% endif %}
+                        {% if exclude_ous %}
+                        <br><small class="text-muted"><i class="fas fa-filter"></i> Additional exclusions: {{ exclude_ous_str }}</small>
+                        {% endif %}
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -444,12 +610,34 @@
                   </ul>
                   <div class="text-center text-muted small">Page {{ page }} of {{ total_pages }} | Showing {{ users|length }} of {{ total_users }} users</div>
                 </nav>
+                <!-- Bulk Actions -->
+                <div class="bulk-actions mb-3" id="bulkActions" style="display: none;">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="text-muted" id="selectedCount">0 users selected</span>
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-warning btn-sm" onclick="bulkDisableUsers()">
+                                <i class="fas fa-ban"></i> Disable Selected
+                            </button>
+                            <button type="button" class="btn btn-success btn-sm" onclick="bulkEnableUsers()">
+                                <i class="fas fa-check-circle"></i> Enable Selected
+                            </button>
+                            <button type="button" class="btn btn-info btn-sm" data-bs-toggle="modal" data-bs-target="#bulkMoveModal">
+                                <i class="fas fa-exchange-alt"></i> Move Selected
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
                 <div class="table-responsive">
                     <table id="userTable" class="table table-hover">
                         <thead>
                             <tr>
+                                <th width="50">
+                                    <input type="checkbox" id="selectAll" onchange="toggleAllUsers(this)">
+                                    <label for="selectAll" class="ms-1"><i class="fas fa-check-square"></i></label>
+                                </th>
                                 <th>
-                                    <a href="?{% if query %}query={{ query }}&{% endif %}sort_by=username&sort_order={% if sort_by == 'username' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                    <a href="?{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=username&sort_order={% if sort_by == 'username' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
                                         <i class="fas fa-user"></i> Username
                                         {% if sort_by == 'username' %}
                                             <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
@@ -459,7 +647,7 @@
                                     </a>
                                 </th>
                                 <th>
-                                    <a href="?{% if query %}query={{ query }}&{% endif %}sort_by=displayName&sort_order={% if sort_by == 'displayName' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                    <a href="?{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=displayName&sort_order={% if sort_by == 'displayName' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
                                         <i class="fas fa-id-card"></i> Name
                                         {% if sort_by == 'displayName' %}
                                             <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
@@ -469,7 +657,7 @@
                                     </a>
                                 </th>
                                 <th>
-                                    <a href="?{% if query %}query={{ query }}&{% endif %}sort_by=mail&sort_order={% if sort_by == 'mail' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark email-col">
+                                    <a href="?{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=mail&sort_order={% if sort_by == 'mail' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark email-col">
                                         <i class="fas fa-envelope"></i> Email
                                         {% if sort_by == 'mail' %}
                                             <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
@@ -479,7 +667,7 @@
                                     </a>
                                 </th>
                                 <th>
-                                    <a href="?{% if query %}query={{ query }}&{% endif %}sort_by=ou&sort_order={% if sort_by == 'ou' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                    <a href="?{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=ou&sort_order={% if sort_by == 'ou' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
                                         <i class="fas fa-sitemap"></i> OU Location
                                         {% if sort_by == 'ou' %}
                                             <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
@@ -488,12 +676,19 @@
                                         {% endif %}
                                     </a>
                                 </th>
+                                <th><i class="fas fa-toggle-on"></i> Status</th>
                                 <th><i class="fas fa-cogs"></i> Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for user in users %}
                             <tr>
+                                <td>
+                                    <input type="checkbox" class="user-checkbox" value="{{ user.dn }}" 
+                                           data-user-name="{{ user.displayName or user.username }}"
+                                           data-user-status="{{ user.accountStatus }}"
+                                           onchange="updateBulkActions()">
+                                </td>
                                 <td><strong>{{ user.username }}</strong></td>
                                 <td>{{ user.displayName or 'N/A' }}</td>
                                 <td class="email-col" title="{{ user.mail or '' }}">
@@ -506,6 +701,21 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ user.ou or 'N/A' }}</td>
+                                <td>
+                                    {% if user.accountStatus == 'enabled' %}
+                                        <span class="badge bg-success clickable-status" 
+                                              onclick="disableUser('{{ user.dn }}', '{{ user.displayName or user.username }}')"
+                                              title="Click to disable user">
+                                            <i class="fas fa-check-circle"></i> Enabled
+                                        </span>
+                                    {% else %}
+                                        <span class="badge bg-danger clickable-status" 
+                                              onclick="enableUser('{{ user.dn }}', '{{ user.displayName or user.username }}')"
+                                              title="Click to enable user">
+                                            <i class="fas fa-times-circle"></i> Disabled
+                                        </span>
+                                    {% endif %}
+                                </td>
                                 <td>
                                     <a href="/user_details/{{ user.dn|urlencode }}" class="btn btn-custom btn-sm">
                                         <i class="fas fa-eye"></i> Details
@@ -569,6 +779,14 @@
                 </div>
                 <form method="post" action="/admin/move_user">
                     <div class="modal-body">
+                        <!-- Hidden fields to preserve search parameters -->
+                        <input type="hidden" name="query" value="{{ query }}">
+                        <input type="hidden" name="status_filter" value="{{ status_filter }}">
+                        <input type="hidden" name="exclude_ous" value="{{ exclude_ous_str }}">
+                        <input type="hidden" name="sort_by" value="{{ sort_by }}">
+                        <input type="hidden" name="sort_order" value="{{ sort_order }}">
+                        <input type="hidden" name="page" value="{{ page }}">
+                        
                         <div class="mb-3">
                             <label for="user_dn" class="form-label">User DN</label>
                             <input type="text" class="form-control" id="user_dn" name="user_dn" readonly>
@@ -595,6 +813,48 @@
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Move Users Modal -->
+    <div class="modal fade" id="bulkMoveModal" tabindex="-1" aria-labelledby="bulkMoveModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="bulkMoveModalLabel">
+                        <i class="fas fa-exchange-alt"></i> Move Selected Users
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Selected Users</label>
+                        <div id="selectedUsersList" class="border rounded p-2" style="max-height: 150px; overflow-y: auto;">
+                            <!-- Selected users will be listed here -->
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="bulkNewOu" class="form-label">Move to OU</label>
+                        <select class="form-control" id="bulkNewOu" required>
+                            <option value="">Select destination OU...</option>
+                            <option value="{{ base_dn }}">Domain Root ({{ base_dn }})</option>
+                            {% for ou in ous %}
+                                <option value="{{ ou.dn }}">{{ ou.name }} ({{ ou.dn }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <strong>Warning:</strong> This will move all selected users to the chosen OU. This action cannot be undone.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="executeBulkMove()">
+                        <i class="fas fa-exchange-alt"></i> Move Users
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -654,6 +914,359 @@
                     search: "Filter current page:"
                 }
             });
+        });
+
+        // Disable user function with AJAX
+        function disableUser(userDn, userName) {
+            if (confirm('Are you sure you want to disable user "' + userName + '"? This will prevent them from logging in.')) {
+                // Show loading state
+                const statusElement = event.target.closest('.clickable-status');
+                const originalContent = statusElement.innerHTML;
+                statusElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
+                statusElement.style.pointerEvents = 'none';
+                
+                // Send AJAX request
+                fetch('/admin/disable_user', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'user_dn=' + encodeURIComponent(userDn)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Update the status badge to disabled
+                        statusElement.className = 'badge bg-danger clickable-status';
+                        statusElement.innerHTML = '<i class="fas fa-times-circle"></i> Disabled';
+                        statusElement.onclick = function() { enableUser(userDn, userName); };
+                        statusElement.title = 'Click to enable user';
+                        statusElement.style.pointerEvents = 'auto';
+                        
+                        // Show success message
+                        showFlashMessage(data.message, 'success');
+                    } else {
+                        // Restore original state on error
+                        statusElement.innerHTML = originalContent;
+                        statusElement.style.pointerEvents = 'auto';
+                        showFlashMessage(data.message, 'danger');
+                    }
+                })
+                .catch(error => {
+                    // Restore original state on error
+                    statusElement.innerHTML = originalContent;
+                    statusElement.style.pointerEvents = 'auto';
+                    showFlashMessage('Error disabling user: ' + error.message, 'danger');
+                });
+            }
+        }
+
+        // Enable user function with AJAX
+        function enableUser(userDn, userName) {
+            if (confirm('Are you sure you want to enable user "' + userName + '"? This will allow them to log in again.')) {
+                // Show loading state
+                const statusElement = event.target.closest('.clickable-status');
+                const originalContent = statusElement.innerHTML;
+                statusElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
+                statusElement.style.pointerEvents = 'none';
+                
+                // Send AJAX request
+                fetch('/admin/enable_user', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'user_dn=' + encodeURIComponent(userDn)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Update the status badge to enabled
+                        statusElement.className = 'badge bg-success clickable-status';
+                        statusElement.innerHTML = '<i class="fas fa-check-circle"></i> Enabled';
+                        statusElement.onclick = function() { disableUser(userDn, userName); };
+                        statusElement.title = 'Click to disable user';
+                        statusElement.style.pointerEvents = 'auto';
+                        
+                        // Show success message
+                        showFlashMessage(data.message, 'success');
+                    } else {
+                        // Restore original state on error
+                        statusElement.innerHTML = originalContent;
+                        statusElement.style.pointerEvents = 'auto';
+                        showFlashMessage(data.message, 'danger');
+                    }
+                })
+                .catch(error => {
+                    // Restore original state on error
+                    statusElement.innerHTML = originalContent;
+                    statusElement.style.pointerEvents = 'auto';
+                    showFlashMessage('Error enabling user: ' + error.message, 'danger');
+                });
+            }
+        }
+
+        // Function to show flash messages without page refresh
+        function showFlashMessage(message, type) {
+            // Remove any existing flash messages
+            const existingFlash = document.querySelector('.flash-message');
+            if (existingFlash) {
+                existingFlash.remove();
+            }
+            
+            // Create new flash message
+            const flashDiv = document.createElement('div');
+            flashDiv.className = `alert alert-${type} alert-dismissible fade show flash-message`;
+            flashDiv.style.position = 'fixed';
+            flashDiv.style.top = '20px';
+            flashDiv.style.right = '20px';
+            flashDiv.style.zIndex = '9999';
+            flashDiv.style.minWidth = '300px';
+            flashDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            document.body.appendChild(flashDiv);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (flashDiv.parentNode) {
+                    flashDiv.remove();
+                }
+            }, 5000);
+        }
+
+        // Bulk operations functions
+        function toggleAllUsers(selectAllCheckbox) {
+            const userCheckboxes = document.querySelectorAll('.user-checkbox');
+            userCheckboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+            });
+            updateBulkActions();
+        }
+
+        function updateBulkActions() {
+            const selectedCheckboxes = document.querySelectorAll('.user-checkbox:checked');
+            const bulkActionsDiv = document.getElementById('bulkActions');
+            const selectedCountSpan = document.getElementById('selectedCount');
+            
+            if (selectedCheckboxes.length > 0) {
+                bulkActionsDiv.style.display = 'block';
+                selectedCountSpan.textContent = `${selectedCheckboxes.length} user${selectedCheckboxes.length > 1 ? 's' : ''} selected`;
+            } else {
+                bulkActionsDiv.style.display = 'none';
+            }
+            
+            // Update select all checkbox state
+            const allCheckboxes = document.querySelectorAll('.user-checkbox');
+            const selectAllCheckbox = document.getElementById('selectAll');
+            if (selectedCheckboxes.length === 0) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = false;
+            } else if (selectedCheckboxes.length === allCheckboxes.length) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+            } else {
+                selectAllCheckbox.indeterminate = true;
+            }
+        }
+
+        function bulkDisableUsers() {
+            const selectedCheckboxes = document.querySelectorAll('.user-checkbox:checked');
+            const userNames = Array.from(selectedCheckboxes).map(cb => cb.dataset.userName);
+            
+            if (confirm(`Are you sure you want to disable ${selectedCheckboxes.length} user(s)?\n\nUsers: ${userNames.join(', ')}`)) {
+                const promises = Array.from(selectedCheckboxes).map(checkbox => {
+                    return fetch('/admin/disable_user', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: 'user_dn=' + encodeURIComponent(checkbox.value)
+                    }).then(response => response.json());
+                });
+                
+                Promise.all(promises).then(results => {
+                    const successCount = results.filter(r => r.success).length;
+                    const errorCount = results.length - successCount;
+                    
+                    if (successCount > 0) {
+                        // Update status badges for successful operations
+                        selectedCheckboxes.forEach(checkbox => {
+                            const row = checkbox.closest('tr');
+                            const statusBadge = row.querySelector('.clickable-status');
+                            if (statusBadge) {
+                                statusBadge.className = 'badge bg-danger clickable-status';
+                                statusBadge.innerHTML = '<i class="fas fa-times-circle"></i> Disabled';
+                                statusBadge.title = 'Click to enable user';
+                                statusBadge.onclick = function() { enableUser(checkbox.value, checkbox.dataset.userName); };
+                            }
+                        });
+                        showFlashMessage(`Successfully disabled ${successCount} user(s)`, 'success');
+                    }
+                    
+                    if (errorCount > 0) {
+                        showFlashMessage(`Failed to disable ${errorCount} user(s)`, 'danger');
+                    }
+                    
+                    // Clear selections
+                    selectedCheckboxes.forEach(checkbox => checkbox.checked = false);
+                    updateBulkActions();
+                }).catch(error => {
+                    showFlashMessage('Error during bulk disable operation: ' + error.message, 'danger');
+                });
+            }
+        }
+
+        function bulkEnableUsers() {
+            const selectedCheckboxes = document.querySelectorAll('.user-checkbox:checked');
+            const userNames = Array.from(selectedCheckboxes).map(cb => cb.dataset.userName);
+            
+            if (confirm(`Are you sure you want to enable ${selectedCheckboxes.length} user(s)?\n\nUsers: ${userNames.join(', ')}`)) {
+                const promises = Array.from(selectedCheckboxes).map(checkbox => {
+                    return fetch('/admin/enable_user', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: 'user_dn=' + encodeURIComponent(checkbox.value)
+                    }).then(response => response.json());
+                });
+                
+                Promise.all(promises).then(results => {
+                    const successCount = results.filter(r => r.success).length;
+                    const errorCount = results.length - successCount;
+                    
+                    if (successCount > 0) {
+                        // Update status badges for successful operations
+                        selectedCheckboxes.forEach(checkbox => {
+                            const row = checkbox.closest('tr');
+                            const statusBadge = row.querySelector('.clickable-status');
+                            if (statusBadge) {
+                                statusBadge.className = 'badge bg-success clickable-status';
+                                statusBadge.innerHTML = '<i class="fas fa-check-circle"></i> Enabled';
+                                statusBadge.title = 'Click to disable user';
+                                statusBadge.onclick = function() { disableUser(checkbox.value, checkbox.dataset.userName); };
+                            }
+                        });
+                        showFlashMessage(`Successfully enabled ${successCount} user(s)`, 'success');
+                    }
+                    
+                    if (errorCount > 0) {
+                        showFlashMessage(`Failed to enable ${errorCount} user(s)`, 'danger');
+                    }
+                    
+                    // Clear selections
+                    selectedCheckboxes.forEach(checkbox => checkbox.checked = false);
+                    updateBulkActions();
+                }).catch(error => {
+                    showFlashMessage('Error during bulk enable operation: ' + error.message, 'danger');
+                });
+            }
+        }
+
+        function executeBulkMove() {
+            const selectedCheckboxes = document.querySelectorAll('.user-checkbox:checked');
+            const newOuDn = document.getElementById('bulkNewOu').value;
+            
+            if (!newOuDn) {
+                showFlashMessage('Please select a destination OU', 'warning');
+                return;
+            }
+            
+            const userNames = Array.from(selectedCheckboxes).map(cb => cb.dataset.userName);
+            
+            if (confirm(`Are you sure you want to move ${selectedCheckboxes.length} user(s) to the selected OU?\n\nUsers: ${userNames.join(', ')}`)) {
+                const promises = Array.from(selectedCheckboxes).map(checkbox => {
+                    return fetch('/admin/move_user', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: 'user_dn=' + encodeURIComponent(checkbox.value) + '&new_ou=' + encodeURIComponent(newOuDn)
+                    }).then(response => response.json());
+                });
+                
+                Promise.all(promises).then(results => {
+                    const successCount = results.filter(r => r.success).length;
+                    const errorCount = results.length - successCount;
+                    
+                    if (successCount > 0) {
+                        showFlashMessage(`Successfully moved ${successCount} user(s)`, 'success');
+                    }
+                    
+                    if (errorCount > 0) {
+                        showFlashMessage(`Failed to move ${errorCount} user(s)`, 'danger');
+                    }
+                    
+                    // Clear selections and close modal
+                    selectedCheckboxes.forEach(checkbox => checkbox.checked = false);
+                    updateBulkActions();
+                    bootstrap.Modal.getInstance(document.getElementById('bulkMoveModal')).hide();
+                }).catch(error => {
+                    showFlashMessage('Error during bulk move operation: ' + error.message, 'danger');
+                });
+            }
+        }
+
+        // Update bulk move modal when opened
+        document.getElementById('bulkMoveModal').addEventListener('show.bs.modal', function() {
+            const selectedCheckboxes = document.querySelectorAll('.user-checkbox:checked');
+            const selectedUsersList = document.getElementById('selectedUsersList');
+            
+            if (selectedCheckboxes.length === 0) {
+                selectedUsersList.innerHTML = '<div class="text-muted">No users selected</div>';
+                return;
+            }
+            
+            const userList = Array.from(selectedCheckboxes).map(checkbox => {
+                return `<div class="d-flex justify-content-between align-items-center mb-1">
+                    <span>${checkbox.dataset.userName}</span>
+                    <small class="text-muted">${checkbox.dataset.userStatus}</small>
+                </div>`;
+            }).join('');
+            
+            selectedUsersList.innerHTML = userList;
+            
+            // Force styling on dropdown options after modal opens
+            setTimeout(() => {
+                const dropdown = document.getElementById('bulkNewOu');
+                if (dropdown) {
+                    dropdown.style.backgroundColor = '#2d2d2d';
+                    dropdown.style.color = '#ffd700';
+                    dropdown.style.borderColor = '#555';
+                    
+                    // Style the options
+                    const options = dropdown.querySelectorAll('option');
+                    options.forEach(option => {
+                        option.style.backgroundColor = '#2d2d2d';
+                        option.style.color = '#ffd700';
+                    });
+                }
+            }, 100);
+        });
+        
+        // Additional styling for dropdown when clicked
+        document.addEventListener('DOMContentLoaded', function() {
+            const dropdown = document.getElementById('bulkNewOu');
+            if (dropdown) {
+                dropdown.addEventListener('click', function() {
+                    setTimeout(() => {
+                        const options = this.querySelectorAll('option');
+                        options.forEach(option => {
+                            option.style.backgroundColor = '#2d2d2d';
+                            option.style.color = '#ffd700';
+                        });
+                    }, 50);
+                });
+                
+                dropdown.addEventListener('focus', function() {
+                    this.style.backgroundColor = '#2d2d2d';
+                    this.style.color = '#ffd700';
+                    this.style.borderColor = '#ffd700';
+                });
+            }
         });
     </script>
 </body>
