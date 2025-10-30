@@ -525,6 +525,50 @@
                 <small class="text-muted">Showing only users in Sunray Users OU (excluding Disabled Users OU)</small>
             </div>
             <div class="card-body">
+                <div class="d-flex justify-content-end mb-3">
+                    <a
+                        class="btn btn-sm btn-custom"
+                        href="/admin/export/mailbox_ready?{% if query %}query={{ query | urlencode }}&{% endif %}{% if status_filter %}status_filter={{ status_filter | urlencode }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str | urlencode }}&{% endif %}"
+                        title="Export mailbox-ready users (enabled with email) as CSV"
+                    >
+                        <i class="fas fa-file-export"></i> Export Mailbox Ready (CSV)
+                    </a>
+                    <a
+                        class="btn btn-sm btn-custom ms-2"
+                        href="/admin/export/service_accounts?{% if query %}query={{ query | urlencode }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str | urlencode }}&{% endif %}"
+                        title="Export Service Accounts (with email) as CSV"
+                    >
+                        <i class="fas fa-database"></i> Export Service Accounts (CSV)
+                    </a>
+                    <a
+                        class="btn btn-sm btn-custom ms-2"
+                        href="/admin/export/internal_tools?{% if query %}query={{ query | urlencode }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str | urlencode }}&{% endif %}"
+                        title="Export Internal Tools mailboxes (with email) as CSV"
+                    >
+                        <i class="fas fa-toolbox"></i> Export Internal Tools (CSV)
+                    </a>
+                    <button
+                        class="btn btn-sm btn-custom ms-2"
+                        id="loadMailboxSizes"
+                        title="Load mailbox sizes from Exchange"
+                    >
+                        <i class="fas fa-chart-pie"></i> Load Mailbox Sizes
+                    </button>
+                    <button
+                        class="btn btn-sm btn-custom ms-2"
+                        id="checkOrphanedMailboxes"
+                        title="Check for orphaned mailboxes"
+                    >
+                        <i class="fas fa-search"></i> Check Orphaned Mailboxes
+                    </button>
+                    <a
+                        class="btn btn-sm btn-custom ms-2"
+                        href="/admin/exchange/export_orphaned_mailboxes?{% if query %}query={{ query | urlencode }}&{% endif %}{% if status_filter %}status_filter={{ status_filter | urlencode }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str | urlencode }}&{% endif %}"
+                        title="Export orphaned mailboxes to CSV"
+                    >
+                        <i class="fas fa-file-export"></i> Export Orphaned
+                    </a>
+                </div>
                 <div class="row">
                     <div class="col-md-2">
                         <div class="text-center">
@@ -557,7 +601,7 @@
                     <div class="col-md-2">
                         <div class="text-center">
                             <h3 class="text-info">{{ user_stats.with_email }}</h3>
-                            <p class="text-muted mb-0">With Email</p>
+                            <p class="text-muted mb-0">Users with Email</p>
                             <small class="text-success">Mailbox Ready</small>
                         </div>
                     </div>
@@ -566,6 +610,20 @@
                             <h3 class="text-secondary">{{ user_stats.without_email }}</h3>
                             <p class="text-muted mb-0">No Email</p>
                             <small class="text-warning">Setup Required</small>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="text-center">
+                            <h3 class="text-info">{{ user_stats.service_accounts }}</h3>
+                            <p class="text-muted mb-0">Service Accounts</p>
+                            <small class="text-info">Mail-enabled (excluded)</small>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="text-center">
+                            <h3 class="text-info">{{ user_stats.internal_tools }}</h3>
+                            <p class="text-muted mb-0">Internal Tools</p>
+                            <small class="text-info">Mail-enabled (excluded)</small>
                         </div>
                     </div>
                 </div>
@@ -677,6 +735,7 @@
                                     </a>
                                 </th>
                                 <th><i class="fas fa-toggle-on"></i> Status</th>
+                                <th><i class="fas fa-chart-pie"></i> Mailbox Size</th>
                                 <th><i class="fas fa-cogs"></i> Actions</th>
                             </tr>
                         </thead>
@@ -715,6 +774,11 @@
                                             <i class="fas fa-times-circle"></i> Disabled
                                         </span>
                                     {% endif %}
+                                </td>
+                                <td class="mailbox-size-cell" data-email="{{ user.mail or '' }}">
+                                    <span class="mailbox-size-text">
+                                        <span class="text-muted">Not loaded</span>
+                                    </span>
                                 </td>
                                 <td>
                                     <a href="/user_details/{{ user.dn|urlencode }}" class="btn btn-custom btn-sm">
@@ -777,7 +841,7 @@
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <form method="post" action="/admin/move_user">
+                <form id="moveUserForm" method="post" action="/admin/move_user">
                     <div class="modal-body">
                         <!-- Hidden fields to preserve search parameters -->
                         <input type="hidden" name="query" value="{{ query }}">
@@ -859,6 +923,83 @@
         </div>
     </div>
 
+    <!-- Orphaned Mailboxes Modal -->
+    <div class="modal fade" id="orphanedMailboxesModal" tabindex="-1" aria-labelledby="orphanedMailboxesModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content" style="background: #1a1a1a; color: #ffd700;">
+                <div class="modal-header" style="background: #222; border-bottom: 1px solid rgba(255,215,0,0.3);">
+                    <h5 class="modal-title text-white" id="orphanedMailboxesModalLabel">
+                        <i class="fas fa-exclamation-triangle"></i> Orphaned Mailboxes Analysis
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" style="background: #1a1a1a;">
+                    <div id="orphanedResults" style="color: #ffd700;">
+                        <div class="text-center">
+                            <div class="spinner-border text-warning" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2 text-white">Analyzing mailboxes...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <a href="#" class="btn btn-danger" id="exportOrphanedBtn" style="display: none;">
+                        <i class="fas fa-file-export"></i> Export Results
+                    </a>
+                    <button type="button" class="btn btn-warning ms-2" id="archiveOrphanedBtn" style="display: none;" data-bs-toggle="modal" data-bs-target="#archiveOrphanedModal">
+                        <i class="fas fa-archive"></i> Archive & Remove
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Archive Orphaned Mailboxes Modal -->
+    <div class="modal fade" id="archiveOrphanedModal" tabindex="-1" aria-labelledby="archiveOrphanedModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content" style="background: #1a1a1a; color: #ffd700;">
+                <div class="modal-header" style="background: #222; border-bottom: 1px solid rgba(255,215,0,0.3);">
+                    <h5 class="modal-title text-white" id="archiveOrphanedModalLabel">
+                        <i class="fas fa-archive"></i> Archive Orphaned Mailboxes
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" style="background: #1a1a1a;">
+                    <form id="archiveOrphanedForm">
+                        <div class="mb-3">
+                            <label for="archivePath" class="form-label text-white">Archive Path (Network Share)</label>
+                            <input type="text" class="form-control" id="archivePath" placeholder="\\\\server\\share\\archives" required>
+                            <small class="form-text text-muted">Network path where PST files will be created (must be accessible from Exchange server)</small>
+                        </div>
+                        <div class="mb-3">
+                            <label for="zipPath" class="form-label text-white">Zip File Destination (Optional)</label>
+                            <input type="text" class="form-control" id="zipPath" placeholder="\\\\server\\share\\zips">
+                            <small class="form-text text-muted">Optional path to copy the zip file to. If not provided, zip file stays in archive path. Individual PST files will be removed after zipping.</small>
+                        </div>
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="removeAfterArchive" checked>
+                            <label class="form-check-label text-white" for="removeAfterArchive">
+                                Remove mailboxes after archiving
+                            </label>
+                            <small class="form-text text-muted d-block">If checked, mailboxes will be disconnected from Exchange after PST files are created</small>
+                        </div>
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle"></i> <strong>Warning:</strong> This will archive all orphaned mailboxes and optionally remove them. This action cannot be easily undone.
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="confirmArchiveBtn">
+                        <i class="fas fa-archive"></i> Archive Mailboxes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
@@ -885,7 +1026,7 @@
             }
         });
 
-        // Handle move user modal
+        // Handle move user modal (open)
         document.getElementById('moveUserModal').addEventListener('show.bs.modal', function (event) {
             var button = event.relatedTarget;
             var userDn = button.getAttribute('data-user-dn');
@@ -895,6 +1036,64 @@
             modal.querySelector('#user_dn').value = userDn;
             modal.querySelector('#moveUserModalLabel').textContent = 'Move User: ' + userName;
         });
+
+        // Intercept move user submit to use AJAX (avoid page navigation)
+        (function() {
+            const moveForm = document.getElementById('moveUserForm');
+            if (!moveForm) return;
+
+            moveForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const userDnInput = document.getElementById('user_dn');
+                const newOuSelect = document.getElementById('new_ou_dn');
+                if (!userDnInput || !newOuSelect || !newOuSelect.value) {
+                    showFlashMessage('Please select a destination OU', 'warning');
+                    return;
+                }
+
+                const userDn = userDnInput.value;
+                const newOu = newOuSelect.value;
+
+                // Call backend
+                fetch('/admin/move_user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'user_dn=' + encodeURIComponent(userDn) + '&new_ou=' + encodeURIComponent(newOu)
+                })
+                .then(resp => resp.json())
+                .then(data => {
+                    if (data && data.success) {
+                        // Try to update the OU cell inline if present
+                        const rowCheckbox = document.querySelector('.user-checkbox[value="' + CSS.escape(userDn) + '"]');
+                        if (rowCheckbox) {
+                            const row = rowCheckbox.closest('tr');
+                            if (row) {
+                                const tds = row.querySelectorAll('td');
+                                // Columns: [0]=checkbox, [1]=username, [2]=name, [3]=email, [4]=ou
+                                if (tds && tds[4]) {
+                                    const selectedText = newOuSelect.options[newOuSelect.selectedIndex].textContent;
+                                    tds[4].textContent = selectedText || 'Updated OU';
+                                }
+                            }
+                        }
+
+                        // Close modal and notify
+                        const modalEl = document.getElementById('moveUserModal');
+                        if (modalEl) {
+                            const modal = bootstrap.Modal.getInstance(modalEl);
+                            if (modal) modal.hide();
+                        }
+                        showFlashMessage(data.message || 'User moved successfully', 'success');
+                    } else {
+                        showFlashMessage((data && data.message) || 'Failed to move user', 'danger');
+                    }
+                })
+                .catch(err => {
+                    showFlashMessage('Error moving user: ' + err.message, 'danger');
+                });
+            });
+        })();
 
         document.addEventListener('DOMContentLoaded', function() {
             console.log('Table data:', {{ users|tojson|safe }});
@@ -1267,6 +1466,499 @@
                     this.style.borderColor = '#ffd700';
                 });
             }
+        });
+        
+        // Helper function to update mailbox size cells
+        function updateMailboxSizeCells(mailboxSizes) {
+            const cells = document.querySelectorAll('.mailbox-size-cell');
+            console.log('Found', cells.length, 'mailbox size cells');
+            
+            let updatedCount = 0;
+            let noMailboxCount = 0;
+            let noEmailCount = 0;
+            
+            cells.forEach(cell => {
+                const email = cell.getAttribute('data-email');
+                const textSpan = cell.querySelector('.mailbox-size-text');
+                
+                // Match email case-insensitively
+                const emailLower = email ? email.toLowerCase() : '';
+                const matchedKey = emailLower ? Object.keys(mailboxSizes).find(key => key.toLowerCase() === emailLower) : null;
+                
+                if (email && matchedKey && mailboxSizes[matchedKey]) {
+                    updatedCount++;
+                    const mbData = mailboxSizes[matchedKey];
+                    // Handle size - might be in bytes, or already converted
+                    let sizeBytes = mbData.TotalItemSize || 0;
+                    if (typeof sizeBytes === 'string') {
+                        // Parse string like "10 GB" or "500 MB"
+                        sizeBytes = parseSizeString(sizeBytes);
+                    }
+                    const sizeMB = Math.round(sizeBytes / (1024 * 1024));
+                    const sizeGB = (sizeMB / 1024).toFixed(2);
+                    const sizeDisplay = sizeMB >= 1024 ? `${sizeGB} GB` : `${sizeMB} MB`;
+                    const lastLogon = mbData.LastLogonTime ? new Date(mbData.LastLogonTime).toLocaleDateString() : 'Never';
+                    
+                    textSpan.innerHTML = `
+                        <div class="small text-white">
+                            <div><strong>${sizeDisplay}</strong></div>
+                            <div class="text-warning">${mbData.TotalItemCount || 0} items</div>
+                            <div class="text-muted">Last: ${lastLogon}</div>
+                        </div>
+                    `;
+                } else if (email) {
+                    noMailboxCount++;
+                    textSpan.innerHTML = '<span class="text-muted">No mailbox</span>';
+                } else {
+                    noEmailCount++;
+                    textSpan.innerHTML = '<span class="text-muted">No email</span>';
+                }
+            });
+            
+            console.log(`Updated ${updatedCount} mailboxes, ${noMailboxCount} had no mailbox, ${noEmailCount} had no email`);
+            return { updatedCount, noMailboxCount, noEmailCount };
+        }
+        
+        // Restore mailbox sizes from server-side cache on page load
+        function restoreMailboxSizes() {
+            const query = new URLSearchParams(window.location.search).get('query') || '';
+            const statusFilter = new URLSearchParams(window.location.search).get('status_filter') || 'all';
+            const excludeOus = new URLSearchParams(window.location.search).get('exclude_ous') || '';
+            
+            // Fetch cached mailbox sizes from server
+            const url = `/admin/exchange/mailbox_sizes/cached?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}`;
+            
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.mailbox_sizes && Object.keys(data.mailbox_sizes).length > 0) {
+                        console.log('Restoring mailbox sizes from server cache:', data.updated_at || 'no timestamp');
+                        updateMailboxSizeCells(data.mailbox_sizes);
+                    } else {
+                        console.log('No cached mailbox sizes found on server');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading cached mailbox sizes:', error);
+                });
+        }
+        
+        // Also restore when navigating (for pagination)
+        // Use a MutationObserver to detect when table content changes
+        const tableObserver = new MutationObserver(function(mutations) {
+            restoreMailboxSizes();
+        });
+        
+        const userTable = document.querySelector('table tbody');
+        if (userTable) {
+            tableObserver.observe(userTable, { childList: true, subtree: true });
+        }
+        
+        // Exchange integration
+        // Function to fetch mailbox sizes (used by both manual and automatic fetching)
+        function fetchMailboxSizes(showLoadingState = true, showNotifications = true) {
+            // Get current filters
+            const query = new URLSearchParams(window.location.search).get('query') || '';
+            const statusFilter = new URLSearchParams(window.location.search).get('status_filter') || 'all';
+            const excludeOus = new URLSearchParams(window.location.search).get('exclude_ous') || '';
+            
+            // Build URL with current filters
+            const url = `/admin/exchange/mailbox_sizes?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}`;
+            
+            // Update all cells to show loading state (only if manual fetch)
+            if (showLoadingState) {
+                const cells = document.querySelectorAll('.mailbox-size-cell');
+                cells.forEach(cell => {
+                    const textSpan = cell.querySelector('.mailbox-size-text');
+                    if (textSpan) {
+                        textSpan.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+                    }
+                });
+            }
+            
+            // Use a longer timeout for mailbox size requests (up to 20 minutes)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20 * 60 * 1000); // 20 minutes
+            
+            return fetch(url, { signal: controller.signal })
+                .then(response => {
+                    clearTimeout(timeoutId);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Mailbox sizes response:', data);
+                    console.log('Number of mailboxes received:', Object.keys(data.mailbox_sizes || {}).length);
+                    
+                    if (data.success) {
+                        // Data is now stored server-side in database cache (no need for sessionStorage)
+                        console.log('Mailbox sizes stored in server cache');
+                        
+                        // Update mailbox size cells on current page
+                        const result = updateMailboxSizeCells(data.mailbox_sizes);
+                        if (showNotifications) {
+                            showFlashMessage(`Mailbox sizes loaded: ${result.updatedCount} updated, ${Object.keys(data.mailbox_sizes || {}).length} total retrieved`, 'success');
+                        } else {
+                            console.log(`Mailbox sizes auto-updated: ${result.updatedCount} updated, ${Object.keys(data.mailbox_sizes || {}).length} total retrieved`);
+                        }
+                        return true;
+                    } else {
+                        if (showNotifications) {
+                            showFlashMessage('Failed to load mailbox sizes: ' + data.message, 'danger');
+                        }
+                        return false;
+                    }
+                })
+                .catch(error => {
+                    if (error.name === 'AbortError') {
+                        if (showNotifications) {
+                            showFlashMessage('Request timed out. Processing may still be in progress on the server.', 'warning');
+                        }
+                    } else if (error.message && error.message.includes('Failed to fetch')) {
+                        // Handle empty response or network errors
+                        if (showNotifications) {
+                            showFlashMessage('Connection error: The request may have timed out or the server is not responding. Try again later.', 'warning');
+                        }
+                        console.error('Mailbox size fetch network error:', error);
+                    } else {
+                        if (showNotifications) {
+                            showFlashMessage('Error loading mailbox sizes: ' + error.message, 'danger');
+                        }
+                        console.error('Mailbox size fetch error:', error);
+                    }
+                    return false;
+                });
+        }
+        
+        // Manual mailbox size loading
+        document.getElementById('loadMailboxSizes').addEventListener('click', function() {
+            const button = this;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+            button.disabled = true;
+            
+            fetchMailboxSizes(true, true)
+                .finally(() => {
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                });
+        });
+        
+        // Automatic mailbox size fetching every 27.5 minutes (1650 seconds)
+        let mailboxSizeInterval = null;
+        function startAutoMailboxSizeFetch() {
+            // Clear any existing interval
+            if (mailboxSizeInterval) {
+                clearInterval(mailboxSizeInterval);
+            }
+            
+            // Check if Exchange is configured before attempting auto-fetch
+            // Try to load cached data first - if it's recent (within 30 minutes), skip auto-fetch
+            setTimeout(() => {
+                const query = new URLSearchParams(window.location.search).get('query') || '';
+                const statusFilter = new URLSearchParams(window.location.search).get('status_filter') || 'all';
+                const excludeOus = new URLSearchParams(window.location.search).get('exclude_ous') || '';
+                
+                // Check cached data first
+                const cacheUrl = `/admin/exchange/mailbox_sizes/cached?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}`;
+                
+                fetch(cacheUrl)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success && data.cached && data.updated_at) {
+                            // Check if cache is recent (within 30 minutes)
+                            const cacheTime = new Date(data.updated_at).getTime();
+                            const now = Date.now();
+                            const ageMinutes = (now - cacheTime) / (1000 * 60);
+                            
+                            if (ageMinutes < 30) {
+                                console.log(`Skipping auto-fetch: cache is recent (${Math.round(ageMinutes)} minutes old)`);
+                                return; // Don't auto-fetch if cache is recent
+                            }
+                        }
+                        
+                        // Only auto-fetch if Exchange is configured (check by trying to get mailbox sizes)
+                        // If it fails immediately with "Exchange not configured", we'll skip it
+                        console.log('Auto-fetching mailbox sizes on page load...');
+                        fetchMailboxSizes(false, false).catch(err => {
+                            // Silently handle errors during auto-fetch
+                            if (err.message && err.message.includes('Exchange not configured')) {
+                                console.log('Skipping auto-fetch: Exchange not configured');
+                            } else {
+                                console.error('Auto-fetch error (non-blocking):', err);
+                            }
+                        });
+                    })
+                    .catch(err => {
+                        // If we can't check cache, don't auto-fetch
+                        console.log('Could not check cache status, skipping auto-fetch');
+                    });
+            }, 10000); // Wait 10 seconds after page load to let restoreMailboxSizes() finish first
+            
+            // Set up interval for every 27.5 minutes (1650000 milliseconds)
+            mailboxSizeInterval = setInterval(() => {
+                console.log('Auto-fetching mailbox sizes (scheduled update)...');
+                fetchMailboxSizes(false, false).catch(err => {
+                    // Silently handle errors during scheduled updates
+                    console.error('Scheduled auto-fetch error (non-blocking):', err);
+                });
+            }, 27.5 * 60 * 1000); // 27.5 minutes
+        }
+        
+        // Start auto-fetching and restore mailbox sizes when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            restoreMailboxSizes();
+            startAutoMailboxSizeFetch();
+        });
+        
+        // Orphaned mailbox check
+        document.getElementById('checkOrphanedMailboxes').addEventListener('click', function() {
+            const button = this;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+            button.disabled = true;
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('orphanedMailboxesModal'));
+            modal.show();
+            
+            // Get current filters
+            const query = new URLSearchParams(window.location.search).get('query') || '';
+            const statusFilter = new URLSearchParams(window.location.search).get('status_filter') || 'all';
+            const excludeOus = new URLSearchParams(window.location.search).get('exclude_ous') || '';
+            
+            // Build URL with current filters
+            const url = `/admin/exchange/orphaned_mailboxes?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}`;
+            
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const resultsDiv = document.getElementById('orphanedResults');
+                        const exportBtn = document.getElementById('exportOrphanedBtn');
+                        const archiveBtn = document.getElementById('archiveOrphanedBtn');
+                        
+                        // Update export button URL
+                        exportBtn.href = `/admin/exchange/export_orphaned_mailboxes?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}`;
+                        exportBtn.style.display = 'inline-block';
+                        
+                        // Show archive button if there are orphaned mailboxes
+                        if (data.orphaned_mailboxes && data.orphaned_mailboxes.length > 0) {
+                            archiveBtn.style.display = 'inline-block';
+                        } else {
+                            archiveBtn.style.display = 'none';
+                        }
+                        
+                        // Display results
+                        let html = `
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="card border-danger">
+                                        <div class="card-header bg-danger text-white">
+                                            <h6 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Orphaned Mailboxes (${data.total_orphaned})</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <p class="text-muted">Mailboxes that exist in Exchange but don't have corresponding active users in AD</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card border-warning">
+                                        <div class="card-header bg-warning text-dark">
+                                            <h6 class="mb-0"><i class="fas fa-question-circle"></i> Missing Mailboxes (${data.total_missing})</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <p class="text-muted">Active users in AD that don't have mailboxes in Exchange</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Show orphaned mailboxes
+                        if (data.orphaned_mailboxes && data.orphaned_mailboxes.length > 0) {
+                            html += `
+                                <h6 class="text-danger mb-3"><i class="fas fa-exclamation-triangle"></i> Orphaned Mailboxes (${data.orphaned_mailboxes.length})</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm" style="background: #2d2d2d; color: #ffd700;">
+                                        <thead style="background: #111;">
+                                            <tr>
+                                                <th style="color: #fff; border-color: rgba(255,215,0,0.3);">Display Name</th>
+                                                <th style="color: #fff; border-color: rgba(255,215,0,0.3);">Email</th>
+                                                <th style="color: #fff; border-color: rgba(255,215,0,0.3);">Size</th>
+                                                <th style="color: #fff; border-color: rgba(255,215,0,0.3);">Items</th>
+                                                <th style="color: #fff; border-color: rgba(255,215,0,0.3);">Last Logon</th>
+                                                <th style="color: #fff; border-color: rgba(255,215,0,0.3);">Database</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                            `;
+                            
+                            data.orphaned_mailboxes.forEach(mb => {
+                                let sizeBytes = mb.TotalItemSize || 0;
+                                if (typeof sizeBytes === 'string') {
+                                    sizeBytes = parseSizeString(sizeBytes);
+                                }
+                                const sizeMB = Math.round(sizeBytes / (1024 * 1024));
+                                const sizeGB = (sizeMB / 1024).toFixed(2);
+                                const sizeDisplay = sizeMB >= 1024 ? `${sizeGB} GB` : `${sizeMB} MB`;
+                                const lastLogon = mb.LastLogonTime ? new Date(mb.LastLogonTime).toLocaleDateString() : 'Never';
+                                html += `
+                                    <tr style="border-color: rgba(255,215,0,0.1);">
+                                        <td style="color: #fff;">${mb.DisplayName || 'N/A'}</td>
+                                        <td style="color: #ffd700;">${mb.PrimarySmtpAddress || 'N/A'}</td>
+                                        <td style="color: #fff; font-weight: bold;">${sizeDisplay}</td>
+                                        <td style="color: #ffd700;">${mb.ItemCount || 0}</td>
+                                        <td style="color: #fff;">${lastLogon}</td>
+                                        <td style="color: #ffd700;">${mb.Database || 'N/A'}</td>
+                                    </tr>
+                                `;
+                            });
+                            
+                            html += `
+                                        </tbody>
+                                    </table>
+                                </div>
+                            `;
+                        } else {
+                            html += '<div class="alert alert-success"><i class="fas fa-check"></i> No orphaned mailboxes found!</div>';
+                        }
+                        
+                        // Show missing mailboxes
+                        if (data.missing_mailboxes && data.missing_mailboxes.length > 0) {
+                            html += `
+                                <h6 class="text-warning mt-4 mb-3"><i class="fas fa-question-circle"></i> Missing Mailboxes (${data.missing_mailboxes.length})</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm" style="background: #2d2d2d; color: #ffd700;">
+                                        <thead style="background: #111;">
+                                            <tr>
+                                                <th style="color: #fff; border-color: rgba(255,215,0,0.3);">Email</th>
+                                                <th style="color: #fff; border-color: rgba(255,215,0,0.3);">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                            `;
+                            
+                            data.missing_mailboxes.forEach(mb => {
+                                html += `
+                                    <tr style="border-color: rgba(255,215,0,0.1);">
+                                        <td style="color: #ffd700;">${mb.PrimarySmtpAddress || 'N/A'}</td>
+                                        <td><span class="badge bg-warning text-dark">No Mailbox</span></td>
+                                    </tr>
+                                `;
+                            });
+                            
+                            html += `
+                                        </tbody>
+                                    </table>
+                                </div>
+                            `;
+                        } else {
+                            html += '<div class="alert alert-success mt-4"><i class="fas fa-check"></i> All active users have mailboxes!</div>';
+                        }
+                        
+                        resultsDiv.innerHTML = html;
+                        showFlashMessage('Orphaned mailbox analysis completed', 'success');
+                    } else {
+                        document.getElementById('orphanedResults').innerHTML = `
+                            <div class="alert alert-danger">
+                                <i class="fas fa-times"></i> Failed to analyze mailboxes: ${data.message}
+                            </div>
+                        `;
+                        showFlashMessage('Failed to analyze mailboxes: ' + data.message, 'danger');
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('orphanedResults').innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-times"></i> Error analyzing mailboxes: ${error.message}
+                        </div>
+                    `;
+                    showFlashMessage('Error analyzing mailboxes: ' + error.message, 'danger');
+                })
+                .finally(() => {
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                });
+        });
+        
+        // Helper function to parse size strings like "10 GB" or "500 MB" to bytes
+        function parseSizeString(sizeStr) {
+            if (!sizeStr || typeof sizeStr !== 'string') return 0;
+            const match = sizeStr.match(/([\d.]+)\s*(\w+)/i);
+            if (!match) return 0;
+            const value = parseFloat(match[1]);
+            const unit = match[2].toUpperCase();
+            switch(unit) {
+                case 'GB': return value * 1024 * 1024 * 1024;
+                case 'MB': return value * 1024 * 1024;
+                case 'KB': return value * 1024;
+                default: return value;
+            }
+        }
+        
+        // Archive orphaned mailboxes
+        document.getElementById('confirmArchiveBtn').addEventListener('click', function() {
+            const button = this;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Archiving...';
+            button.disabled = true;
+            
+            const archivePath = document.getElementById('archivePath').value;
+            const zipPath = document.getElementById('zipPath').value;
+            const removeAfterArchive = document.getElementById('removeAfterArchive').checked;
+            
+            if (!archivePath) {
+                showFlashMessage('Archive path is required', 'danger');
+                button.innerHTML = originalText;
+                button.disabled = false;
+                return;
+            }
+            
+            fetch('/admin/exchange/archive_orphaned_mailboxes', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    archive_path: archivePath,
+                    zip_path: zipPath,
+                    remove_after_archive: removeAfterArchive
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    let message = `Archived ${data.archived} of ${data.total} orphaned mailboxes`;
+                    if (data.removed > 0) {
+                        message += `, removed ${data.removed}`;
+                    }
+                    if (data.failed_archives && data.failed_archives.length > 0) {
+                        message += `, ${data.failed_archives.length} failed`;
+                    }
+                    if (data.zip_file) {
+                        message += `. Zip file: ${data.zip_file}`;
+                    }
+                    showFlashMessage(message, 'success');
+                    
+                    // Close modals
+                    const archiveModal = bootstrap.Modal.getInstance(document.getElementById('archiveOrphanedModal'));
+                    archiveModal.hide();
+                    const orphanedModal = bootstrap.Modal.getInstance(document.getElementById('orphanedMailboxesModal'));
+                    orphanedModal.hide();
+                } else {
+                    showFlashMessage('Failed to archive mailboxes: ' + data.message, 'danger');
+                }
+            })
+            .catch(error => {
+                showFlashMessage('Error archiving mailboxes: ' + error.message, 'danger');
+            })
+            .finally(() => {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
         });
     </script>
 </body>

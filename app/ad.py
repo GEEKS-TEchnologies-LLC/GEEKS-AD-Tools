@@ -1,7 +1,7 @@
 import os
 import json
 import ldap3
-from ldap3.core.exceptions import LDAPException, LDAPBindError
+from ldap3.core.exceptions import LDAPException, LDAPBindError, LDAPNoSuchObjectResult
 from collections import namedtuple, Counter
 from contextlib import contextmanager
 import datetime
@@ -185,20 +185,28 @@ def search_users(query, **ad_args):
     return users
 
 def get_user_details(user_dn, **ad_args):
-    with ad_connection(**ad_args) as conn:
-        if conn.search(user_dn, '(objectclass=user)', search_scope=ldap3.BASE, attributes=ldap3.ALL_ATTRIBUTES):
-            entry = conn.entries[0]
-            safe_attributes = {}
-            for attr_name, attr_value in entry.entry_attributes_as_dict.items():
-                if isinstance(attr_value, list) and len(attr_value) > 0 and isinstance(attr_value[0], bytes):
-                    try:
-                        safe_attributes[attr_name] = [v.decode('utf-8') for v in attr_value]
-                    except UnicodeDecodeError:
-                        safe_attributes[attr_name] = [v.hex() for v in attr_value]
-                else:
-                    safe_attributes[attr_name] = attr_value
-            return safe_attributes
-    return None
+    try:
+        with ad_connection(**ad_args) as conn:
+            if conn.search(user_dn, '(objectclass=user)', search_scope=ldap3.BASE, attributes=ldap3.ALL_ATTRIBUTES):
+                entry = conn.entries[0]
+                safe_attributes = {}
+                for attr_name, attr_value in entry.entry_attributes_as_dict.items():
+                    if isinstance(attr_value, list) and len(attr_value) > 0 and isinstance(attr_value[0], bytes):
+                        try:
+                            safe_attributes[attr_name] = [v.decode('utf-8') for v in attr_value]
+                        except UnicodeDecodeError:
+                            safe_attributes[attr_name] = [v.hex() for v in attr_value]
+                    else:
+                        safe_attributes[attr_name] = attr_value
+                return safe_attributes
+            return None
+    except LDAPNoSuchObjectResult as e:
+        # User or OU doesn't exist (may have been moved or deleted)
+        print(f"User or OU not found: {user_dn} - {e}")
+        return None
+    except LDAPException as e:
+        print(f"LDAP error getting user details for {user_dn}: {e}")
+        return None
 
 def create_user(username, password, display_name, mail, target_ou=None, **ad_args):
     config = get_ad_config()

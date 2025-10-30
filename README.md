@@ -2,12 +2,22 @@
 
 A comprehensive Linux-based web application for Active Directory password management and user administration. This system provides a secure, self-updating portal that integrates directly with Active Directory for password resets, user management, and administrative tasks. It includes a Windows Credential Provider for seamless lock screen integration.
 
-## Recent Updates (2025-10-22)
+## Recent Updates (2025-10-30)
 
+- **Exchange Server Integration (New):**
+  - **Exchange 2019 Support**: Full integration with on-premises Exchange servers via PowerShell remoting
+  - **Mailbox Size Tracking**: Real-time mailbox size data retrieval and display per user
+  - **Server-Side Caching**: Mailbox sizes stored in database cache, persistent across sessions and browser refreshes
+  - **Automatic Mailbox Size Updates**: Background fetching every 27.5 minutes with smart cache checking
+  - **Orphaned Mailbox Detection**: Identify mailboxes that exist in Exchange but don't have corresponding active AD users
+  - **Archive Orphaned Mailboxes**: Export orphaned mailboxes to PST files, zip them into a single archive, and optionally remove from Exchange
+  - **Mailbox Ready Export**: Export mailbox-ready users with mailbox sizes included in CSV format
+  - **Service Account & Internal Tools Tracking**: Separate categorization for service accounts and internal tools mailboxes
+  - **Exchange Configuration UI**: Settings page for Exchange server connection configuration
 - **Enhanced User Management Features:**
   - **User Status Filtering**: Filter users by enabled/disabled status using LDAP `userAccountControl` attributes
   - **OU-Based Filtering**: Focus on specific OUs (e.g., Sunray Users) with exclusion of disabled user containers
-  - **Exchange Migration Statistics**: Real-time counts of total users, active users, and users with/without email addresses
+  - **Exchange Migration Statistics**: Real-time counts of total users, active users, users with/without email addresses, service accounts, and internal tools
   - **Sorting Preservation**: Maintains sort order and filters after user actions (move/disable/enable)
   - **Clickable Status Toggle**: Direct status changes with AJAX for real-time updates without page refresh
   - **Bulk Operations**: Select multiple users for bulk disable, enable, or move operations
@@ -26,6 +36,7 @@ A comprehensive Linux-based web application for Active Directory password manage
   - Enhanced LDAP error handling with fallback mechanisms
   - Improved permission checking and user feedback
   - Secure credential management and sanitization
+  - **Audit Log User Tracking**: Audit logs now correctly record the logged-in user performing actions, not just IP addresses
 
 ## Previous Updates (2025-06-27)
 
@@ -372,6 +383,18 @@ The build system creates:
 - ✅ **User Details View** - Comprehensive user information including password status
 - ✅ **Password Info Display** - Show password expiry, policy, and status in user details
 - ✅ **Graceful Error Handling** - Fallback mechanisms for insufficient permissions
+
+### Exchange Server Integration
+- ✅ **Exchange 2019 Integration** - Full PowerShell remoting support for Exchange Server management
+- ✅ **Mailbox Size Tracking** - Real-time mailbox size retrieval and display per user
+- ✅ **Server-Side Mailbox Cache** - Database-backed mailbox size cache, persistent across sessions
+- ✅ **Automatic Mailbox Updates** - Background mailbox size fetching every 27.5 minutes
+- ✅ **Orphaned Mailbox Detection** - Identify mailboxes in Exchange without corresponding active AD users
+- ✅ **Archive Orphaned Mailboxes** - Export orphaned mailboxes to PST, zip into single archive, remove from Exchange
+- ✅ **Mailbox Ready Export** - Export enabled users with email addresses and mailbox sizes to CSV
+- ✅ **Service Account & Internal Tools** - Separate tracking and export for service accounts and internal tools mailboxes
+- ✅ **Exchange Configuration** - Web-based Exchange server connection configuration interface
+- ✅ **Password Status Filtering** - Accurate password status stats filtering by OUs (excludes disabled users)
 
 ### Active Directory Features
 - ✅ **AD Dashboard** - Real-time statistics and health monitoring

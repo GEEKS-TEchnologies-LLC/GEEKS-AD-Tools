@@ -54,12 +54,40 @@ def log_password_reset(username, result, details=None):
     log_event('password_reset', result, details, username)
 
 def log_user_action(action, username, result, details=None):
-    """Log user management actions"""
-    log_event(f'user_{action}', result, details, username)
+    """Log user management actions
+    Args:
+        action: The action being performed (e.g., 'create', 'delete', 'search')
+        username: The target username being acted upon
+        result: 'success', 'failure', or 'error'
+        details: Additional details (dict or string). Will include target_username if not already present.
+    """
+    # Get the logged-in user performing the action
+    performed_by = current_user.username if current_user.is_authenticated else 'Anonymous'
+    
+    # Include target username in details if it's a dict and not already present
+    if details is None:
+        details = {}
+    if isinstance(details, dict):
+        if 'target_username' not in details and username:
+            details['target_username'] = username
+    elif isinstance(details, str) and username:
+        # If details is a string, try to parse it as JSON and add target_username
+        try:
+            details_dict = json.loads(details)
+            details_dict['target_username'] = username
+            details = details_dict
+        except (json.JSONDecodeError, TypeError):
+            # If parsing fails, create a new dict
+            details = {'details': details, 'target_username': username}
+    
+    # Use the logged-in user as the user field
+    log_event(f'user_{action}', result, details, performed_by)
 
 def log_admin_action(action, result, details=None):
     """Log admin actions"""
-    log_event(f'admin_{action}', result, details)
+    # Explicitly get the logged-in user performing the action
+    performed_by = current_user.username if current_user.is_authenticated else 'Anonymous'
+    log_event(f'admin_{action}', result, details, performed_by)
 
 def log_system_event(event, result, details=None):
     """Log system events"""

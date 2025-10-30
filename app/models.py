@@ -65,6 +65,22 @@ class PasswordReset(db.Model):
         """Check if reset was within specified days"""
         return self.days_since_reset() <= days
 
+class MailboxSizeCache(db.Model):
+    """Cache for mailbox size data, keyed by user and filter parameters"""
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), nullable=False)  # Admin user who fetched the data
+    query = db.Column(db.String(256), nullable=False, default='')
+    status_filter = db.Column(db.String(32), nullable=False, default='all')
+    exclude_ous = db.Column(db.String(512), nullable=False, default='')
+    mailbox_sizes = db.Column(db.Text, nullable=False)  # JSON string of mailbox sizes
+    updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False, onupdate=datetime.now(timezone.utc))
+    
+    # Composite unique constraint: one cache entry per user/filter combination
+    __table_args__ = (db.UniqueConstraint('username', 'query', 'status_filter', 'exclude_ous', name='_mailbox_size_cache_uc'),)
+    
+    def __repr__(self):
+        return f'<MailboxSizeCache {self.username}: {self.query}/{self.status_filter} @ {self.updated_at}>'
+
 class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), nullable=False)

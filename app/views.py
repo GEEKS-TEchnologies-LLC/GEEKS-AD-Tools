@@ -1,4 +1,7 @@
 from flask import Blueprint, render_template, redirect, url_for, request, flash, jsonify
+from app.exchange import ExchangeManager
+import json
+import os
 from .ad import (
     save_ad_config, get_ad_config, test_ad_connection,
     get_admin_groups, set_admin_groups, is_user_in_admin_group,
@@ -30,7 +33,7 @@ from urllib.parse import unquote
 from .version import __version__
 import ldap3
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import session
 # License validation import
 from .license_utils import get_license_info, validate_license, is_license_or_trial_valid, is_plus_activated, is_reporting_activated
@@ -39,6 +42,7 @@ import csv
 import io
 from werkzeug.utils import secure_filename
 import tempfile
+from flask import Response
 
 main = Blueprint('main', __name__)
 
@@ -618,8 +622,10 @@ def user_search():
         'total_disabled': 0,
         'with_email': 0,
         'without_email': 0,
-        'active_users': 0,  # Enabled users not in Disabled Users OU
-        'sunray_users_total': 0  # Total users in Sunray Users OU
+        'active_users': 0,  # Enabled users not in excluded OUs
+        'sunray_users_total': 0,  # Total users in Sunray Users OU
+        'service_accounts': 0,
+        'internal_tools': 0
     }
     
     # Count users by status and email
@@ -637,6 +643,22 @@ def user_search():
             user_stats['with_email'] += 1
         else:
             user_stats['without_email'] += 1
+
+    # Compute category counts for Service Accounts and Internal Tools (for migration planning)
+    # Fetch a broader set (respecting user-provided exclusions only) and partition
+    try:
+        all_for_cats = search_users(query, status_filter='enabled', exclude_ous=exclude_ous, **ad_args)
+        for u in all_for_cats:
+            dn = u.get('distinguishedName') or u.get('dn') or ''
+            mail = (u.get('mail') or '').strip()
+            if not mail:
+                continue
+            if 'Service Accounts' in dn:
+                user_stats['service_accounts'] += 1
+            elif 'Internal Tools' in dn:
+                user_stats['internal_tools'] += 1
+    except Exception:
+        pass
     
     return render_template(
         'user_search.html', 
@@ -654,6 +676,975 @@ def user_search():
         sort_order=sort_order,
         user_stats=user_stats
     )
+
+
+@main.route('/admin/export/mailbox_ready')
+@login_required
+@admin_required
+def export_mailbox_ready():
+    """Export CSV of mailbox-ready users (enabled and with email) with mailbox sizes.
+
+    Respects current filters from the user search page: query, status_filter, exclude_ous.
+    Always enforces enabled status and requires non-empty email for export.
+    Columns: Name, Username, Email, Mailbox Size
+    Includes latest cached mailbox size data if available.
+    """
+    from .models import MailboxSizeCache
+    import json
+    
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+
+    # Pull filters from querystring to match current page state
+    query = request.args.get('query', '')
+    exclude_ous_raw = request.args.get('exclude_ous', '')
+    exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+    exclude_ous_str = exclude_ous_raw
+    status_filter = 'enabled'
+
+    # Always enforce enabled for mailbox-ready
+    users = search_users(query, status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
+
+    # Get cached mailbox sizes for current user and filters
+    # Try multiple cache keys since data might be stored with different status_filter values
+    mailbox_sizes = {}
+    cache_entry = None
+    
+    # First try with 'enabled' status filter
+    cache_entry = db.session.query(MailboxSizeCache).filter_by(
+        username=current_user.username,
+        query=query,
+        status_filter='enabled',
+        exclude_ous=exclude_ous_str
+    ).first()
+    
+    # If not found, try with 'all' status filter (since user might have fetched with 'all')
+    if not cache_entry:
+        cache_entry = db.session.query(MailboxSizeCache).filter_by(
+            username=current_user.username,
+            query=query,
+            status_filter='all',
+            exclude_ous=exclude_ous_str
+        ).first()
+    
+    if cache_entry:
+        try:
+            mailbox_sizes = json.loads(cache_entry.mailbox_sizes)
+            current_app.logger.info(f"Found cached mailbox sizes for export: {len(mailbox_sizes)} entries")
+        except json.JSONDecodeError:
+            current_app.logger.warning(f"Error parsing cached mailbox sizes for export: {current_user.username}")
+    else:
+        current_app.logger.warning(f"No cached mailbox sizes found for export (query={query}, status_filter=enabled/all, exclude_ous={exclude_ous_str})")
+
+    # Keep only users with an email address and include mailbox sizes
+    mailbox_ready = []
+    for u in users:
+        mail = (u.get('mail') or '').strip()
+        if mail:
+            # Get mailbox size from cache (case-insensitive lookup)
+            mail_lower = mail.lower()
+            size_info = mailbox_sizes.get(mail_lower, {})
+            mailbox_size_bytes = size_info.get('TotalItemSize', 0) if isinstance(size_info, dict) else 0
+            
+            # Convert bytes to readable format (KB/MB/GB)
+            if mailbox_size_bytes:
+                if mailbox_size_bytes < 1024:  # Less than 1 KB
+                    size_str = f"{mailbox_size_bytes} B"
+                elif mailbox_size_bytes < 1024 * 1024:  # Less than 1 MB
+                    size_str = f"{mailbox_size_bytes / 1024:.2f} KB"
+                elif mailbox_size_bytes < 1024 * 1024 * 1024:  # Less than 1 GB
+                    size_str = f"{mailbox_size_bytes / (1024 * 1024):.2f} MB"
+                else:
+                    size_str = f"{mailbox_size_bytes / (1024 * 1024 * 1024):.2f} GB"
+            else:
+                size_str = 'Not available'
+            
+            mailbox_ready.append({
+                'Name': u.get('displayName') or '',
+                'Username': u.get('sAMAccountName') or u.get('username') or '',
+                'Email': mail,
+                'Mailbox Size': size_str
+            })
+
+    # Build CSV
+    def generate_csv(rows):
+        import io, csv
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Name', 'Username', 'Email', 'Mailbox Size'])
+        for r in rows:
+            writer.writerow([r['Name'], r['Username'], r['Email'], r['Mailbox Size']])
+        return output.getvalue()
+
+    csv_data = generate_csv(mailbox_ready)
+    filename = 'mailbox_ready_users.csv'
+    return Response(
+        csv_data,
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename={filename}'}
+    )
+
+
+@main.route('/admin/export/service_accounts')
+@login_required
+@admin_required
+def export_service_accounts():
+    """Export CSV of Service Accounts (any with email, matched by DN substring)."""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+
+    query = request.args.get('query', '')
+    exclude_ous_raw = request.args.get('exclude_ous', '')
+    exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+
+    users = search_users(query, status_filter='all', exclude_ous=exclude_ous, **ad_args)
+    rows = []
+    for u in users:
+        dn = u.get('distinguishedName') or u.get('dn') or ''
+        mail = (u.get('mail') or '').strip()
+        if 'Service Accounts' in dn and mail:
+            rows.append({
+                'Name': u.get('displayName') or '',
+                'Username': u.get('sAMAccountName') or u.get('username') or '',
+                'Email': mail
+            })
+
+    def gen_csv(rows):
+        import io, csv
+        s = io.StringIO()
+        w = csv.writer(s)
+        w.writerow(['Name', 'Username', 'Email'])
+        for r in rows:
+            w.writerow([r['Name'], r['Username'], r['Email']])
+        return s.getvalue()
+
+    return Response(
+        gen_csv(rows),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=service_accounts.csv'}
+    )
+
+
+@main.route('/admin/export/internal_tools')
+@login_required
+@admin_required
+def export_internal_tools():
+    """Export CSV of Internal Tools (any with email, matched by DN substring)."""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+
+    query = request.args.get('query', '')
+    exclude_ous_raw = request.args.get('exclude_ous', '')
+    exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+
+    users = search_users(query, status_filter='all', exclude_ous=exclude_ous, **ad_args)
+    rows = []
+    for u in users:
+        dn = u.get('distinguishedName') or u.get('dn') or ''
+        mail = (u.get('mail') or '').strip()
+        if 'Internal Tools' in dn and mail:
+            rows.append({
+                'Name': u.get('displayName') or '',
+                'Username': u.get('sAMAccountName') or u.get('username') or '',
+                'Email': mail
+            })
+
+    def gen_csv(rows):
+        import io, csv
+        s = io.StringIO()
+        w = csv.writer(s)
+        w.writerow(['Name', 'Username', 'Email'])
+        for r in rows:
+            w.writerow([r['Name'], r['Username'], r['Email']])
+        return s.getvalue()
+
+    return Response(
+        gen_csv(rows),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=internal_tools.csv'}
+    )
+
+
+def get_exchange_config():
+    """Get Exchange configuration from file"""
+    try:
+        # Use the same approach as ad_config.json
+        config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error reading Exchange config: {e}")
+    return None
+
+
+@main.route('/admin/exchange/setup')
+@login_required
+@admin_required
+def exchange_setup():
+    """Exchange configuration page"""
+    config = get_exchange_config()
+    return render_template('exchange_setup.html', config=config)
+
+
+@main.route('/admin/exchange/save_config', methods=['POST'])
+@login_required
+@admin_required
+def save_exchange_config():
+    """Save Exchange configuration"""
+    try:
+        config = {
+            'exchange_server': request.form.get('exchange_server', ''),
+            'username': request.form.get('username', ''),
+            'password': request.form.get('password', ''),
+            'domain': request.form.get('domain', ''),
+            'enabled': request.form.get('enabled') == 'on'
+        }
+        
+        config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=2)
+        
+        flash('Exchange configuration saved successfully!', 'success')
+    except Exception as e:
+        flash(f'Error saving Exchange configuration: {str(e)}', 'danger')
+    
+    return redirect(url_for('main.exchange_setup'))
+
+
+@main.route('/admin/exchange/test_connection')
+@login_required
+@admin_required
+def test_exchange_connection():
+    """Test Exchange connection"""
+    config = get_exchange_config()
+    if not config or not config.get('enabled'):
+        return jsonify({'success': False, 'message': 'Exchange not configured'})
+    
+    try:
+        exchange = ExchangeManager(
+            exchange_server=config['exchange_server'],
+            username=config['username'],
+            password=config['password'],
+            domain=config['domain']
+        )
+        
+        success, message = exchange.test_connection()
+        return jsonify({'success': success, 'message': message})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@main.route('/admin/exchange/mailbox_sizes')
+@login_required
+@admin_required
+def get_mailbox_sizes():
+    """Get mailbox sizes for current user list - stores in database cache"""
+    from .models import MailboxSizeCache
+    import json
+    
+    config = get_exchange_config()
+    if not config or not config.get('enabled'):
+        return jsonify({'success': False, 'message': 'Exchange not configured'})
+    
+    try:
+        # Get current filters
+        query = request.args.get('query', '')
+        status_filter = request.args.get('status_filter', 'all')
+        exclude_ous_raw = request.args.get('exclude_ous', '')
+        exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+        exclude_ous_str = exclude_ous_raw  # Keep original string for storage
+        
+        # Get AD config
+        ad_config = get_ad_config()
+        if not ad_config:
+            return jsonify({'success': False, 'message': 'AD not configured'})
+        
+        ad_args = {
+            'server': ad_config['ad_server'],
+            'port': ad_config['ad_port'],
+            'bind_user': ad_config['ad_bind_dn'],
+            'bind_password': ad_config['ad_password'],
+            'base_dn': ad_config['ad_base_dn']
+        }
+        
+        # Get users with emails
+        users = search_users(query, status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
+        user_emails = [user.get('mail').lower() if user.get('mail') else None for user in users if user.get('mail')]
+        user_emails = [email for email in user_emails if email]  # Remove None values
+        
+        if not user_emails:
+            # Store empty result in cache
+            cache_entry = db.session.query(MailboxSizeCache).filter_by(
+                username=current_user.username,
+                query=query,
+                status_filter=status_filter,
+                exclude_ous=exclude_ous_str
+            ).first()
+            
+            if cache_entry:
+                cache_entry.mailbox_sizes = json.dumps({})
+                cache_entry.updated_at = datetime.now(timezone.utc)
+            else:
+                cache_entry = MailboxSizeCache(
+                    username=current_user.username,
+                    query=query,
+                    status_filter=status_filter,
+                    exclude_ous=exclude_ous_str,
+                    mailbox_sizes=json.dumps({})
+                )
+                db.session.add(cache_entry)
+            db.session.commit()
+            return jsonify({'success': True, 'mailbox_sizes': {}})
+        
+        # Get mailbox sizes
+        exchange = ExchangeManager(
+            exchange_server=config['exchange_server'],
+            username=config['username'],
+            password=config['password'],
+            domain=config['domain']
+        )
+        
+        mailbox_sizes = exchange.get_mailbox_sizes(user_emails)
+        current_app.logger.info(f"Retrieved mailbox sizes for {len(mailbox_sizes)} mailboxes out of {len(user_emails)} requested")
+        
+        # Store in database cache (overwrite existing if present)
+        cache_entry = db.session.query(MailboxSizeCache).filter_by(
+            username=current_user.username,
+            query=query,
+            status_filter=status_filter,
+            exclude_ous=exclude_ous_str
+        ).first()
+        
+        if cache_entry:
+            # Update existing entry
+            cache_entry.mailbox_sizes = json.dumps(mailbox_sizes)
+            cache_entry.updated_at = datetime.now(timezone.utc)
+        else:
+            # Create new entry
+            cache_entry = MailboxSizeCache(
+                username=current_user.username,
+                query=query,
+                status_filter=status_filter,
+                exclude_ous=exclude_ous_str,
+                mailbox_sizes=json.dumps(mailbox_sizes)
+            )
+            db.session.add(cache_entry)
+        
+        db.session.commit()
+        current_app.logger.info(f"Stored mailbox sizes in cache for user {current_user.username}")
+        
+        return jsonify({'success': True, 'mailbox_sizes': mailbox_sizes})
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error getting mailbox sizes: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@main.route('/admin/exchange/mailbox_sizes/cached')
+@login_required
+@admin_required
+def get_cached_mailbox_sizes():
+    """Get cached mailbox sizes from database for current user and filters"""
+    from .models import MailboxSizeCache
+    import json
+    
+    try:
+        # Get current filters
+        query = request.args.get('query', '')
+        status_filter = request.args.get('status_filter', 'all')
+        exclude_ous_raw = request.args.get('exclude_ous', '')
+        exclude_ous_str = exclude_ous_raw  # Keep original string for lookup
+        
+        # Look up cached data
+        cache_entry = db.session.query(MailboxSizeCache).filter_by(
+            username=current_user.username,
+            query=query,
+            status_filter=status_filter,
+            exclude_ous=exclude_ous_str
+        ).first()
+        
+        if cache_entry:
+            try:
+                mailbox_sizes = json.loads(cache_entry.mailbox_sizes)
+                return jsonify({
+                    'success': True, 
+                    'mailbox_sizes': mailbox_sizes,
+                    'cached': True,
+                    'updated_at': cache_entry.updated_at.isoformat()
+                })
+            except json.JSONDecodeError:
+                current_app.logger.error(f"Error parsing cached mailbox sizes for user {current_user.username}")
+                return jsonify({'success': False, 'message': 'Invalid cached data'})
+        else:
+            return jsonify({
+                'success': True, 
+                'mailbox_sizes': {},
+                'cached': False,
+                'message': 'No cached data found'
+            })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting cached mailbox sizes: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@main.route('/admin/exchange/cleanup_mailbox', methods=['POST'])
+@login_required
+@admin_required
+def cleanup_mailbox():
+    """Cleanup a specific mailbox"""
+    config = get_exchange_config()
+    if not config or not config.get('enabled'):
+        return jsonify({'success': False, 'message': 'Exchange not configured'})
+    
+    try:
+        email = request.form.get('email')
+        cleanup_options = {
+            'empty_deleted_items': request.form.get('empty_deleted_items') == 'on',
+            'clean_sent_items_days': int(request.form.get('clean_sent_items_days', 0)) or None,
+            'clean_old_items_days': int(request.form.get('clean_old_items_days', 0)) or None
+        }
+        
+        exchange = ExchangeManager(
+            exchange_server=config['exchange_server'],
+            username=config['username'],
+            password=config['password'],
+            domain=config['domain']
+        )
+        
+        success, message = exchange.cleanup_mailbox(email, cleanup_options)
+        return jsonify({'success': success, 'message': message})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@main.route('/admin/exchange/create_mailbox', methods=['POST'])
+@login_required
+@admin_required
+def create_mailbox():
+    """Create mailbox for a user"""
+    config = get_exchange_config()
+    if not config or not config.get('enabled'):
+        return jsonify({'success': False, 'message': 'Exchange not configured'})
+    
+    try:
+        email = request.form.get('email')
+        display_name = request.form.get('display_name')
+        database = request.form.get('database') or None
+        
+        exchange = ExchangeManager(
+            exchange_server=config['exchange_server'],
+            username=config['username'],
+            password=config['password'],
+            domain=config['domain']
+        )
+        
+        success, message = exchange.create_mailbox(email, display_name, database)
+        return jsonify({'success': success, 'message': message})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@main.route('/admin/exchange/orphaned_mailboxes')
+@login_required
+@admin_required
+def get_orphaned_mailboxes():
+    """Get orphaned mailboxes - those that exist in Exchange but not in active AD users"""
+    config = get_exchange_config()
+    if not config or not config.get('enabled'):
+        return jsonify({'success': False, 'message': 'Exchange not configured'})
+    
+    try:
+        # Get current filters
+        query = request.args.get('query', '')
+        status_filter = request.args.get('status_filter', 'all')
+        exclude_ous_raw = request.args.get('exclude_ous', '')
+        exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+        
+        # Get AD config
+        ad_config = get_ad_config()
+        if not ad_config:
+            return jsonify({'success': False, 'message': 'AD not configured'})
+        
+        ad_args = {
+            'server': ad_config['ad_server'],
+            'port': ad_config['ad_port'],
+            'bind_user': ad_config['ad_bind_dn'],
+            'bind_password': ad_config['ad_password'],
+            'base_dn': ad_config['ad_base_dn']
+        }
+        
+        # Get ALL active users with emails (for orphaned mailbox detection, ignore filters except disabled users)
+        # This includes regular users, service accounts, and internal tools
+        base_dn = ad_config['ad_base_dn']
+        user_emails = set()
+        
+        # Get all enabled users from Sunray Users OU (including service accounts and internal tools)
+        all_users = search_users('', status_filter='enabled', exclude_ous=[], **ad_args)
+        user_emails.update([user.get('mail').lower() for user in all_users if user.get('mail')])
+        
+        # Also explicitly get Service Accounts and Internal Tools if they're in separate OUs
+        # Search in Service Accounts OU
+        try:
+            import ldap3
+            from ldap3 import Server, Connection, ALL, SUBTREE
+            server = Server(ad_config['ad_server'], port=int(ad_config['ad_port']), get_info=ALL)
+            conn = Connection(server, 
+                             user=ad_config['ad_bind_dn'], 
+                             password=ad_config['ad_password'], 
+                             auto_bind=True)
+            
+            # Search Service Accounts OU
+            service_accounts_base = f'OU=Service Accounts,{base_dn}'
+            try:
+                conn.search(service_accounts_base, 
+                           '(&(objectClass=user)(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))', 
+                           search_scope=SUBTREE,
+                           attributes=['mail'])
+                for entry in conn.entries:
+                    if entry.mail:
+                        user_emails.add(entry.mail.value.lower())
+            except Exception:
+                pass  # Service Accounts OU might not exist
+            
+            # Search Internal Tools OU
+            internal_tools_base = f'OU=Internal Tools,{base_dn}'
+            try:
+                conn.search(internal_tools_base, 
+                           '(&(objectClass=user)(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))', 
+                           search_scope=SUBTREE,
+                           attributes=['mail'])
+                for entry in conn.entries:
+                    if entry.mail:
+                        user_emails.add(entry.mail.value.lower())
+            except Exception:
+                pass  # Internal Tools OU might not exist
+            
+            conn.unbind()
+        except Exception as e:
+            current_app.logger.warning(f"Could not search separate OUs for orphaned mailbox check: {e}")
+        
+        # Convert to list for compatibility
+        user_emails = list(user_emails)
+        current_app.logger.info(f"Checking orphaned mailboxes against {len(user_emails)} active email addresses")
+        
+        # Get Exchange manager
+        exchange = ExchangeManager(
+            exchange_server=config['exchange_server'],
+            username=config['username'],
+            password=config['password'],
+            domain=config['domain']
+        )
+        
+        # Find orphaned mailboxes
+        orphaned_data = exchange.find_orphaned_mailboxes(user_emails)
+        
+        return jsonify({
+            'success': True, 
+            'orphaned_mailboxes': orphaned_data['orphaned'],
+            'missing_mailboxes': orphaned_data['missing'],
+            'total_orphaned': len(orphaned_data['orphaned']),
+            'total_missing': len(orphaned_data['missing'])
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@main.route('/admin/exchange/export_orphaned_mailboxes')
+@login_required
+@admin_required
+def export_orphaned_mailboxes():
+    """Export orphaned mailboxes to CSV"""
+    config = get_exchange_config()
+    if not config or not config.get('enabled'):
+        flash('Exchange not configured', 'warning')
+        return redirect(url_for('main.user_search'))
+    
+    try:
+        # Get current filters
+        query = request.args.get('query', '')
+        status_filter = request.args.get('status_filter', 'all')
+        exclude_ous_raw = request.args.get('exclude_ous', '')
+        exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+        
+        # Get AD config
+        ad_config = get_ad_config()
+        if not ad_config:
+            flash('AD not configured', 'warning')
+            return redirect(url_for('main.user_search'))
+        
+        ad_args = {
+            'server': ad_config['ad_server'],
+            'port': ad_config['ad_port'],
+            'bind_user': ad_config['ad_bind_dn'],
+            'bind_password': ad_config['ad_password'],
+            'base_dn': ad_config['ad_base_dn']
+        }
+        
+        # Get ALL active users with emails (for orphaned mailbox detection, ignore filters except disabled users)
+        # This includes regular users, service accounts, and internal tools
+        base_dn = ad_config['ad_base_dn']
+        user_emails = set()
+        
+        # Get all enabled users from Sunray Users OU (including service accounts and internal tools)
+        all_users = search_users('', status_filter='enabled', exclude_ous=[], **ad_args)
+        user_emails.update([user.get('mail').lower() for user in all_users if user.get('mail')])
+        
+        # Also explicitly get Service Accounts and Internal Tools if they're in separate OUs
+        # Search in Service Accounts OU
+        try:
+            import ldap3
+            from ldap3 import Server, Connection, ALL, SUBTREE
+            server = Server(ad_config['ad_server'], port=int(ad_config['ad_port']), get_info=ALL)
+            conn = Connection(server, 
+                             user=ad_config['ad_bind_dn'], 
+                             password=ad_config['ad_password'], 
+                             auto_bind=True)
+            
+            # Search Service Accounts OU
+            service_accounts_base = f'OU=Service Accounts,{base_dn}'
+            try:
+                conn.search(service_accounts_base, 
+                           '(&(objectClass=user)(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))', 
+                           search_scope=SUBTREE,
+                           attributes=['mail'])
+                for entry in conn.entries:
+                    if entry.mail:
+                        user_emails.add(entry.mail.value.lower())
+            except Exception:
+                pass  # Service Accounts OU might not exist
+            
+            # Search Internal Tools OU
+            internal_tools_base = f'OU=Internal Tools,{base_dn}'
+            try:
+                conn.search(internal_tools_base, 
+                           '(&(objectClass=user)(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))', 
+                           search_scope=SUBTREE,
+                           attributes=['mail'])
+                for entry in conn.entries:
+                    if entry.mail:
+                        user_emails.add(entry.mail.value.lower())
+            except Exception:
+                pass  # Internal Tools OU might not exist
+            
+            conn.unbind()
+        except Exception as e:
+            current_app.logger.warning(f"Could not search separate OUs for orphaned mailbox check: {e}")
+        
+        # Convert to list for compatibility
+        user_emails = list(user_emails)
+        current_app.logger.info(f"Checking orphaned mailboxes against {len(user_emails)} active email addresses")
+        
+        # Get Exchange manager
+        exchange = ExchangeManager(
+            exchange_server=config['exchange_server'],
+            username=config['username'],
+            password=config['password'],
+            domain=config['domain']
+        )
+        
+        # Find orphaned mailboxes
+        orphaned_data = exchange.find_orphaned_mailboxes(user_emails)
+        
+        # Create CSV
+        import io, csv
+        si = io.StringIO()
+        cw = csv.writer(si)
+        
+        # Write orphaned mailboxes
+        cw.writerow(['Type', 'DisplayName', 'Email', 'Size_MB', 'ItemCount', 'LastLogon', 'Database'])
+        for mb in orphaned_data['orphaned']:
+            size_mb = round(mb.get('TotalItemSize', 0) / (1024 * 1024)) if mb.get('TotalItemSize') else 0
+            last_logon = mb.get('LastLogonTime', 'Never')
+            if last_logon and last_logon != 'Never':
+                try:
+                    last_logon = last_logon.split('T')[0]  # Just the date part
+                except:
+                    pass
+            cw.writerow([
+                'Orphaned',
+                mb.get('DisplayName', 'N/A'),
+                mb.get('PrimarySmtpAddress', 'N/A'),
+                size_mb,
+                mb.get('ItemCount', 0),
+                last_logon,
+                mb.get('Database', 'N/A')
+            ])
+        
+        # Write missing mailboxes
+        for mb in orphaned_data['missing']:
+            cw.writerow([
+                'Missing',
+                mb.get('DisplayName', 'N/A'),
+                mb.get('PrimarySmtpAddress', 'N/A'),
+                0,
+                0,
+                'N/A',
+                'N/A'
+            ])
+        
+        output = si.getvalue()
+        response = Response(output, mimetype="text/csv")
+        response.headers["Content-Disposition"] = "attachment; filename=orphaned_mailboxes.csv"
+        return response
+        
+    except Exception as e:
+        flash(f'Error exporting orphaned mailboxes: {str(e)}', 'danger')
+        return redirect(url_for('main.user_search'))
+
+@main.route('/admin/exchange/archive_orphaned_mailboxes', methods=['POST'])
+@login_required
+@admin_required
+def archive_orphaned_mailboxes():
+    """Archive orphaned mailboxes to PST, zip them, and optionally remove them"""
+    import zipfile
+    import shutil
+    import os
+    from datetime import datetime
+    import time
+    
+    config = get_exchange_config()
+    if not config or not config.get('enabled'):
+        return jsonify({'success': False, 'message': 'Exchange not configured'})
+    
+    try:
+        # Get request parameters
+        data = request.get_json()
+        archive_path = data.get('archive_path', '')  # Network share path (e.g., \\server\share\archives)
+        remove_after_archive = data.get('remove_after_archive', False)  # Whether to remove mailboxes after archiving
+        zip_path = data.get('zip_path', '')  # Path to save zip file (local or network path)
+        
+        if not archive_path:
+            return jsonify({'success': False, 'message': 'Archive path is required'})
+        
+        # Get AD config to find orphaned mailboxes
+        ad_config = get_ad_config()
+        if not ad_config:
+            return jsonify({'success': False, 'message': 'AD not configured'})
+        
+        ad_args = {
+            'server': ad_config['ad_server'],
+            'port': ad_config['ad_port'],
+            'bind_user': ad_config['ad_bind_dn'],
+            'bind_password': ad_config['ad_password'],
+            'base_dn': ad_config['ad_base_dn']
+        }
+        
+        # Get ALL active users with emails (same logic as get_orphaned_mailboxes)
+        base_dn = ad_config['ad_base_dn']
+        user_emails = set()
+        
+        all_users = search_users('', status_filter='enabled', exclude_ous=[], **ad_args)
+        user_emails.update([user.get('mail').lower() for user in all_users if user.get('mail')])
+        
+        # Also get Service Accounts and Internal Tools
+        try:
+            import ldap3
+            from ldap3 import Server, Connection, ALL, SUBTREE
+            server = Server(ad_config['ad_server'], port=int(ad_config['ad_port']), get_info=ALL)
+            conn = Connection(server, 
+                             user=ad_config['ad_bind_dn'], 
+                             password=ad_config['ad_password'], 
+                             auto_bind=True)
+            
+            # Search Service Accounts OU
+            if 'Service Accounts' in str(base_dn) or True:
+                search_base = f"OU=Service Accounts,OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal"
+                conn.search(search_base, '(&(objectClass=user)(mail=*))', attributes=['mail'])
+                for entry in conn.entries:
+                    mail = entry.mail.values[0] if hasattr(entry, 'mail') and entry.mail.values else None
+                    if mail:
+                        user_emails.add(mail.lower())
+            
+            # Search Internal Tools OU
+            search_base = f"OU=Internal Tools,OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal"
+            conn.search(search_base, '(&(objectClass=user)(mail=*))', attributes=['mail'])
+            for entry in conn.entries:
+                mail = entry.mail.values[0] if hasattr(entry, 'mail') and entry.mail.values else None
+                if mail:
+                    user_emails.add(mail.lower())
+            
+            conn.unbind()
+        except Exception as e:
+            current_app.logger.warning(f"Could not search separate OUs for orphaned mailbox check: {e}")
+        
+        # Get Exchange manager
+        exchange = ExchangeManager(
+            exchange_server=config['exchange_server'],
+            username=config['username'],
+            password=config['password'],
+            domain=config['domain']
+        )
+        
+        # Find orphaned mailboxes
+        orphaned_data = exchange.find_orphaned_mailboxes(list(user_emails))
+        orphaned_mailboxes = orphaned_data.get('orphaned', [])
+        
+        if not orphaned_mailboxes:
+            return jsonify({'success': True, 'message': 'No orphaned mailboxes found', 'archived': 0, 'removed': 0})
+        
+        current_app.logger.info(f"Found {len(orphaned_mailboxes)} orphaned mailboxes to archive")
+        
+        # Archive each mailbox
+        archived_count = 0
+        failed_archives = []
+        export_requests = []
+        
+        current_app.logger.info(f"Starting archive process for {len(orphaned_mailboxes)} mailboxes")
+        
+        for idx, mailbox in enumerate(orphaned_mailboxes, 1):
+            email = mailbox.get('PrimarySmtpAddress')
+            if not email:
+                current_app.logger.warning(f"Skipping mailbox {idx}/{len(orphaned_mailboxes)}: no email address")
+                continue
+            
+            current_app.logger.info(f"Archiving mailbox {idx}/{len(orphaned_mailboxes)}: {email}")
+            
+            try:
+                success, message = exchange.archive_mailbox(email, archive_path)
+                
+                if success:
+                    archived_count += 1
+                    export_requests.append({'email': email, 'message': message})
+                    current_app.logger.info(f"Successfully archived {email}: {message}")
+                else:
+                    failed_archives.append({'email': email, 'error': message})
+                    current_app.logger.error(f"Failed to archive {email}: {message}")
+            except Exception as e:
+                current_app.logger.error(f"Exception archiving {email}: {str(e)}", exc_info=True)
+                failed_archives.append({'email': email, 'error': str(e)})
+        
+        # Wait for export requests to complete (poll status)
+        # Note: This is a simplified version - in production, you'd want to poll until all complete
+        current_app.logger.info(f"Created {archived_count} export requests. Waiting for exports to start...")
+        if export_requests:
+            current_app.logger.info(f"Export request details: {export_requests[:5]}")  # Log first 5
+        
+        # Wait for PST files to be created (give exports time to complete)
+        # Note: For production, you'd want to poll Get-MailboxExportRequest status until all are complete
+        current_app.logger.info("Waiting for PST exports to complete (this may take a while for large mailboxes)...")
+        wait_time = min(len(export_requests) * 30, 600)  # Wait up to 10 minutes or 30 seconds per mailbox
+        current_app.logger.info(f"Waiting {wait_time} seconds for exports to complete...")
+        time.sleep(wait_time)
+        
+        # Create zip file on Exchange server containing all PST files
+        zip_file_path = None
+        if archived_count > 0:
+            current_app.logger.info(f"Creating zip file from {archived_count} PST files in {archive_path}")
+            
+            # Generate zip filename with timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            zip_filename = f"orphaned_mailboxes_{timestamp}.zip"
+            
+            # Create zip file on Exchange server (same location as PST files)
+            success, result = exchange.zip_pst_files(archive_path, zip_filename)
+            
+            if success:
+                zip_file_path = result  # Path to zip file on Exchange server
+                current_app.logger.info(f"Successfully created zip file: {zip_file_path}")
+                
+                # If zip_path is provided, copy zip file to that location
+                if zip_path:
+                    current_app.logger.info(f"Copying zip file to: {zip_path}")
+                    # Use PowerShell to copy the zip file
+                    try:
+                        copy_command = f"Copy-Item -Path '{zip_file_path}' -Destination '{zip_path}' -Force;'Copied successfully'"
+                        copy_success, copy_stdout, copy_stderr = exchange._run_powershell_command(copy_command)
+                        if copy_success:
+                            current_app.logger.info(f"Zip file copied to: {zip_path}")
+                            zip_file_path = os.path.join(zip_path, zip_filename) if os.path.isdir(zip_path) else zip_path
+                        else:
+                            current_app.logger.warning(f"Failed to copy zip file: {copy_stderr[:500]}")
+                    except Exception as e:
+                        current_app.logger.warning(f"Error copying zip file: {str(e)}")
+            else:
+                current_app.logger.error(f"Failed to create zip file: {result}")
+            
+            # Clean up individual PST files after zipping (keep only zip file)
+            if zip_file_path and success:
+                current_app.logger.info("Cleaning up individual PST files (keeping zip file only)...")
+                cleanup_success, cleanup_message = exchange.cleanup_pst_files(archive_path, keep_zip=True)
+                if cleanup_success:
+                    current_app.logger.info(f"Cleanup successful: {cleanup_message}")
+                else:
+                    current_app.logger.warning(f"Cleanup warning: {cleanup_message}")
+        
+        # Remove mailboxes if requested
+        removed_count = 0
+        failed_removals = []
+        
+        if remove_after_archive:
+            for mailbox in orphaned_mailboxes:
+                email = mailbox.get('PrimarySmtpAddress')
+                if not email:
+                    continue
+                
+                # Skip if archive failed for this mailbox
+                if any(f['email'] == email for f in failed_archives):
+                    continue
+                
+                current_app.logger.info(f"Removing mailbox: {email}")
+                success, message = exchange.remove_mailbox(email, permanent=False)
+                
+                if success:
+                    removed_count += 1
+                else:
+                    failed_removals.append({'email': email, 'error': message})
+        
+        # Log the action
+        log_admin_action('archive_orphaned_mailboxes', 'success' if archived_count > 0 else 'failure',
+                        f"Archived {archived_count} orphaned mailboxes, removed {removed_count}, failed: {len(failed_archives)}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Archived {archived_count} of {len(orphaned_mailboxes)} orphaned mailboxes',
+            'archived': archived_count,
+            'removed': removed_count,
+            'total': len(orphaned_mailboxes),
+            'failed_archives': failed_archives,
+            'failed_removals': failed_removals,
+            'zip_file': zip_file_path if zip_file_path else None,
+            'archive_path': archive_path
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error archiving orphaned mailboxes: {str(e)}")
+        log_admin_action('archive_orphaned_mailboxes', 'error', str(e))
+        return jsonify({'success': False, 'message': str(e)})
 
 @main.route('/user_details/<path:user_dn>', methods=['GET', 'POST'])
 @login_required
@@ -2187,11 +3178,12 @@ def complete_task(task_id):
         db.session.commit()
         
         # Log the action
-        log_action(
-            user=current_user.username,
+        from .audit import log_event
+        log_event(
             action='task_completed',
             details=f'Completed task: {task.title}',
-            result='success'
+            result='success',
+            user=current_user.username
         )
         
         return jsonify({'success': True, 'message': 'Task completed successfully'})
@@ -2258,11 +3250,12 @@ def assign_task():
             db.session.commit()
             
             # Log the action
-            log_action(
-                user=current_user.username,
+            from .audit import log_event
+            log_event(
                 action='task_assigned',
                 details=f'Assigned task "{title}" to {username}',
-                result='success'
+                result='success',
+                user=current_user.username
             )
             
             flash(f'Task "{title}" assigned to {username} successfully.', 'success')
@@ -2339,11 +3332,12 @@ def delete_task(task_id):
     
     try:
         # Log the action before deletion
-        log_action(
-            user=current_user.username,
+        from .audit import log_event
+        log_event(
             action='task_deleted',
             details=f'Deleted task: {task.title} (assigned to {task.username})',
-            result='success'
+            result='success',
+            user=current_user.username
         )
         
         db.session.delete(task)
@@ -2563,11 +3557,12 @@ def setup_security_question():
                 db.session.commit()
                 
                 # Log the action
-                log_action(
-                    user=current_user.username,
+                from .audit import log_event
+                log_event(
                     action='security_question_setup',
                     details=f'{questions_updated} security question(s) {"updated" if existing_questions else "set up"}',
                     result='success',
+                    user=current_user.username,
                     ip_address=request.remote_addr
                 )
                 
@@ -2690,11 +3685,12 @@ def user_reset_password():
                         db.session.commit()
                         
                         # Log the action
-                        log_action(
-                            user=current_user.username,
+                        from .audit import log_event
+                        log_event(
                             action='password_reset',
                             details='Password reset by logged-in user',
                             result='success',
+                            user=current_user.username,
                             ip_address=request.remote_addr
                         )
                         
@@ -2809,8 +3805,15 @@ def get_password_status_stats():
                 elif isinstance(max_age, (int, float)):
                     max_pwd_age_days = abs(max_age) // (10**7 * 60 * 60 * 24)
         
-        # Get all users with password attributes in a single query
-        conn.search(config['ad_base_dn'], 
+        # Search in Sunray Users OU (matching user search behavior)
+        base_dn = config['ad_base_dn']
+        sunray_users_base = f'OU=Sunray Users,OU=Sunray,{base_dn}'
+        
+        # Default excluded OUs (matching user search behavior)
+        default_exclude_ous = ['OU=Disabled Users', 'Service Accounts', 'Internal Tools']
+        
+        # Get all users with password attributes - search only in Sunray Users OU
+        conn.search(sunray_users_base, 
                    '(objectClass=user)', 
                    search_scope=SUBTREE,
                    attributes=['sAMAccountName', 'displayName', 'distinguishedName', 
@@ -2846,11 +3849,43 @@ def get_password_status_stats():
                 if debug_enabled:
                     print(f"DEBUG: Skipping {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
                 continue
+            
+            # Filter out excluded OUs (matching user search behavior)
+            user_dn = entry.distinguishedName.value
+            should_exclude = False
+            
+            # Always exclude users in Disabled Users OU
+            if 'OU=Disabled Users' in user_dn:
+                should_exclude = True
+                if debug_enabled:
+                    print(f"DEBUG: Excluding user in Disabled Users OU: {user_dn}")
+            
+            # Check additional excluded OUs
+            if not should_exclude:
+                for excluded_ou in default_exclude_ous:
+                    if excluded_ou.strip() and excluded_ou.strip() in user_dn:
+                        should_exclude = True
+                        if debug_enabled:
+                            print(f"DEBUG: Excluding user in {excluded_ou}: {user_dn}")
+                        break
+            
+            if should_exclude:
+                continue
+            
             if debug_enabled:
                 print(f"DEBUG: Including {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
-            password_stats['total'] += 1
+            
             # Parse user account control
             uac = entry.userAccountControl.value if entry.userAccountControl else 0
+            account_disabled = bool(uac & 0x2)  # ACCOUNTDISABLE flag
+            
+            # Skip disabled accounts
+            if account_disabled:
+                if debug_enabled:
+                    print(f"DEBUG: Skipping disabled account: {getattr(entry, 'sAMAccountName', 'UNKNOWN')}")
+                continue
+            
+            password_stats['total'] += 1
             password_never_expires = bool(uac & 0x10000)  # DONT_EXPIRE_PASSWORD
             # Parse password last set
             pwd_last_set = None
@@ -2963,8 +3998,15 @@ def drilldown_passwords(status):
                 elif isinstance(max_age, (int, float)):
                     max_pwd_age_days = abs(max_age) // (10**7 * 60 * 60 * 24)
         
-        # Get all users with password attributes in a single query
-        conn.search(config['ad_base_dn'], 
+        # Search in Sunray Users OU (matching user search behavior)
+        base_dn = config['ad_base_dn']
+        sunray_users_base = f'OU=Sunray Users,OU=Sunray,{base_dn}'
+        
+        # Default excluded OUs (matching user search behavior)
+        default_exclude_ous = ['OU=Disabled Users', 'Service Accounts', 'Internal Tools']
+        
+        # Get all users with password attributes - search only in Sunray Users OU
+        conn.search(sunray_users_base, 
                    '(objectClass=user)', 
                    search_scope=SUBTREE,
                    attributes=['sAMAccountName', 'displayName', 'distinguishedName', 'mail',
@@ -2993,11 +4035,42 @@ def drilldown_passwords(status):
                 if debug_enabled:
                     print(f"DEBUG: Skipping {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
                 continue
+            
+            # Filter out excluded OUs (matching user search behavior)
+            user_dn = entry.distinguishedName.value
+            should_exclude = False
+            
+            # Always exclude users in Disabled Users OU
+            if 'OU=Disabled Users' in user_dn:
+                should_exclude = True
+                if debug_enabled:
+                    print(f"DEBUG: Excluding user in Disabled Users OU: {user_dn}")
+            
+            # Check additional excluded OUs
+            if not should_exclude:
+                for excluded_ou in default_exclude_ous:
+                    if excluded_ou.strip() and excluded_ou.strip() in user_dn:
+                        should_exclude = True
+                        if debug_enabled:
+                            print(f"DEBUG: Excluding user in {excluded_ou}: {user_dn}")
+                        break
+            
+            if should_exclude:
+                continue
+            
             if debug_enabled:
                 print(f"DEBUG: Including {getattr(entry, 'sAMAccountName', 'UNKNOWN')} - {debug_msg}")
             
             # Parse user account control
             uac = entry.userAccountControl.value if entry.userAccountControl else 0
+            account_disabled = bool(uac & 0x2)  # ACCOUNTDISABLE flag
+            
+            # Skip disabled accounts
+            if account_disabled:
+                if debug_enabled:
+                    print(f"DEBUG: Skipping disabled account: {getattr(entry, 'sAMAccountName', 'UNKNOWN')}")
+                continue
+            
             password_never_expires = bool(uac & 0x10000)  # DONT_EXPIRE_PASSWORD
             
             # Parse password last set
