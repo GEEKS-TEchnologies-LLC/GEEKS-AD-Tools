@@ -501,7 +501,7 @@
                     </div>
                     <div class="col-md-3">
                         <input type="text" class="form-control" name="exclude_ous" value="{{ exclude_ous_str }}" 
-                               placeholder="Additional OU exclusions" title="Additional OUs to exclude (comma-separated). Note: Only Sunray Users OU is included, Disabled Users OU is automatically excluded.">
+                               placeholder="Additional OU exclusions" title="Additional OUs to exclude (comma-separated). Note: Only primary users OU is included, Disabled Users OU is automatically excluded.">
                     </div>
                     <div class="col-md-3 d-flex align-items-center">
                         <button type="submit" class="btn btn-custom me-2">
@@ -522,7 +522,7 @@
         <div class="glass-card">
             <div class="card-header">
                 <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Exchange Migration Statistics</h5>
-                <small class="text-muted">Showing only users in Sunray Users OU (excluding Disabled Users OU)</small>
+                <small class="text-muted">Showing only users in primary users OU (excluding Disabled Users OU)</small>
             </div>
             <div class="card-body">
                 <div class="d-flex justify-content-end mb-3">
@@ -572,9 +572,9 @@
                 <div class="row">
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-primary">{{ user_stats.sunray_users_total }}</h3>
-                            <p class="text-muted mb-0">Total Sunray Users</p>
-                            <small class="text-info">In Sunray Users OU</small>
+                            <h3 class="text-primary">{{ user_stats.primary_users_total }}</h3>
+                            <p class="text-muted mb-0">Total Primary Users</p>
+                            <small class="text-info">In Primary Users OU</small>
                         </div>
                     </div>
                     <div class="col-md-2">
@@ -631,7 +631,7 @@
                     <div class="alert alert-info">
                         <i class="fas fa-info-circle"></i>
                         <strong>Exchange Online Migration Planning:</strong>
-                        You have <strong>{{ user_stats.active_users }}</strong> active users ready for migration (enabled accounts in Sunray Users OU, excluding Disabled Users OU). 
+                        You have <strong>{{ user_stats.active_users }}</strong> active users ready for migration (enabled accounts in primary users OU, excluding Disabled Users OU). 
                         {% if user_stats.without_email > 0 %}
                         <strong>{{ user_stats.without_email }}</strong> users need email addresses configured before migration.
                         {% endif %}
@@ -968,18 +968,32 @@
                 </div>
                 <div class="modal-body" style="background: #1a1a1a;">
                     <form id="archiveOrphanedForm">
-                        <div class="mb-3">
-                            <label for="archivePath" class="form-label text-white">Archive Path (Network Share)</label>
-                            <input type="text" class="form-control" id="archivePath" placeholder="\\\\server\\share\\archives" required>
-                            <small class="form-text text-muted">Network path where PST files will be created (must be accessible from Exchange server)</small>
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="useLocalTemp" checked>
+                            <label class="form-check-label text-white" for="useLocalTemp">
+                                Use Exchange Server Temp Directory
+                            </label>
+                            <small class="form-text text-muted d-block">If checked, PST files will be created in Exchange server's temp directory. If unchecked, specify a network share path below.</small>
                         </div>
-                        <div class="mb-3">
-                            <label for="zipPath" class="form-label text-white">Zip File Destination (Optional)</label>
-                            <input type="text" class="form-control" id="zipPath" placeholder="\\\\server\\share\\zips">
-                            <small class="form-text text-muted">Optional path to copy the zip file to. If not provided, zip file stays in archive path. Individual PST files will be removed after zipping.</small>
+                        <div class="mb-3" id="archivePathGroup">
+                            <label for="archivePath" class="form-label text-white">Archive Path (Optional - only if not using temp)</label>
+                            <input type="text" class="form-control" id="archivePath" placeholder="C:\\Temp\\ExchangeArchives or \\\\server\\share\\archives">
+                            <small class="form-text text-muted">Local Exchange server path or network share path. Leave empty if using temp directory above.</small>
                         </div>
                         <div class="mb-3 form-check">
-                            <input type="checkbox" class="form-check-input" id="removeAfterArchive" checked>
+                            <input type="checkbox" class="form-check-input" id="downloadZip">
+                            <label class="form-check-label text-white" for="downloadZip">
+                                Download Zip File
+                            </label>
+                            <small class="form-text text-muted d-block">If checked, the zip file will be downloaded to your browser after creation</small>
+                        </div>
+                        <div class="mb-3" id="fileStoreGroup" style="display: none;">
+                            <label for="fileStorePath" class="form-label text-white">File Store Path (Optional)</label>
+                            <input type="text" class="form-control" id="fileStorePath" placeholder="\\\\server\\share\\archives">
+                            <small class="form-text text-muted">Network path to transfer zip file to. Individual PST files will be removed after zipping.</small>
+                        </div>
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="removeAfterArchive">
                             <label class="form-check-label text-white" for="removeAfterArchive">
                                 Remove mailboxes after archiving
                             </label>
@@ -1899,6 +1913,16 @@
             }
         }
         
+        // Toggle file store path field based on download checkbox (initialize on page load)
+        document.getElementById('downloadZip').addEventListener('change', function() {
+            const fileStoreGroup = document.getElementById('fileStoreGroup');
+            if (!this.checked) {
+                fileStoreGroup.style.display = 'block';
+            } else {
+                fileStoreGroup.style.display = 'none';
+            }
+        });
+        
         // Archive orphaned mailboxes
         document.getElementById('confirmArchiveBtn').addEventListener('click', function() {
             const button = this;
@@ -1906,12 +1930,16 @@
             button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Archiving...';
             button.disabled = true;
             
-            const archivePath = document.getElementById('archivePath').value;
-            const zipPath = document.getElementById('zipPath').value;
+            const archivePath = document.getElementById('archivePath').value.trim();
+            const useLocalTemp = document.getElementById('useLocalTemp').checked;
+            const downloadZip = document.getElementById('downloadZip').checked;
+            const transferToFileStore = !downloadZip; // Transfer if not downloading
+            const fileStorePath = document.getElementById('fileStorePath').value.trim();
             const removeAfterArchive = document.getElementById('removeAfterArchive').checked;
             
-            if (!archivePath) {
-                showFlashMessage('Archive path is required', 'danger');
+            // Validate: if not using local temp, archive path is required
+            if (!useLocalTemp && !archivePath) {
+                showFlashMessage('Archive path is required when not using local temp directory', 'danger');
                 button.innerHTML = originalText;
                 button.disabled = false;
                 return;
@@ -1923,8 +1951,11 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
+                    use_local_temp: useLocalTemp,
                     archive_path: archivePath,
-                    zip_path: zipPath,
+                    download_zip: downloadZip,
+                    transfer_to_file_store: transferToFileStore && fileStorePath,
+                    file_store_path: fileStorePath,
                     remove_after_archive: removeAfterArchive
                 })
             })
@@ -1938,7 +1969,20 @@
                     if (data.failed_archives && data.failed_archives.length > 0) {
                         message += `, ${data.failed_archives.length} failed`;
                     }
-                    if (data.zip_file) {
+                    if (data.zip_downloaded && data.zip_file_base64) {
+                        // Download the zip file
+                        const zipData = Uint8Array.from(atob(data.zip_file_base64), c => c.charCodeAt(0));
+                        const zipBlob = new Blob([zipData], { type: 'application/zip' });
+                        const url = window.URL.createObjectURL(zipBlob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = data.zip_filename || 'orphaned_mailboxes.zip';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                        message += `. Zip file downloaded: ${data.zip_filename}`;
+                    } else if (data.zip_file) {
                         message += `. Zip file: ${data.zip_file}`;
                     }
                     showFlashMessage(message, 'success');

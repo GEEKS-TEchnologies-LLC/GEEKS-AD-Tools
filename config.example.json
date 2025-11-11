@@ -9,8 +9,5 @@
   ],
   "debug": false,
   "secret_key": "",
-  "portal_url": "http://localhost:5000",
-  "base_license_key": "",
-  "plus_license_key": "",
-  "reporting_license_key": ""
+  "portal_url": "http://localhost:5000"
 } 

@@ -40,11 +40,9 @@ A comprehensive Linux-based web application for Active Directory password manage
 
 ## Previous Updates (2025-06-27)
 
-- **License Key Workflow & Config Safety:**
-  - The system now requires valid license keys for activation. On first run, if `config.json` is missing, it is auto-created from `config.example.json`.
-  - License keys are never pushed to GitHub. `config.json` is gitignored; only `config.example.json` is tracked.
-  - The app will prompt for license keys via the web UI if missing or invalid, and will not start until a valid key is provided.
-  - Add-on license keys now use new context variable names: `plus_license_key` (email control add-on) and `reporting_license_key` (password reset add-on).
+- **Config Safety:**
+  - On first run, if `config.json` is missing, it is auto-created from `config.example.json`.
+  - `config.json` is gitignored; only `config.example.json` is tracked to prevent committing sensitive data.
 - **UI/UX Improvements:**
   - High-contrast, modernized form fields and dropdowns for all admin pages.
   - Custom, searchable dropdowns for user and task type assignment.
@@ -61,6 +59,19 @@ A comprehensive Linux-based web application for Active Directory password manage
 - **How to View Admin Users:**
   - Use the admin dashboard's "User Drilldown" or "User Status" features and select "Admin Users" to see who has admin rights.
   - Or visit `/admin/drilldown/users?type=Admin Users` for a JSON list.
+
+## First-Time Setup
+
+**New to GEEKS-AD-Plus?** Start here! See **[FIRST_TIME_SETUP.md](FIRST_TIME_SETUP.md)** for a complete step-by-step guide to getting started.
+
+The first-time setup guide covers:
+- Prerequisites and system requirements
+- Automated build process
+- Initial configuration
+- Web-based setup
+- Troubleshooting common issues
+
+**After setup**, use **[SETUP_CHECKLIST.md](SETUP_CHECKLIST.md)** to verify your installation is complete and functional.
 
 ## Quick Install
 
@@ -336,6 +347,8 @@ The build system creates:
 - **Configuration Files**: Default `config.json` and `.env` files
 - **Build Log**: `build.log` with detailed build information
 
+**Port Configuration**: On first build, you'll be prompted to enter your preferred port (default: 5000). This port is saved in `config.json` and used when starting the application.
+
 ### Platform-Specific Features
 
 #### Windows
@@ -448,19 +461,11 @@ The build system creates:
 
 ## Configuration
 
-### License and Application Configuration
-- The file `config.json` contains all application and license settings.
+### Application Configuration
+- The file `config.json` contains all application settings.
 - **`config.json` is ignored by git and will never be pushed to GitHub.**
 - A template file, `config.example.json`, is provided and tracked in the repository.
 - On first run, if `config.json` does not exist, it will be created automatically from `config.example.json`.
-- **You must enter your license keys in `config.json` before the application will run.**
-- If you start the app without valid license keys, you will be prompted via the web UI to enter them before proceeding.
-- **To purchase a license key, email [store@geeks-tech.biz](mailto:store@geeks-tech.biz).**
-- *A website for purchasing license keys will be available soon.*
-- The required fields are:
-  - `base_license_key`: Your main GEEKS-AD-Plus license key
-  - `plus_license_key`: (Optional) Add-on key for email control features
-  - `reporting_license_key`: (Optional) Add-on key for password reset features
 
 #### Example:
 ```json
@@ -473,15 +478,11 @@ The build system creates:
   "admin_groups": ["Domain Admins"],
   "debug": false,
   "secret_key": "",
-  "portal_url": "http://localhost:5000",
-  "base_license_key": "",
-  "plus_license_key": "",
-  "reporting_license_key": ""
+  "portal_url": "http://localhost:5000"
 }
 ```
 
-- If you update from a previous version, the system will automatically add any missing license key fields to your `config.json`.
-- If you clone the repository, copy `config.example.json` to `config.json` and fill in your keys, or start the app and enter them via the web UI when prompted.
+- If you clone the repository, `config.json` will be automatically created from `config.example.json` on first run.
 
 ### Active Directory Setup
 1. Copy `app/ad_config.example.json` to `app/ad_config.json`
@@ -676,11 +677,17 @@ Once started, you can access the system at:
 **Note**: The application binds to `0.0.0.0:5000` by default, making it accessible from any network interface.
 
 ### First-Time Setup
-1. **Start the system** using one of the methods above
-2. **Access the setup page** at http://localhost:5000/setup
-3. **Configure Active Directory** settings
-4. **Create admin account** or configure AD admin groups
-5. **Test the connection** to your AD server
+
+For detailed first-time setup instructions, see **[FIRST_TIME_SETUP.md](FIRST_TIME_SETUP.md)**.
+
+**Quick Start:**
+1. **Run the build**: `python3 build.py`
+2. **Start the application**: `python3 app.py`
+3. **Access the welcome page**: http://localhost:5000
+4. **Create admin account**: Click "Create Admin" on the welcome page
+5. **Configure Active Directory**: Navigate to http://localhost:5000/setup
+6. **Enter AD details** and test the connection
+7. **Start using the system**!
 
 ### System Management
 ```bash
@@ -726,45 +733,9 @@ make network-info
 ## Security & Sanitization for Open Source
 
 - **No secrets or credentials**: All `.env`, AD config, logs, bug reports, and instance data are deleted and ignored by `.gitignore`.
-- **No license keys in git**: `config.json` is always gitignored. Only `config.example.json` (with empty keys) is tracked. Never push active license keys to GitHub.
+- **No sensitive data in git**: `config.json` is always gitignored. Only `config.example.json` (with example values) is tracked. Never push active credentials to GitHub.
 - **Safe for GitHub**: You can now push this repo publicly without leaking sensitive data.
 - **How to keep it clean**: All sensitive runtime files are excluded by default. If you add new secrets/configs, add them to `.gitignore`.
-
-## License Activation & Trial Setup
-
-### Product ID
-- The product ID for this software **must always be** `GEEKS-AD-PLUS`.
-- Do not change this value in `config.json`.
-
-### config.json Example (No Identifying Info)
-```
-{
-  "debug": false,
-  "secret_key": "",
-  "portal_url": "http://localhost:5000",
-  "license_key": "",
-  "product_id": "GEEKS-AD-PLUS",
-  "base_license_key": "",
-  "plus_license_key": "",
-  "reporting_license_key": "",
-  "company_name": "YOUR_COMPANY_NAME",
-  "contact_name": "YOUR_CONTACT_NAME",
-  "email": "your@email.com",
-  "phone": ""
-}
-```
-- **Do not commit real company, contact, or email info to version control.**
-- The app will prompt for this info on first run if missing.
-
-### Trial Activation Flow
-1. On first run, the app will prompt for company, contact, and email info if not present in `config.json`.
-2. When you request a trial, the app will send this info to the license server at `https://license.geeks-tech.win/api/activate-trial` with the correct product ID.
-3. If successful, a trial license key will be returned and saved in `config.json`.
-4. The app will then validate the trial key with the license server. If valid, you will be redirected to AD setup.
-
-**Note:**
-- All license and trial validation is performed against the license server using the product ID `GEEKS-AD-PLUS`.
-- If you need to reset the trial, remove the `trial_license_key` and `trial_start_date` fields from `config.json` and restart the app.
 
 ---
 

@@ -1,6 +1,12 @@
 {
   "ad_server": "ad.example.com",
-  "ad_user": "admin@example.com",
+  "ad_port": "389",
+  "ad_bind_dn": "CN=Administrator,CN=Users,DC=example,DC=com",
   "ad_password": "YOUR_AD_PASSWORD_HERE",
-  "ad_base_dn": "DC=example,DC=com"
+  "ad_base_dn": "DC=example,DC=com",
+  "users_ou": "",
+  "groups_ou": "",
+  "admin_groups": [
+    "Domain Admins"
+  ]
 } 

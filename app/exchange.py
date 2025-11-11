@@ -1,8 +1,9 @@
 import subprocess
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import re
+import time
 import winrm
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ class ExchangeManager:
         else:
             # Just username, use provided domain
             self.username = username
-            self.domain = domain or 'sunray'
+            self.domain = domain or 'example'
         
     def _run_powershell_command(self, command: str) -> Tuple[bool, str, str]:
         """
@@ -60,16 +61,54 @@ class ExchangeManager:
             
             # Minimize command - use compact syntax to avoid "command line too long" error
             # Wrap Remove-PSSession in try-catch to avoid failures when session is already closed
-            full_command = f"$p='{self.password}';$u='{username_with_domain}';$h='{self.exchange_server}';$c=[System.Management.Automation.PSCredential]::new($u,(ConvertTo-SecureString -AsPlainText -String $p -Force));[System.Net.ServicePointManager]::ServerCertificateValidationCallback={{$true}};$so=New-PSSessionOption -SkipCACheck -SkipCNCheck;try{{$s=New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri \"https://$h/PowerShell/\" -Credential $c -Authentication Basic -SessionOption $so -AllowRedirection -ErrorAction Stop}}catch{{try{{$s=New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri \"https://$h/PowerShell/\" -Credential $c -Authentication Kerberos -SessionOption $so -AllowRedirection -ErrorAction Stop}}catch{{throw \"Failed: $_\"}}}};Import-PSSession $s -DisableNameChecking -AllowClobber|Out-Null;{command};try{{Remove-PSSession $s -EA SilentlyContinue}}catch{{}}"
+            # Suppress progress messages from Import-PSSession by redirecting to $null
+            # CLIXML progress messages are informational, not errors
+            full_command = f"$p='{self.password}';$u='{username_with_domain}';$h='{self.exchange_server}';$c=[System.Management.Automation.PSCredential]::new($u,(ConvertTo-SecureString -AsPlainText -String $p -Force));[System.Net.ServicePointManager]::ServerCertificateValidationCallback={{$true}};$so=New-PSSessionOption -SkipCACheck -SkipCNCheck;$ProgressPreference='SilentlyContinue';try{{$s=New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri \"https://$h/PowerShell/\" -Credential $c -Authentication Basic -SessionOption $so -AllowRedirection -ErrorAction Stop}}catch{{try{{$s=New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri \"https://$h/PowerShell/\" -Credential $c -Authentication Kerberos -SessionOption $so -AllowRedirection -ErrorAction Stop}}catch{{throw \"Failed: $_\"}}}};Import-PSSession $s -DisableNameChecking -AllowClobber|Out-Null;$r={command};try{{Remove-PSSession $s -EA SilentlyContinue}}catch{{}};$r"
             
             # Execute the combined command
             result = session.run_ps(full_command)
             
+            # Decode output
+            stdout = result.std_out.decode('utf-8', errors='ignore') if result.std_out else ''
+            stderr = result.std_err.decode('utf-8', errors='ignore') if result.std_err else ''
+            
+            # Filter out CLIXML progress messages from stderr (these are informational, not errors)
+            # CLIXML messages start with '#< CLIXML'
+            if stderr and stderr.strip().startswith('#< CLIXML'):
+                # This is just progress output from Import-PSSession, not an actual error
+                # Check if we have valid output in stdout
+                if stdout.strip():
+                    # Try to parse JSON to verify we got valid data
+                    try:
+                        json.loads(stdout.strip())
+                        # Valid JSON found, treat as success
+                        return True, stdout, ""
+                    except json.JSONDecodeError:
+                        # Not JSON, but still might be valid text output
+                        # Check if it looks like an error message
+                        if 'error' not in stdout.lower() and 'exception' not in stdout.lower():
+                            return True, stdout, ""
+                # If no stdout or invalid JSON, check if stderr contains actual errors
+                # CLIXML progress messages don't contain actual error text
+                if 'error' not in stderr.lower() and 'exception' not in stderr.lower() and 'failed' not in stderr.lower():
+                    # Just progress messages, treat as success if we have any output
+                    return True, stdout, ""
+            
+            # Check if we have valid JSON output despite non-zero status code
+            # (This handles cases where Remove-PSSession cleanup failed but data was retrieved)
+            if stdout.strip():
+                try:
+                    json.loads(stdout.strip())
+                    # Valid JSON found, treat as success
+                    return True, stdout, stderr
+                except json.JSONDecodeError:
+                    pass
+            
             if result.status_code == 0:
-                return True, result.std_out.decode('utf-8'), result.std_err.decode('utf-8')
+                return True, stdout, stderr
             else:
-                logger.error(f"PowerShell command failed with status {result.status_code}: {result.std_err}")
-                return False, result.std_out.decode('utf-8'), result.std_err.decode('utf-8')
+                logger.error(f"PowerShell command failed with status {result.status_code}: {stderr[:500]}")
+                return False, stdout, stderr
                 
         except Exception as e:
             logger.error(f"Error running PowerShell command: {str(e)}")
@@ -317,6 +356,101 @@ class ExchangeManager:
             logger.error(f"Failed to get mailboxes: {stderr}")
             return []
     
+    def get_mailbox_stats(self, email_addresses: List[str]) -> Dict[str, Dict]:
+        """
+        Get mailbox statistics (size, item count, last logon) for specific mailboxes
+        
+        Args:
+            email_addresses: List of email addresses to get stats for
+            
+        Returns:
+            Dictionary mapping email (lowercase) to mailbox stats
+        """
+        if not email_addresses:
+            return {}
+        
+        stats = {}
+        
+        # Process in batches to avoid command line length limits
+        batch_size = 10
+        for i in range(0, len(email_addresses), batch_size):
+            batch = email_addresses[i:i+batch_size]
+            email_list = "','".join(batch)
+            
+            cmd = f"""
+            $emails = @('{email_list}');
+            $stats = @{{}};
+            foreach ($email in $emails) {{
+                try {{
+                    $mb = Get-MailboxStatistics -Identity $email -ErrorAction SilentlyContinue;
+                    if ($mb) {{
+                        $stats[$email] = @{{
+                            TotalItemSize = if ($mb.TotalItemSize) {{ $mb.TotalItemSize.ToString() }} else {{ '0 B' }};
+                            ItemCount = $mb.ItemCount;
+                            LastLogonTime = if ($mb.LastLogonTime) {{ $mb.LastLogonTime.ToString('yyyy-MM-ddTHH:mm:ss') }} else {{ $null }};
+                            DisplayName = $mb.DisplayName;
+                            PrimarySmtpAddress = $mb.PrimarySmtpAddress
+                        }}
+                    }}
+                }} catch {{
+                    $stats[$email] = @{{}}
+                }}
+            }};
+            $stats | ConvertTo-Json -Depth 3
+            """
+            
+            success, stdout, stderr = self._run_powershell_command(cmd)
+            
+            if success and stdout.strip():
+                try:
+                    batch_stats = json.loads(stdout.strip())
+                    if isinstance(batch_stats, dict):
+                        for email, stat_data in batch_stats.items():
+                            if stat_data:
+                                # Parse TotalItemSize from string format
+                                total_size = stat_data.get('TotalItemSize', '0 B')
+                                if isinstance(total_size, str):
+                                    # Parse formats like "10 GB (10737418240 bytes)" or "500 MB"
+                                    try:
+                                        # Try to extract bytes from format like "X GB (Y bytes)"
+                                        if '(' in total_size and 'bytes' in total_size:
+                                            bytes_str = total_size.split('(')[1].split('bytes')[0].strip()
+                                            stat_data['TotalItemSize'] = int(bytes_str)
+                                        else:
+                                            # Fallback: try to parse size string
+                                            stat_data['TotalItemSize'] = self._parse_size_string(total_size)
+                                    except:
+                                        stat_data['TotalItemSize'] = 0
+                                stats[email.lower()] = stat_data
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse mailbox stats batch: {e}")
+                    continue
+        
+        return stats
+    
+    def _parse_size_string(self, size_str: str) -> int:
+        """Parse size string like '10 GB' or '500 MB' to bytes"""
+        try:
+            size_str = size_str.strip().upper()
+            if 'GB' in size_str:
+                value = float(size_str.replace('GB', '').strip())
+                return int(value * 1024 * 1024 * 1024)
+            elif 'MB' in size_str:
+                value = float(size_str.replace('MB', '').strip())
+                return int(value * 1024 * 1024)
+            elif 'KB' in size_str:
+                value = float(size_str.replace('KB', '').strip())
+                return int(value * 1024)
+            else:
+                # Try to extract just the number
+                import re
+                match = re.search(r'[\d.]+', size_str)
+                if match:
+                    return int(float(match.group()) * 1024)  # Assume KB if no unit
+        except:
+            pass
+        return 0
+    
     def find_orphaned_mailboxes(self, active_emails: List[str]) -> Dict[str, List[Dict]]:
         """
         Find mailboxes that exist in Exchange but don't have corresponding active users
@@ -335,10 +469,23 @@ class ExchangeManager:
         missing = []
         
         # Find mailboxes that exist but shouldn't (orphaned mailboxes)
+        orphaned_emails = []
         for mailbox in all_mailboxes:
             email = (mailbox.get('PrimarySmtpAddress') or '').lower()
             if email and email not in active_email_set:
                 orphaned.append(mailbox)
+                orphaned_emails.append(mailbox.get('PrimarySmtpAddress'))
+        
+        # Get mailbox statistics for orphaned mailboxes (size, item count, last logon)
+        if orphaned_emails:
+            logger.info(f"Fetching mailbox statistics for {len(orphaned_emails)} orphaned mailboxes...")
+            stats = self.get_mailbox_stats(orphaned_emails)
+            
+            # Merge stats into orphaned mailboxes
+            for mailbox in orphaned:
+                email = (mailbox.get('PrimarySmtpAddress') or '').lower()
+                if email in stats:
+                    mailbox.update(stats[email])
         
         # Find emails that should have mailboxes but don't (missing mailboxes)
         all_mailbox_emails = set((mb.get('PrimarySmtpAddress') or '').lower() for mb in all_mailboxes if mb.get('PrimarySmtpAddress'))
@@ -355,24 +502,49 @@ class ExchangeManager:
             'missing': missing
         }
     
-    def archive_mailbox(self, email: str, archive_path: str) -> Tuple[bool, str]:
+    def archive_mailbox(self, email: str, archive_path: str, use_local_temp: bool = False) -> Tuple[bool, str]:
         """
         Export a mailbox to PST file
         
         Args:
             email: Email address of the mailbox to export
-            archive_path: Network path where PST file will be created (must be accessible from Exchange server)
+            archive_path: Path where PST file will be created. If use_local_temp is True, this is a local Exchange server path.
+                         Otherwise, this is a network share path accessible from Exchange server.
+            use_local_temp: If True, use a local temp directory on Exchange server. If False, use network share.
             
         Returns:
             Tuple of (success, message/error)
         """
         try:
-            logger.info(f"Starting archive for mailbox: {email} to path: {archive_path}")
+            logger.info(f"Starting archive for mailbox: {email} to path: {archive_path} (local_temp={use_local_temp})")
             
             # Use New-MailboxExportRequest to export mailbox to PST
-            # Note: This requires a network share path accessible from Exchange server
-            pst_filename = f"{email.replace('@', '_at_').replace('.', '_')}.pst"
-            pst_path = f"{archive_path}\\{pst_filename}"
+            if use_local_temp:
+                # Use local temp directory on Exchange server
+                # archive_path should be something like "C:\\Temp\\ExchangeArchives" or just use system temp
+                if not archive_path or archive_path == '':
+                    # Use system temp directory - expand environment variable first
+                    expand_cmd = "$tempPath = [System.IO.Path]::Combine($env:TEMP, 'ExchangeArchives'); if(-not(Test-Path $tempPath)){New-Item -ItemType Directory -Path $tempPath -Force | Out-Null}; $tempPath"
+                    success, stdout, stderr = self._run_powershell_command(expand_cmd)
+                    if success and stdout:
+                        archive_path = stdout.strip()
+                        logger.info(f"Using temp directory: {archive_path}")
+                    else:
+                        # Fallback to a hardcoded path
+                        archive_path = 'C:\\Temp\\ExchangeArchives'
+                        logger.warning(f"Failed to get temp path, using fallback: {archive_path}")
+                        create_dir_cmd = f"if(-not(Test-Path '{archive_path}')){{New-Item -ItemType Directory -Path '{archive_path}' -Force | Out-Null}}"
+                        self._run_powershell_command(create_dir_cmd)
+                else:
+                    # Ensure directory exists if path was provided
+                    create_dir_cmd = f"if(-not(Test-Path '{archive_path}')){{New-Item -ItemType Directory -Path '{archive_path}' -Force | Out-Null}}"
+                    self._run_powershell_command(create_dir_cmd)
+                pst_filename = f"{email.replace('@', '_at_').replace('.', '_')}.pst"
+                pst_path = f"{archive_path}\\{pst_filename}"
+            else:
+                # Use network share path (original behavior)
+                pst_filename = f"{email.replace('@', '_at_').replace('.', '_')}.pst"
+                pst_path = f"{archive_path}\\{pst_filename}"
             
             logger.debug(f"PST file will be: {pst_path}")
             
@@ -435,13 +607,114 @@ class ExchangeManager:
             logger.error(f"Exception exporting mailbox {email}: {str(e)}", exc_info=True)
             return False, str(e)
     
-    def zip_pst_files(self, archive_path: str, zip_filename: str = None) -> Tuple[bool, str]:
+    def check_export_request_status(self, email: str) -> Dict[str, Any]:
+        """
+        Check the status of mailbox export requests for a given email
+        
+        Args:
+            email: Email address of the mailbox
+            
+        Returns:
+            Dictionary with status information: {'completed': bool, 'status': str, 'percent_complete': int}
+        """
+        cmd = f"""
+        $requests = Get-MailboxExportRequest -Mailbox '{email}' -ErrorAction SilentlyContinue | Where-Object {{ $_.Status -ne 'Completed' -and $_.Status -ne 'Failed' -and $_.Status -ne 'Removed' }};
+        if ($requests) {{
+            $requests | Select-Object -First 1 | Select-Object Status, PercentComplete | ConvertTo-Json -Depth 2
+        }} else {{
+            @{{ Status = 'Completed'; PercentComplete = 100 }} | ConvertTo-Json -Depth 2
+        }}
+        """
+        
+        success, stdout, stderr = self._run_powershell_command(cmd)
+        
+        if success and stdout.strip():
+            try:
+                data = json.loads(stdout.strip())
+                status = data.get('Status', 'Unknown')
+                percent_complete = data.get('PercentComplete', 0)
+                
+                # Status can be: Queued, InProgress, Completed, Failed, Removed
+                completed = status in ['Completed', 'Failed', 'Removed']
+                
+                return {
+                    'completed': completed,
+                    'status': status,
+                    'percent_complete': percent_complete
+                }
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse export status for {email}: {e}")
+                return {'completed': False, 'status': 'Unknown', 'percent_complete': 0}
+        else:
+            # If no requests found, assume completed
+            logger.debug(f"No export requests found for {email}, assuming completed")
+            return {'completed': True, 'status': 'Completed', 'percent_complete': 100}
+    
+    def wait_for_exports_complete(self, emails: List[str], max_wait_minutes: int = 60, poll_interval_seconds: int = 30) -> Dict[str, Dict]:
+        """
+        Wait for all export requests to complete, polling their status
+        
+        Args:
+            emails: List of email addresses to check
+            max_wait_minutes: Maximum time to wait in minutes
+            poll_interval_seconds: How often to poll status (in seconds)
+            
+        Returns:
+            Dictionary mapping email to status info
+        """
+        max_wait_seconds = max_wait_minutes * 60
+        start_time = time.time()
+        results = {}
+        
+        # Initialize results
+        for email in emails:
+            results[email] = {'completed': False, 'status': 'Checking', 'percent_complete': 0}
+        
+        logger.info(f"Waiting for {len(emails)} export requests to complete (max {max_wait_minutes} minutes)...")
+        
+        while time.time() - start_time < max_wait_seconds:
+            all_complete = True
+            completed_count = 0
+            
+            for email in emails:
+                if results[email]['completed']:
+                    completed_count += 1
+                    continue
+                
+                status_info = self.check_export_request_status(email)
+                results[email] = status_info
+                
+                if not status_info['completed']:
+                    all_complete = False
+                    logger.debug(f"Export for {email}: {status_info['status']} ({status_info['percent_complete']}%)")
+            
+            if all_complete:
+                elapsed = int(time.time() - start_time)
+                logger.info(f"All export requests completed in {elapsed} seconds")
+                return results
+            
+            # Log progress every few polls
+            if int(time.time() - start_time) % (poll_interval_seconds * 2) == 0:
+                elapsed_minutes = int((time.time() - start_time) / 60)
+                logger.info(f"Waiting for exports... {completed_count}/{len(emails)} completed ({elapsed_minutes} minutes elapsed)")
+            
+            time.sleep(poll_interval_seconds)
+        
+        # Timeout reached
+        elapsed_minutes = int((time.time() - start_time) / 60)
+        incomplete = [email for email, info in results.items() if not info['completed']]
+        logger.warning(f"Timeout reached after {elapsed_minutes} minutes. {len(incomplete)} export(s) still incomplete: {incomplete[:5]}")
+        
+        return results
+    
+    def zip_pst_files(self, archive_path: str, zip_filename: str = None, zip_location: str = None) -> Tuple[bool, str]:
         """
         Create a zip file containing all PST files in the archive path
         
         Args:
-            archive_path: Network path where PST files are located
+            archive_path: Path where PST files are located (local Exchange server path or network share)
             zip_filename: Name for the zip file (optional, will auto-generate if not provided)
+            zip_location: Where to create the zip file (optional, defaults to archive_path)
             
         Returns:
             Tuple of (success, zip_file_path/error_message)
@@ -452,7 +725,9 @@ class ExchangeManager:
                 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                 zip_filename = f"orphaned_mailboxes_{timestamp}.zip"
             
-            zip_path = f"{archive_path}\\{zip_filename}"
+            # Use zip_location if provided, otherwise use archive_path
+            zip_base_path = zip_location if zip_location else archive_path
+            zip_path = f"{zip_base_path}\\{zip_filename}"
             
             logger.info(f"Creating zip file: {zip_path} from PST files in {archive_path}")
             
@@ -494,13 +769,17 @@ class ExchangeManager:
         Remove individual PST files from archive path (keeping zip file if keep_zip is True)
         
         Args:
-            archive_path: Network path where PST files are located
+            archive_path: Path where PST files are located (local Exchange server path or network share)
             keep_zip: If True, keep zip files and only remove PST files
             
         Returns:
             Tuple of (success, message)
         """
         try:
+            if not archive_path:
+                logger.warning("Cannot cleanup PST files: archive_path is empty")
+                return False, "Archive path is empty"
+            
             logger.info(f"Cleaning up PST files in {archive_path}, keep_zip={keep_zip}")
             
             if keep_zip:
@@ -566,6 +845,75 @@ class ExchangeManager:
                 
         except Exception as e:
             logger.error(f"Error removing mailbox {email}: {str(e)}")
+            return False, str(e)
+    
+    def download_zip_file(self, zip_path: str) -> Tuple[bool, bytes, str]:
+        """
+        Download a zip file from Exchange server to the Flask app
+        
+        Args:
+            zip_path: Full path to the zip file on Exchange server (e.g., C:\\Temp\\ExchangeArchives\\file.zip)
+            
+        Returns:
+            Tuple of (success, file_bytes, error_message)
+            If success is False, file_bytes will be None
+        """
+        try:
+            logger.info(f"Downloading zip file from Exchange server: {zip_path}")
+            
+            # Use PowerShell to read the file and convert to base64
+            # We'll read the file in chunks to avoid command line length limits
+            command = f"$filePath='{zip_path}';if(Test-Path $filePath){{$bytes=[System.IO.File]::ReadAllBytes($filePath);[System.Convert]::ToBase64String($bytes)}}else{{'File not found'}}"
+            
+            success, stdout, stderr = self._run_powershell_command(command)
+            
+            if success and stdout and "File not found" not in stdout:
+                try:
+                    import base64
+                    file_bytes = base64.b64decode(stdout.strip())
+                    logger.info(f"Successfully downloaded zip file: {len(file_bytes)} bytes")
+                    return True, file_bytes, None
+                except Exception as e:
+                    logger.error(f"Failed to decode base64 file data: {str(e)}")
+                    return False, None, f"Failed to decode file: {str(e)}"
+            else:
+                error_msg = stderr if stderr else "File not found or download failed"
+                logger.error(f"Failed to download zip file: {error_msg}")
+                return False, None, error_msg
+                
+        except Exception as e:
+            logger.error(f"Exception downloading zip file: {str(e)}", exc_info=True)
+            return False, None, str(e)
+    
+    def transfer_zip_file(self, zip_path: str, destination_path: str) -> Tuple[bool, str]:
+        """
+        Transfer a zip file from Exchange server to a file store server
+        
+        Args:
+            zip_path: Full path to the zip file on Exchange server
+            destination_path: Destination path on file store server (network share)
+            
+        Returns:
+            Tuple of (success, message/error)
+        """
+        try:
+            logger.info(f"Transferring zip file from {zip_path} to {destination_path}")
+            
+            # Use PowerShell to copy the file to the network share
+            command = f"$src='{zip_path}';$dest='{destination_path}';if(Test-Path $src){{Copy-Item -Path $src -Destination $dest -Force -ErrorAction Stop;'Transferred successfully'}}else{{'Source file not found'}}"
+            
+            success, stdout, stderr = self._run_powershell_command(command)
+            
+            if success and "Transferred successfully" in stdout:
+                logger.info(f"Successfully transferred zip file to: {destination_path}")
+                return True, f"File transferred to {destination_path}"
+            else:
+                error_msg = stderr if stderr else stdout
+                logger.error(f"Failed to transfer zip file: {error_msg}")
+                return False, f"Failed to transfer: {error_msg}"
+                
+        except Exception as e:
+            logger.error(f"Exception transferring zip file: {str(e)}", exc_info=True)
             return False, str(e)
     
     def test_connection(self) -> Tuple[bool, str]:

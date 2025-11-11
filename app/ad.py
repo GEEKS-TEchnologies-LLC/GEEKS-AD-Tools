@@ -51,6 +51,72 @@ def get_ad_config():
     with open(CONFIG_PATH, 'r') as f:
         return json.load(f)
 
+def get_organization_ous(base_dn=None):
+    """
+    Get organization-specific OU paths from configuration.
+    Returns defaults if not configured.
+    
+    Args:
+        base_dn: Base DN to append to OU paths (if not included in config)
+        
+    Returns:
+        Dictionary with OU paths and labels
+    """
+    config = get_ad_config()
+    if not config:
+        base_dn = base_dn or 'DC=example,DC=com'
+        return {
+            'primary_users_ou': base_dn,
+            'disabled_users_ou': f'OU=Disabled Users,{base_dn}',
+            'service_accounts_ou': f'OU=Service Accounts,{base_dn}',
+            'internal_tools_ou': f'OU=Internal Tools,{base_dn}',
+            'primary_users_label': 'Users'
+        }
+    
+    org_ous = config.get('organization_ous', {})
+    base_dn = base_dn or config.get('ad_base_dn', 'DC=example,DC=com')
+    
+    # Helper to ensure OU path ends with base_dn
+    def ensure_base_dn(ou_path):
+        if not ou_path:
+            return base_dn
+        if base_dn.lower() in ou_path.lower():
+            return ou_path
+        return f'{ou_path},{base_dn}'
+    
+    return {
+        'primary_users_ou': ensure_base_dn(org_ous.get('primary_users_ou', base_dn)),
+        'disabled_users_ou': ensure_base_dn(org_ous.get('disabled_users_ou', f'OU=Disabled Users')),
+        'service_accounts_ou': ensure_base_dn(org_ous.get('service_accounts_ou', f'OU=Service Accounts')),
+        'internal_tools_ou': ensure_base_dn(org_ous.get('internal_tools_ou', f'OU=Internal Tools')),
+        'primary_users_label': org_ous.get('primary_users_label', 'Users')
+    }
+
+def get_primary_users_base(base_dn=None):
+    """Get the primary users OU base DN"""
+    org_ous = get_organization_ous(base_dn)
+    return org_ous['primary_users_ou']
+
+def get_disabled_users_ou(base_dn=None):
+    """Get the disabled users OU DN"""
+    org_ous = get_organization_ous(base_dn)
+    return org_ous['disabled_users_ou']
+
+def get_service_accounts_ou(base_dn=None):
+    """Get the service accounts OU DN"""
+    org_ous = get_organization_ous(base_dn)
+    return org_ous['service_accounts_ou']
+
+def get_internal_tools_ou(base_dn=None):
+    """Get the internal tools OU DN"""
+    org_ous = get_organization_ous(base_dn)
+    return org_ous['internal_tools_ou']
+
+def get_primary_users_label():
+    """Get the label for primary users OU"""
+    org_ous = get_organization_ous()
+    return org_ous['primary_users_label']
+
 def parse_ldap_error(e):
     if isinstance(e, LDAPBindError):
         return 'Invalid credentials. Please check the Bind DN and password.'
@@ -104,16 +170,18 @@ def search_users(query, **ad_args):
     # Combine filters
     filter_str = '(&' + ''.join(filters) + ')'
     
-    # Search within Sunray Users OU instead of using distinguishedName filters
+    # Search within primary users OU instead of using distinguishedName filters
     base_dn = _get_base_dn(ad_args)
-    sunray_users_base = f'OU=Sunray Users,OU=Sunray,{base_dn}'
+    org_ous = get_organization_ous(base_dn)
+    primary_users_base = org_ous['primary_users_ou']
+    disabled_users_ou = org_ous['disabled_users_ou']
     
-    print(f"DEBUG: search_users - escaped_query: '{escaped_query}', status_filter: '{status_filter}', exclude_ous: {exclude_ous}, filter_str: '{filter_str}', sunray_users_base: '{sunray_users_base}'")
+    print(f"DEBUG: search_users - escaped_query: '{escaped_query}', status_filter: '{status_filter}', exclude_ous: {exclude_ous}, filter_str: '{filter_str}', primary_users_base: '{primary_users_base}'")
     
     with ad_connection(**ad_args) as conn:
         try:
-            print(f"DEBUG: search_users - executing search with filter: '{filter_str}' in base: '{sunray_users_base}'")
-            conn.search(sunray_users_base, filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass', 'employeeID', 'userAccountControl'])
+            print(f"DEBUG: search_users - executing search with filter: '{filter_str}' in base: '{primary_users_base}'")
+            conn.search(primary_users_base, filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass', 'employeeID', 'userAccountControl'])
             print(f"DEBUG: search_users - search completed, found {len(conn.entries)} entries")
             
             for entry in conn.entries:
@@ -132,7 +200,7 @@ def search_users(query, **ad_args):
                     should_exclude = False
                     
                     # Always exclude users in Disabled Users OU
-                    if 'OU=Disabled Users' in user_dn:
+                    if disabled_users_ou in user_dn or 'OU=Disabled Users' in user_dn:
                         should_exclude = True
                         print(f"DEBUG: search_users - excluding user in Disabled Users OU: {user_dn}")
                     
@@ -147,9 +215,10 @@ def search_users(query, **ad_args):
                     if not should_exclude:
                         dn_parts = entry.distinguishedName.value.split(',')
                         ou_parts = [part[3:] for part in dn_parts if part.startswith('OU=')]
-                        if 'Sunray Users' in ou_parts:
-                            idx = ou_parts.index('Sunray Users')
-                            # Take Sunray Users and all OUs to the right (closer to the user), reverse for left-to-right
+                        primary_label = org_ous['primary_users_label']
+                        if primary_label in ou_parts:
+                            idx = ou_parts.index(primary_label)
+                            # Take primary users OU and all OUs to the right (closer to the user), reverse for left-to-right
                             display_ous = list(reversed(ou_parts[:idx+1]))
                             ou_display = ' → '.join(display_ous)
                         else:

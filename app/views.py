@@ -35,9 +35,7 @@ import ldap3
 import json
 from datetime import datetime, timezone
 from flask import session
-# License validation import
-from .license_utils import get_license_info, validate_license, is_license_or_trial_valid, is_plus_activated, is_reporting_activated
-from app import LICENSE_VALID
+# License validation removed - no license server available
 import csv
 import io
 from werkzeug.utils import secure_filename
@@ -75,17 +73,15 @@ def save_branding_config(branding_data):
 
 @main.before_app_request
 def enforce_setup():
-    # Allow access to setup, admin_register, admin_login, welcome, home, static, and license entry without AD config or valid license
+    # Allow access to setup, admin_register, admin_login, welcome, home, and static without AD config
     allowed_endpoints = (
-        'main.setup', 'main.admin_register', 'main.admin_login', 'main.welcome', 'main.home', 'main.license_entry', 'static'
+        'main.setup', 'main.admin_register', 'main.admin_login', 'main.welcome', 'main.home', 'static'
     )
     if not get_ad_config() and request.endpoint not in allowed_endpoints:
         return redirect(url_for('main.home'))
 
 @main.route('/')
 def home():
-    if not is_license_or_trial_valid() and request.endpoint != 'main.license_entry':
-        return redirect(url_for('main.license_entry'))
     config = get_ad_config()
     if not config:
         return render_template('welcome.html')
@@ -94,18 +90,16 @@ def home():
         'home.html',
         config=config,
         branding=branding,
-        email_control_activated=is_plus_activated(),
-        password_reset_activated=is_reporting_activated()
+        email_control_activated=False,
+        password_reset_activated=False
     )
 
 @main.route('/welcome')
 def welcome():
-    if not is_license_or_trial_valid() and request.endpoint != 'main.license_entry':
-        return redirect(url_for('main.license_entry'))
     return render_template(
         'welcome.html',
-        email_control_activated=is_plus_activated(),
-        password_reset_activated=is_reporting_activated()
+        email_control_activated=False,
+        password_reset_activated=False
     )
 
 def admin_required(f):
@@ -623,15 +617,20 @@ def user_search():
         'with_email': 0,
         'without_email': 0,
         'active_users': 0,  # Enabled users not in excluded OUs
-        'sunray_users_total': 0,  # Total users in Sunray Users OU
+        'primary_users_total': 0,  # Total users in primary users OU
         'service_accounts': 0,
         'internal_tools': 0
     }
     
+    # Get organization OU configuration
+    from .ad import get_organization_ous, get_primary_users_label
+    org_ous = get_organization_ous(ad_args.get('ad_base_dn'))
+    primary_users_label = get_primary_users_label()
+    
     # Count users by status and email
     for user in users:
-        # All users shown are already filtered to be in Sunray Users OU and not in Disabled Users OU
-        user_stats['sunray_users_total'] += 1
+        # All users shown are already filtered to be in primary users OU and not in Disabled Users OU
+        user_stats['primary_users_total'] += 1
         
         if user.get('accountStatus') == 'enabled':
             user_stats['total_enabled'] += 1
@@ -653,9 +652,12 @@ def user_search():
             mail = (u.get('mail') or '').strip()
             if not mail:
                 continue
-            if 'Service Accounts' in dn:
+            # Check if user is in Service Accounts or Internal Tools OUs
+            service_accounts_ou = org_ous['service_accounts_ou']
+            internal_tools_ou = org_ous['internal_tools_ou']
+            if service_accounts_ou in dn or 'Service Accounts' in dn:
                 user_stats['service_accounts'] += 1
-            elif 'Internal Tools' in dn:
+            elif internal_tools_ou in dn or 'Internal Tools' in dn:
                 user_stats['internal_tools'] += 1
     except Exception:
         pass
@@ -669,6 +671,7 @@ def user_search():
         exclude_ous_str=','.join(exclude_ous),
         ous=ous, 
         base_dn=config['ad_base_dn'],
+        primary_users_label=primary_users_label,
         page=page,
         total_pages=total_pages,
         total_users=total_users,
@@ -1212,7 +1215,7 @@ def get_orphaned_mailboxes():
         base_dn = ad_config['ad_base_dn']
         user_emails = set()
         
-        # Get all enabled users from Sunray Users OU (including service accounts and internal tools)
+        # Get all enabled users from primary users OU (including service accounts and internal tools)
         all_users = search_users('', status_filter='enabled', exclude_ous=[], **ad_args)
         user_emails.update([user.get('mail').lower() for user in all_users if user.get('mail')])
         
@@ -1320,7 +1323,7 @@ def export_orphaned_mailboxes():
         base_dn = ad_config['ad_base_dn']
         user_emails = set()
         
-        # Get all enabled users from Sunray Users OU (including service accounts and internal tools)
+        # Get all enabled users from primary users OU (including service accounts and internal tools)
         all_users = search_users('', status_filter='enabled', exclude_ous=[], **ad_args)
         user_emails.update([user.get('mail').lower() for user in all_users if user.get('mail')])
         
@@ -1430,7 +1433,7 @@ def export_orphaned_mailboxes():
 @login_required
 @admin_required
 def archive_orphaned_mailboxes():
-    """Archive orphaned mailboxes to PST, zip them, and optionally remove them"""
+    """Archive orphaned mailboxes to PST, zip them on Exchange server, then download or transfer"""
     import zipfile
     import shutil
     import os
@@ -1444,12 +1447,16 @@ def archive_orphaned_mailboxes():
     try:
         # Get request parameters
         data = request.get_json()
-        archive_path = data.get('archive_path', '')  # Network share path (e.g., \\server\share\archives)
+        use_local_temp = data.get('use_local_temp', True)  # Use local Exchange temp by default
+        archive_path = data.get('archive_path', '')  # Local Exchange path or network share (if not using temp)
         remove_after_archive = data.get('remove_after_archive', False)  # Whether to remove mailboxes after archiving
-        zip_path = data.get('zip_path', '')  # Path to save zip file (local or network path)
+        download_zip = data.get('download_zip', False)  # Whether to download zip file to Flask app
+        transfer_to_file_store = data.get('transfer_to_file_store', False)  # Whether to transfer to file store
+        file_store_path = data.get('file_store_path', '')  # File store network path (e.g., \\server\share\archives)
         
-        if not archive_path:
-            return jsonify({'success': False, 'message': 'Archive path is required'})
+        # If using local temp, archive_path can be empty (will use system temp)
+        if not use_local_temp and not archive_path:
+            return jsonify({'success': False, 'message': 'Archive path is required when not using local temp'})
         
         # Get AD config to find orphaned mailboxes
         ad_config = get_ad_config()
@@ -1475,6 +1482,9 @@ def archive_orphaned_mailboxes():
         try:
             import ldap3
             from ldap3 import Server, Connection, ALL, SUBTREE
+            from .ad import get_organization_ous
+            org_ous = get_organization_ous(ad_config['ad_base_dn'])
+            
             server = Server(ad_config['ad_server'], port=int(ad_config['ad_port']), get_info=ALL)
             conn = Connection(server, 
                              user=ad_config['ad_bind_dn'], 
@@ -1482,16 +1492,15 @@ def archive_orphaned_mailboxes():
                              auto_bind=True)
             
             # Search Service Accounts OU
-            if 'Service Accounts' in str(base_dn) or True:
-                search_base = f"OU=Service Accounts,OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal"
-                conn.search(search_base, '(&(objectClass=user)(mail=*))', attributes=['mail'])
-                for entry in conn.entries:
-                    mail = entry.mail.values[0] if hasattr(entry, 'mail') and entry.mail.values else None
-                    if mail:
-                        user_emails.add(mail.lower())
+            search_base = org_ous['service_accounts_ou']
+            conn.search(search_base, '(&(objectClass=user)(mail=*))', attributes=['mail'])
+            for entry in conn.entries:
+                mail = entry.mail.values[0] if hasattr(entry, 'mail') and entry.mail.values else None
+                if mail:
+                    user_emails.add(mail.lower())
             
             # Search Internal Tools OU
-            search_base = f"OU=Internal Tools,OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal"
+            search_base = org_ous['internal_tools_ou']
             conn.search(search_base, '(&(objectClass=user)(mail=*))', attributes=['mail'])
             for entry in conn.entries:
                 mail = entry.mail.values[0] if hasattr(entry, 'mail') and entry.mail.values else None
@@ -1535,7 +1544,8 @@ def archive_orphaned_mailboxes():
             current_app.logger.info(f"Archiving mailbox {idx}/{len(orphaned_mailboxes)}: {email}")
             
             try:
-                success, message = exchange.archive_mailbox(email, archive_path)
+                # Use local temp if specified, otherwise use network share
+                success, message = exchange.archive_mailbox(email, archive_path, use_local_temp=use_local_temp)
                 
                 if success:
                     archived_count += 1
@@ -1549,65 +1559,111 @@ def archive_orphaned_mailboxes():
                 failed_archives.append({'email': email, 'error': str(e)})
         
         # Wait for export requests to complete (poll status)
-        # Note: This is a simplified version - in production, you'd want to poll until all complete
-        current_app.logger.info(f"Created {archived_count} export requests. Waiting for exports to start...")
+        current_app.logger.info(f"Created {archived_count} export requests. Waiting for exports to complete...")
         if export_requests:
             current_app.logger.info(f"Export request details: {export_requests[:5]}")  # Log first 5
         
-        # Wait for PST files to be created (give exports time to complete)
-        # Note: For production, you'd want to poll Get-MailboxExportRequest status until all are complete
-        current_app.logger.info("Waiting for PST exports to complete (this may take a while for large mailboxes)...")
-        wait_time = min(len(export_requests) * 30, 600)  # Wait up to 10 minutes or 30 seconds per mailbox
-        current_app.logger.info(f"Waiting {wait_time} seconds for exports to complete...")
-        time.sleep(wait_time)
+        # Poll export request status until all complete
+        # Get list of emails that were successfully queued
+        export_emails = [req['email'] for req in export_requests if 'email' in req]
+        
+        if export_emails:
+            current_app.logger.info(f"Polling export status for {len(export_emails)} mailboxes...")
+            # Wait up to 60 minutes, polling every 30 seconds
+            export_status = exchange.wait_for_exports_complete(export_emails, max_wait_minutes=60, poll_interval_seconds=30)
+            
+            # Check if all completed
+            incomplete = [email for email, info in export_status.items() if not info.get('completed', False)]
+            if incomplete:
+                current_app.logger.warning(f"{len(incomplete)} export(s) did not complete: {incomplete[:5]}")
+            else:
+                current_app.logger.info("All export requests completed successfully!")
         
         # Create zip file on Exchange server containing all PST files
         zip_file_path = None
+        zip_file_downloaded = False
+        zip_file_bytes = None
+        
         if archived_count > 0:
-            current_app.logger.info(f"Creating zip file from {archived_count} PST files in {archive_path}")
+            # If using local temp and archive_path is empty, we need to get the actual temp path
+            actual_archive_path = archive_path
+            if use_local_temp and (not archive_path or archive_path == ''):
+                # Get the temp directory path that was used for exports
+                get_temp_cmd = "[System.IO.Path]::Combine($env:TEMP, 'ExchangeArchives')"
+                temp_success, temp_stdout, temp_stderr = exchange._run_powershell_command(get_temp_cmd)
+                if temp_success and temp_stdout:
+                    actual_archive_path = temp_stdout.strip()
+                    current_app.logger.info(f"Resolved temp archive path: {actual_archive_path}")
+                else:
+                    # Fallback
+                    actual_archive_path = 'C:\\Temp\\ExchangeArchives'
+                    current_app.logger.warning(f"Failed to resolve temp path, using fallback: {actual_archive_path}")
+            
+            current_app.logger.info(f"Creating zip file from {archived_count} PST files in {actual_archive_path}")
             
             # Generate zip filename with timestamp
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             zip_filename = f"orphaned_mailboxes_{timestamp}.zip"
             
-            # Create zip file on Exchange server (same location as PST files)
-            success, result = exchange.zip_pst_files(archive_path, zip_filename)
+            # Use the resolved archive path
+            zip_location = actual_archive_path if actual_archive_path else archive_path
             
-            if success:
-                zip_file_path = result  # Path to zip file on Exchange server
-                current_app.logger.info(f"Successfully created zip file: {zip_file_path}")
+            # Create zip file on Exchange server (in same location as PST files or temp)
+            zip_success = False
+            zip_result = None
+            zip_success, zip_result = exchange.zip_pst_files(actual_archive_path, zip_filename, zip_location=zip_location)
+            
+            if zip_success:
+                zip_file_path = zip_result  # Path to zip file on Exchange server
+                current_app.logger.info(f"Successfully created zip file on Exchange server: {zip_file_path}")
                 
-                # If zip_path is provided, copy zip file to that location
-                if zip_path:
-                    current_app.logger.info(f"Copying zip file to: {zip_path}")
-                    # Use PowerShell to copy the zip file
-                    try:
-                        copy_command = f"Copy-Item -Path '{zip_file_path}' -Destination '{zip_path}' -Force;'Copied successfully'"
-                        copy_success, copy_stdout, copy_stderr = exchange._run_powershell_command(copy_command)
-                        if copy_success:
-                            current_app.logger.info(f"Zip file copied to: {zip_path}")
-                            zip_file_path = os.path.join(zip_path, zip_filename) if os.path.isdir(zip_path) else zip_path
-                        else:
-                            current_app.logger.warning(f"Failed to copy zip file: {copy_stderr[:500]}")
-                    except Exception as e:
-                        current_app.logger.warning(f"Error copying zip file: {str(e)}")
+                # Download zip file if requested
+                if download_zip:
+                    current_app.logger.info("Downloading zip file from Exchange server...")
+                    download_success, zip_bytes, download_error = exchange.download_zip_file(zip_file_path)
+                    if download_success:
+                        zip_file_bytes = zip_bytes
+                        zip_file_downloaded = True
+                        current_app.logger.info(f"Successfully downloaded zip file: {len(zip_bytes)} bytes")
+                    else:
+                        current_app.logger.warning(f"Failed to download zip file: {download_error}")
+                
+                # Transfer zip file to file store if requested
+                if transfer_to_file_store and file_store_path:
+                    current_app.logger.info(f"Transferring zip file to file store: {file_store_path}")
+                    transfer_success, transfer_message = exchange.transfer_zip_file(zip_file_path, file_store_path)
+                    if transfer_success:
+                        current_app.logger.info(f"Successfully transferred zip file: {transfer_message}")
+                        # Update zip_file_path to reflect transfer location
+                        zip_file_path = os.path.join(file_store_path, zip_filename) if os.path.isdir(file_store_path) else file_store_path
+                    else:
+                        current_app.logger.warning(f"Failed to transfer zip file: {transfer_message}")
+                elif transfer_to_file_store and not file_store_path:
+                    current_app.logger.warning("transfer_to_file_store is True but file_store_path is not provided")
             else:
-                current_app.logger.error(f"Failed to create zip file: {result}")
+                current_app.logger.error(f"Failed to create zip file: {zip_result}")
+                # DO NOT set zip_file_path if zip creation failed
+                zip_file_path = None
             
             # Clean up individual PST files after zipping (keep only zip file)
-            if zip_file_path and success:
+            # ONLY clean up if zip was successfully created
+            if zip_file_path and zip_success:
                 current_app.logger.info("Cleaning up individual PST files (keeping zip file only)...")
-                cleanup_success, cleanup_message = exchange.cleanup_pst_files(archive_path, keep_zip=True)
+                cleanup_success, cleanup_message = exchange.cleanup_pst_files(actual_archive_path if 'actual_archive_path' in locals() else archive_path, keep_zip=True)
                 if cleanup_success:
                     current_app.logger.info(f"Cleanup successful: {cleanup_message}")
                 else:
                     current_app.logger.warning(f"Cleanup warning: {cleanup_message}")
+            else:
+                current_app.logger.warning(f"NOT cleaning up PST files because zip creation failed. PST files may still be in: {actual_archive_path if 'actual_archive_path' in locals() else archive_path}")
         
         # Remove mailboxes if requested
+        # IMPORTANT: Only remove mailboxes if zip was successfully created to avoid data loss
         removed_count = 0
         failed_removals = []
         
-        if remove_after_archive:
+        if remove_after_archive and zip_file_path and zip_success:
+            current_app.logger.info("Removing mailboxes after successful archive...")
             for mailbox in orphaned_mailboxes:
                 email = mailbox.get('PrimarySmtpAddress')
                 if not email:
@@ -1629,7 +1685,7 @@ def archive_orphaned_mailboxes():
         log_admin_action('archive_orphaned_mailboxes', 'success' if archived_count > 0 else 'failure',
                         f"Archived {archived_count} orphaned mailboxes, removed {removed_count}, failed: {len(failed_archives)}")
         
-        return jsonify({
+        response_data = {
             'success': True,
             'message': f'Archived {archived_count} of {len(orphaned_mailboxes)} orphaned mailboxes',
             'archived': archived_count,
@@ -1638,8 +1694,17 @@ def archive_orphaned_mailboxes():
             'failed_archives': failed_archives,
             'failed_removals': failed_removals,
             'zip_file': zip_file_path if zip_file_path else None,
-            'archive_path': archive_path
-        })
+            'archive_path': archive_path,
+            'zip_downloaded': zip_file_downloaded
+        }
+        
+        # If zip file was downloaded, include it in response (base64 encoded)
+        if zip_file_downloaded and zip_file_bytes:
+            import base64
+            response_data['zip_file_base64'] = base64.b64encode(zip_file_bytes).decode('utf-8')
+            response_data['zip_filename'] = zip_filename
+        
+        return jsonify(response_data)
         
     except Exception as e:
         current_app.logger.error(f"Error archiving orphaned mailboxes: {str(e)}")
@@ -3805,15 +3870,17 @@ def get_password_status_stats():
                 elif isinstance(max_age, (int, float)):
                     max_pwd_age_days = abs(max_age) // (10**7 * 60 * 60 * 24)
         
-        # Search in Sunray Users OU (matching user search behavior)
-        base_dn = config['ad_base_dn']
-        sunray_users_base = f'OU=Sunray Users,OU=Sunray,{base_dn}'
+        # Search in primary users OU (matching user search behavior)
+        from .ad import get_organization_ous
+        org_ous = get_organization_ous(base_dn)
+        primary_users_base = org_ous['primary_users_ou']
+        disabled_users_ou = org_ous['disabled_users_ou']
         
         # Default excluded OUs (matching user search behavior)
-        default_exclude_ous = ['OU=Disabled Users', 'Service Accounts', 'Internal Tools']
+        default_exclude_ous = [disabled_users_ou, org_ous['service_accounts_ou'], org_ous['internal_tools_ou']]
         
-        # Get all users with password attributes - search only in Sunray Users OU
-        conn.search(sunray_users_base, 
+        # Get all users with password attributes - search only in primary users OU
+        conn.search(primary_users_base, 
                    '(objectClass=user)', 
                    search_scope=SUBTREE,
                    attributes=['sAMAccountName', 'displayName', 'distinguishedName', 
@@ -3855,7 +3922,7 @@ def get_password_status_stats():
             should_exclude = False
             
             # Always exclude users in Disabled Users OU
-            if 'OU=Disabled Users' in user_dn:
+            if disabled_users_ou in user_dn or 'OU=Disabled Users' in user_dn:
                 should_exclude = True
                 if debug_enabled:
                     print(f"DEBUG: Excluding user in Disabled Users OU: {user_dn}")
@@ -3998,15 +4065,17 @@ def drilldown_passwords(status):
                 elif isinstance(max_age, (int, float)):
                     max_pwd_age_days = abs(max_age) // (10**7 * 60 * 60 * 24)
         
-        # Search in Sunray Users OU (matching user search behavior)
-        base_dn = config['ad_base_dn']
-        sunray_users_base = f'OU=Sunray Users,OU=Sunray,{base_dn}'
+        # Search in primary users OU (matching user search behavior)
+        from .ad import get_organization_ous
+        org_ous = get_organization_ous(base_dn)
+        primary_users_base = org_ous['primary_users_ou']
+        disabled_users_ou = org_ous['disabled_users_ou']
         
         # Default excluded OUs (matching user search behavior)
-        default_exclude_ous = ['OU=Disabled Users', 'Service Accounts', 'Internal Tools']
+        default_exclude_ous = [disabled_users_ou, org_ous['service_accounts_ou'], org_ous['internal_tools_ou']]
         
-        # Get all users with password attributes - search only in Sunray Users OU
-        conn.search(sunray_users_base, 
+        # Get all users with password attributes - search only in primary users OU
+        conn.search(primary_users_base, 
                    '(objectClass=user)', 
                    search_scope=SUBTREE,
                    attributes=['sAMAccountName', 'displayName', 'distinguishedName', 'mail',
@@ -4041,7 +4110,7 @@ def drilldown_passwords(status):
             should_exclude = False
             
             # Always exclude users in Disabled Users OU
-            if 'OU=Disabled Users' in user_dn:
+            if disabled_users_ou in user_dn or 'OU=Disabled Users' in user_dn:
                 should_exclude = True
                 if debug_enabled:
                     print(f"DEBUG: Excluding user in Disabled Users OU: {user_dn}")
@@ -4393,33 +4462,7 @@ def drilldown_userstatus(status):
         flash(f'Error retrieving user status data: {e}', 'error')
         return redirect(url_for('main.admin_dashboard'))
 
-# Route for license entry
-@main.route('/license', methods=['GET', 'POST'])
-def license_entry():
-    # Do not redirect from here
-    message = None
-    if request.method == 'POST':
-        new_key = request.form.get('license_key', '').strip()
-        if new_key:
-            # Use correct absolute path for config.json
-            config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-            try:
-                import json
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                config['base_license_key'] = new_key
-                with open(config_path, 'w') as f:
-                    json.dump(config, f, indent=2)
-                # Re-validate
-                if is_license_or_trial_valid():
-                    return redirect(url_for('main.home'))
-                else:
-                    message = 'Invalid license key.'
-            except Exception as e:
-                message = f'Error saving license: {e}'
-        else:
-            message = 'Please enter a license key.'
-    return render_template('license_entry.html', message=message)
+# License entry route removed - no license server available
 
 @main.route('/admin/csv-import', methods=['GET', 'POST'])
 @login_required
@@ -4721,7 +4764,8 @@ def bulk_disable_users():
     }
     
     # Get disabled users OU
-    disabled_ou = request.form.get('disabled_ou', 'OU=Disabled Users,DC=sunray,DC=internal')
+    from .ad import get_disabled_users_ou
+    disabled_ou = request.form.get('disabled_ou', get_disabled_users_ou())
     
     success_count = 0
     error_count = 0
@@ -4827,7 +4871,8 @@ def bulk_action_ad_users():
     """Handle bulk actions on selected AD users"""
     action_type = request.form.get('action_type')
     selected_users = request.form.getlist('selected_users')
-    disabled_ou = request.form.get('disabled_ou', 'OU=Disabled Users,DC=sunray,DC=internal')
+    from .ad import get_disabled_users_ou
+    disabled_ou = request.form.get('disabled_ou', get_disabled_users_ou())
     
     if not action_type or not selected_users:
         flash('No action or users selected', 'warning')

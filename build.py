@@ -399,9 +399,48 @@ class GEEKSBuildSystem:
             self.log("Credential provider build skipped (not on Windows)", "INFO", "yellow")
             return True
     
+    def prompt_for_port(self):
+        """Prompt user for preferred port with default of 5000"""
+        self.log("", "INFO", "white")  # Empty line for spacing
+        self.log("=" * 60, "INFO", "cyan")
+        self.log("Port Configuration", "INFO", "cyan")
+        self.log("=" * 60, "INFO", "cyan")
+        
+        while True:
+            try:
+                port_input = input(f"\n{self.colors['yellow']}Please enter preferred port (or press Enter for default 5000): {self.colors['end']}").strip()
+                
+                if not port_input:
+                    # User pressed Enter, use default
+                    port = 5000
+                    self.log(f"Using default port: {port}", "INFO", "green")
+                    break
+                else:
+                    # Validate port number
+                    port = int(port_input)
+                    if 1 <= port <= 65535:
+                        self.log(f"Using port: {port}", "INFO", "green")
+                        break
+                    else:
+                        self.log("Port must be between 1 and 65535. Please try again.", "ERROR", "red")
+            except ValueError:
+                self.log("Invalid input. Please enter a number or press Enter for default.", "ERROR", "red")
+            except KeyboardInterrupt:
+                self.log("\nBuild cancelled by user.", "INFO", "yellow")
+                sys.exit(1)
+        
+        return port
+    
     def create_configuration(self):
         """Create default configuration files"""
         self.log("Creating configuration files...", "INFO", "blue")
+        
+        # Prompt for port if config.json doesn't exist
+        config_file = self.project_root / "config.json"
+        port = 5000  # Default port
+        
+        if not config_file.exists():
+            port = self.prompt_for_port()
         
         # Create default config.json
         config_data = {
@@ -413,14 +452,13 @@ class GEEKSBuildSystem:
             "admin_groups": ["Domain Admins"],
             "debug": False,
             "secret_key": "",
-            "portal_url": "http://localhost:5000"
+            "portal_url": f"http://localhost:{port}"
         }
         
-        config_file = self.project_root / "config.json"
         if not config_file.exists():
             with open(config_file, "w") as f:
                 json.dump(config_data, f, indent=2)
-            self.log("Created default config.json", "INFO", "green")
+            self.log(f"Created default config.json with port {port}", "INFO", "green")
         
         # Create .env file
         env_file = self.project_root / ".env"

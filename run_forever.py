@@ -3,9 +3,26 @@ import time
 import requests
 import os
 import signal
+import json
 
 LOCAL_VERSION_FILE = "app/version.py"
 GITHUB_VERSION_URL = "https://raw.githubusercontent.com/manayethas/GEEKS-AD-Plus/dev/app/version.py"
+
+def get_port_from_config():
+    """Get port from config.json, default to 5000"""
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                portal_url = config.get('portal_url', 'http://localhost:5000')
+                # Extract port from portal_url
+                if ':' in portal_url:
+                    port_str = portal_url.split(':')[-1].split('/')[0]
+                    return int(port_str)
+        except (json.JSONDecodeError, ValueError, KeyError):
+            pass
+    return 5000  # Default port
 
 
 def get_local_version():
@@ -29,10 +46,11 @@ def update_and_restart():
 
 
 def main():
+    port = get_port_from_config()
     while True:
         # Start the Flask app
         flask_proc = subprocess.Popen(["python3", "app.py"])
-        print("App started on http://0.0.0.0:5000. Checking for updates every 10 minutes.")
+        print(f"App started on http://0.0.0.0:{port}. Checking for updates every 10 minutes.")
         try:
             while True:
                 time.sleep(600)  # 10 minutes
