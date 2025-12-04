@@ -2731,6 +2731,11 @@ def manage_managers():
                 flash('Manager and employee are required.', 'danger')
                 return redirect(url_for('main.manage_managers'))
             
+            # Prevent managers from assigning themselves as direct reports
+            if manager_username.lower() == employee_username.lower():
+                flash('A manager cannot be assigned as their own direct report.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            
             # Get manager and employee details from AD
             managers = search_users(manager_username, **ad_args)
             employees = search_users(employee_username, **ad_args)
@@ -2748,6 +2753,11 @@ def manage_managers():
             employee_dn = employee.get('distinguishedName') or employee.get('dn')
             employee_display = employee.get('displayName') or employee.get('cn') or employee_username
             employee_dept = employee.get('department') or ''
+            
+            # Double-check: prevent self-assignment using DN comparison
+            if manager_dn and employee_dn and manager_dn.lower() == employee_dn.lower():
+                flash('A manager cannot be assigned as their own direct report.', 'danger')
+                return redirect(url_for('main.manage_managers'))
             
             # Check if same department
             manager_dept = manager.get('department') or ''
