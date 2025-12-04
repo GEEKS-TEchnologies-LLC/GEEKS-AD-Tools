@@ -2151,8 +2151,8 @@
                                 </label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="exportGroupByDept" checked>
-                                <label class="form-check-label" for="exportGroupByDept">
+                                <input class="form-check-input" type="checkbox" id="exportGroupByDepartment" checked>
+                                <label class="form-check-label" for="exportGroupByDepartment">
                                     Group by Department OU
                                 </label>
                             </div>
@@ -2179,12 +2179,9 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="cancelExportBtn">Cancel</button>
-                    <button type="button" class="btn btn-custom" id="applyFiltersBtn">
-                        <i class="fas fa-filter"></i> Apply Filters & Preview
-                    </button>
-                    <a href="#" class="btn btn-custom" id="exportBtn" style="display: none;" onclick="sessionStorage.removeItem('exportModalOpen'); sessionStorage.removeItem('exportFilters'); filtersApplied = false;">
+                    <button type="button" class="btn btn-custom" id="exportBtn">
                         <i class="fas fa-file-csv"></i> Export
-                    </a>
+                    </button>
                 </div>
             </div>
         </div>
@@ -2200,62 +2197,30 @@
         let currentExportFilters = {...originalFilters};
         let filtersApplied = false;
 
-        // Store original filters and reset when modal opens
+        // Initialize modal when it opens
         document.getElementById('exportFiltersModal').addEventListener('show.bs.modal', function() {
-            // Store current filters as original
-            originalFilters = {
-                query: '{{ query }}',
-                status_filter: '{{ status_filter }}',
-                exclude_ous: '{{ exclude_ous_str }}'
-            };
-            currentExportFilters = {...originalFilters};
-            filtersApplied = false;
-            
-            // Check if we have saved export settings to restore
-            const savedFilters = sessionStorage.getItem('exportFilters');
-            if (savedFilters) {
-                try {
-                    const filters = JSON.parse(savedFilters);
-                    document.getElementById('exportQuery').value = filters.query || '';
-                    const statusRadio = document.querySelector(`input[name="exportStatusFilter"][value="${filters.status_filter || 'all'}"]`);
-                    if (statusRadio) statusRadio.checked = true;
-                    document.getElementById('exportExcludeOUs').value = filters.exclude_ous || '';
-                    document.getElementById('exportFormatXlsx').checked = filters.format_xlsx || false;
-                    document.getElementById('formatLabel').textContent = filters.format_xlsx ? 'XLSX Format' : 'CSV Format';
-                } catch(e) {
-                    console.error('Error parsing saved filters:', e);
-                }
-            } else {
-                // Reset form to original values
-                document.getElementById('exportQuery').value = originalFilters.query || '';
-                const statusRadio = document.querySelector(`input[name="exportStatusFilter"][value="${originalFilters.status_filter || 'all'}"]`);
+            // Initialize with current page filters
+            document.getElementById('exportQuery').value = '{{ query }}';
+            document.getElementById('exportExcludeOUs').value = '{{ exclude_ous_str }}';
+            const currentStatusFilter = '{{ status_filter }}';
+            if (currentStatusFilter) {
+                const statusRadio = document.querySelector(`input[name="exportStatusFilter"][value="${currentStatusFilter}"]`);
                 if (statusRadio) statusRadio.checked = true;
-                document.getElementById('exportExcludeOUs').value = originalFilters.exclude_ous || '';
-                document.getElementById('exportFormatXlsx').checked = false;
-                document.getElementById('formatLabel').textContent = 'CSV Format';
             }
             
-            // Hide export button initially
-            const exportBtn = document.getElementById('exportBtn');
-            if (exportBtn) {
-                exportBtn.style.display = 'none';
-            }
+            // Set defaults
+            document.getElementById('exportRequireEmail').checked = true;
+            document.getElementById('exportGroupByDepartment').checked = true;
+            document.getElementById('exportFormatXlsx').checked = false;
+            document.getElementById('formatLabel').textContent = 'CSV Format';
             
             updateExportPreview();
         });
 
-        // Restore original filters when modal is closed (only if Cancel was clicked)
+        // Modal closed - no need to restore filters since we don't change the page
         document.getElementById('exportFiltersModal').addEventListener('hidden.bs.modal', function(event) {
-            // Only restore if filters were applied and user clicked Cancel
-            if (filtersApplied) {
-                // Clear saved filters
-                sessionStorage.removeItem('exportFilters');
-                // Remove any export button that was added
-                const exportArea = document.querySelector('.export-filtered-area');
-                if (exportArea) exportArea.remove();
-                // Revert to original filters
-                restoreOriginalFilters();
-            }
+            // Clear any saved export filters
+            sessionStorage.removeItem('exportFilters');
             filtersApplied = false;
         });
 
@@ -2281,9 +2246,12 @@
             radio.addEventListener('change', updateExportPreview);
         });
         document.getElementById('exportExcludeOUs').addEventListener('input', debouncedUpdatePreview);
+        document.getElementById('exportRequireEmail').addEventListener('change', updateExportPreview);
+        document.getElementById('exportGroupByDepartment').addEventListener('change', updateExportPreview);
         document.getElementById('exportFormatXlsx').addEventListener('change', function() {
             document.getElementById('formatLabel').textContent = this.checked ? 'XLSX Format' : 'CSV Format';
             updateExportButton();
+            updateExportPreview();
         });
 
         function updateExportPreview() {
@@ -2291,163 +2259,88 @@
             const statusFilter = document.querySelector('input[name="exportStatusFilter"]:checked').value;
             const excludeOUs = document.getElementById('exportExcludeOUs').value;
             const requireEmail = document.getElementById('exportRequireEmail').checked;
+            const groupByDepartment = document.getElementById('exportGroupByDepartment').checked;
             const format = document.getElementById('exportFormatXlsx').checked ? 'XLSX' : 'CSV';
             
             let preview = `Status: ${statusFilter === 'all' ? 'All Users' : statusFilter === 'enabled' ? 'Enabled Only' : 'Disabled Only'}`;
             if (query) preview += ` | Search: "${query}"`;
             if (excludeOUs) preview += ` | Exclude: ${excludeOUs}`;
             if (requireEmail) preview += ` | Requires Email`;
+            if (groupByDepartment) preview += ` | Grouped by Department`;
             preview += ` | Format: ${format}`;
             
             document.getElementById('exportPreview').textContent = preview;
         }
 
         function updateExportButton() {
+            // Update export button icon based on format
             const exportBtn = document.getElementById('exportBtn');
             const isXlsx = document.getElementById('exportFormatXlsx').checked;
-            if (exportBtn.href && exportBtn.href !== '#') {
-                // Update the format in the URL
-                exportBtn.href = exportBtn.href.replace(/format=(csv|xlsx)/, 'format=' + (isXlsx ? 'xlsx' : 'csv'));
-                // Update icon
-                exportBtn.querySelector('i').className = isXlsx ? 'fas fa-file-excel' : 'fas fa-file-csv';
-            }
-            updateExportPreview();
-        }
-
-        // Apply filters button
-        document.getElementById('applyFiltersBtn').addEventListener('click', function() {
-            const query = document.getElementById('exportQuery').value;
-            const statusFilter = document.querySelector('input[name="exportStatusFilter"]:checked').value;
-            const excludeOUs = document.getElementById('exportExcludeOUs').value;
-            
-            // Update current filters
-            currentExportFilters = {
-                query: query,
-                status_filter: statusFilter,
-                exclude_ous: excludeOUs
-            };
-            
-            // Build export URLs
-            let params = [];
-            if (query) params.push('query=' + encodeURIComponent(query));
-            if (statusFilter && statusFilter !== 'all') params.push('status_filter=' + encodeURIComponent(statusFilter));
-            if (excludeOUs) params.push('exclude_ous=' + encodeURIComponent(excludeOUs));
-            
-            const paramString = params.length > 0 ? '&' + params.join('&') : '';
-            
-            // Get selected format
-            const isXlsx = document.getElementById('exportFormatXlsx').checked;
-            const format = isXlsx ? 'xlsx' : 'csv';
-            
-            // Update export button URL and icon
-            const exportBtn = document.getElementById('exportBtn');
             if (exportBtn) {
-                exportBtn.href = '/admin/export/migration_ready?format=' + format + paramString;
                 const icon = exportBtn.querySelector('i');
                 if (icon) {
                     icon.className = isXlsx ? 'fas fa-file-excel' : 'fas fa-file-csv';
                 }
-                // Show export button
-                exportBtn.style.display = 'inline-block';
             }
-            
-            // Reload the user list with new filters (AJAX call)
-            loadFilteredUsers(query, statusFilter, excludeOUs);
-        });
+            updateExportPreview();
+        }
 
-        function loadFilteredUsers(query, statusFilter, excludeOUs) {
-            // Build URL with filters
-            let url = '/admin/users?';
-            const params = [];
+        // Export button - exports directly with filters, no page reload
+        document.getElementById('exportBtn').addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            // Get filter values from modal
+            const query = document.getElementById('exportQuery').value;
+            const statusFilter = document.querySelector('input[name="exportStatusFilter"]:checked').value;
+            const excludeOUs = document.getElementById('exportExcludeOUs').value;
+            const requireEmail = document.getElementById('exportRequireEmail').checked;
+            const groupByDepartment = document.getElementById('exportGroupByDepartment').checked;
+            const isXlsx = document.getElementById('exportFormatXlsx').checked;
+            const format = isXlsx ? 'xlsx' : 'csv';
+            
+            // Build export URL with filters
+            let params = [];
             if (query) params.push('query=' + encodeURIComponent(query));
             if (statusFilter && statusFilter !== 'all') params.push('status_filter=' + encodeURIComponent(statusFilter));
             if (excludeOUs) params.push('exclude_ous=' + encodeURIComponent(excludeOUs));
-            url += params.join('&');
+            if (requireEmail) params.push('require_email=1');
+            if (groupByDepartment) params.push('group_by_department=1');
+            params.push('format=' + format);
             
-            // Store export settings in sessionStorage (but don't auto-open modal)
-            sessionStorage.setItem('exportFilters', JSON.stringify({
-                query: query,
-                status_filter: statusFilter,
-                exclude_ous: excludeOUs,
-                format_xlsx: document.getElementById('exportFormatXlsx').checked
-            }));
+            const exportUrl = '/admin/export/migration_ready?' + params.join('&');
             
-            // Close modal before reload
-            const modalElement = document.getElementById('exportFiltersModal');
-            if (modalElement) {
-                const modal = bootstrap.Modal.getInstance(modalElement);
-                if (modal) modal.hide();
-            }
+            // Show loading state
+            const exportBtn = this;
+            const originalText = exportBtn.innerHTML;
+            exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting...';
+            exportBtn.disabled = true;
             
-            // Small delay then reload
+            // Create a temporary link to trigger download
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Close modal after a short delay
             setTimeout(function() {
-                window.location.href = url;
-            }, 100);
-        }
-
-        function restoreOriginalFilters() {
-            // Build URL with original filters
-            let url = '/admin/users?';
-            const params = [];
-            if (originalFilters.query) params.push('query=' + encodeURIComponent(originalFilters.query));
-            if (originalFilters.status_filter && originalFilters.status_filter !== 'all') {
-                params.push('status_filter=' + encodeURIComponent(originalFilters.status_filter));
-            }
-            if (originalFilters.exclude_ous) params.push('exclude_ous=' + encodeURIComponent(originalFilters.exclude_ous));
-            url += params.join('&');
-            
-            // Reload with original filters
-            window.location.href = url;
-        }
-
-        // Show export button on page if we have saved filters (after applying filters)
-        document.addEventListener('DOMContentLoaded', function() {
-            const savedFilters = sessionStorage.getItem('exportFilters');
-            if (savedFilters) {
-                try {
-                    const filters = JSON.parse(savedFilters);
-                    // Create a visible export button in the All Users section
-                    const userSection = document.querySelector('.glass-card:has(#userTable)');
-                    if (userSection) {
-                        const cardBody = userSection.querySelector('.card-body');
-                        if (cardBody) {
-                            // Check if export button area exists
-                            let exportArea = cardBody.querySelector('.export-filtered-area');
-                            if (!exportArea) {
-                                exportArea = document.createElement('div');
-                                exportArea.className = 'd-flex justify-content-end mb-3 export-filtered-area';
-                                cardBody.insertBefore(exportArea, cardBody.firstChild);
-                            }
-                            
-                            // Build export URL
-                            let params = [];
-                            if (filters.query) params.push('query=' + encodeURIComponent(filters.query));
-                            if (filters.status_filter && filters.status_filter !== 'all') params.push('status_filter=' + encodeURIComponent(filters.status_filter));
-                            if (filters.exclude_ous) params.push('exclude_ous=' + encodeURIComponent(filters.exclude_ous));
-                            const paramString = params.length > 0 ? '&' + params.join('&') : '';
-                            const format = filters.format_xlsx ? 'xlsx' : 'csv';
-                            
-                            // Create export button
-                            const exportBtn = document.createElement('a');
-                            exportBtn.href = '/admin/export/migration_ready?format=' + format + paramString;
-                            exportBtn.className = 'btn btn-sm btn-custom';
-                            exportBtn.innerHTML = '<i class="fas fa-file-' + (format === 'xlsx' ? 'excel' : 'csv') + '"></i> Export Filtered (' + format.toUpperCase() + ')';
-                            exportBtn.onclick = function() {
-                                sessionStorage.removeItem('exportFilters');
-                                this.parentElement.remove();
-                            };
-                            
-                            // Clear existing and add new
-                            exportArea.innerHTML = '';
-                            exportArea.appendChild(exportBtn);
-                        }
-                    }
-                } catch(e) {
-                    console.error('Error processing saved filters:', e);
-                    sessionStorage.removeItem('exportFilters');
+                const modalElement = document.getElementById('exportFiltersModal');
+                if (modalElement) {
+                    const modal = bootstrap.Modal.getInstance(modalElement);
+                    if (modal) modal.hide();
                 }
-            }
+                
+                // Reset button
+                exportBtn.innerHTML = originalText;
+                exportBtn.disabled = false;
+                
+                // Show success message
+                showFlashMessage('Export started. File will download shortly.', 'success');
+            }, 500);
         });
+
+
         // Statistics filter functions
         let currentStatsFilters = {
             includeDisabled: true,

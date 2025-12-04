@@ -107,11 +107,22 @@ class ExchangeManager:
             if result.status_code == 0:
                 return True, stdout, stderr
             else:
-                logger.error(f"PowerShell command failed with status {result.status_code}: {stderr[:500]}")
+                import traceback
+                error_trace = traceback.format_exc()
+                logger.error(f"PowerShell command failed with status {result.status_code}")
+                logger.error(f"Stdout (first 1000 chars): {stdout[:1000] if stdout else 'empty'}")
+                logger.error(f"Stderr (first 1000 chars): {stderr[:1000] if stderr else 'empty'}")
+                logger.error(f"Command: {command[:500]}...")  # Log first 500 chars of command
+                logger.debug(f"Full traceback: {error_trace}")
                 return False, stdout, stderr
                 
         except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
             logger.error(f"Error running PowerShell command: {str(e)}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Full traceback: {error_trace}")
+            logger.error(f"Command: {command[:500] if 'command' in locals() else 'N/A'}...")
             return False, "", str(e)
     
     def get_mailbox_sizes(self, user_emails: List[str]) -> Dict[str, Dict]:
@@ -208,14 +219,23 @@ class ExchangeManager:
                     logger.warning(f"Missing mailboxes for: {list(missing)[:5]}")
                 return result
             except json.JSONDecodeError as e:
+                import traceback
+                error_trace = traceback.format_exc()
                 logger.error(f"Failed to parse JSON output: {e}")
-                logger.error(f"Stdout (first 1000 chars): {stdout[:1000]}")
-                logger.error(f"Stderr (first 1000 chars): {stderr[:1000] if stderr else 'empty'}")
+                logger.error(f"JSON decode error type: {type(e).__name__}")
+                logger.error(f"Stdout (first 2000 chars): {stdout[:2000]}")
+                logger.error(f"Stderr (first 2000 chars): {stderr[:2000] if stderr else 'empty'}")
+                logger.error(f"Full traceback: {error_trace}")
+                logger.error(f"Email batch: {user_emails[:10] if 'user_emails' in locals() else 'N/A'}")
                 return {}
         else:
+            import traceback
+            error_trace = traceback.format_exc()
             logger.error(f"PowerShell command failed. Status: {success}")
-            logger.error(f"Stdout (first 1000 chars): {stdout[:1000] if stdout else 'empty'}")
-            logger.error(f"Stderr (first 1000 chars): {stderr[:1000] if stderr else 'empty'}")
+            logger.error(f"Stdout (first 2000 chars): {stdout[:2000] if stdout else 'empty'}")
+            logger.error(f"Stderr (first 2000 chars): {stderr[:2000] if stderr else 'empty'}")
+            logger.error(f"Full traceback: {error_trace}")
+            logger.error(f"Email batch: {user_emails[:10] if 'user_emails' in locals() else 'N/A'}")
             return {}
     
     def cleanup_mailbox(self, email: str, cleanup_options: Dict) -> Tuple[bool, str]:

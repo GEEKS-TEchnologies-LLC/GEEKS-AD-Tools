@@ -5,6 +5,31 @@ All notable changes to GEEKS-AD-Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2025-01-04
+
+### Added
+- **GitHub Token Configuration**: Secure GitHub token management in Admin Settings
+  - Token stored in encrypted credential storage (same as AD/Exchange passwords)
+  - System-level token (not per-user) for creating GitHub issues from bug reports
+  - Clear instructions for creating GitHub Personal Access Tokens
+  - Repository configuration in admin settings
+  - Falls back to GITHUB_TOKEN environment variable if not configured
+
+### Changed
+- **Filtered Export Improvements**:
+  - Export now works in background without page reload
+  - Direct file download without changing page state
+  - Removed "Apply Filters & Preview" button - export directly from modal
+  - Added `require_email` and `group_by_department` options to export modal
+  - Returns to previous view after export completes
+- **Bug Report System**:
+  - GitHub token now loaded from secure credential storage
+  - Better error messages directing users to admin settings
+  - Improved integration with GitHub API for issue creation
+
+### Fixed
+- Export functionality now properly handles empty results (returns empty file instead of redirect)
+
 ## [0.2.1] - 2025-01-04
 
 ### Added
