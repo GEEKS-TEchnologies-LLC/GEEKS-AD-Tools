@@ -1,16 +1,16 @@
 [Unit]
-Description=GEEKS-AD-Plus Flask App
+Description=GEEKS-AD-Tools Flask App
 After=network.target
 
 [Service]
 Type=simple
 User=bphillips
-WorkingDirectory=/home/bphillips/GEEKS-AD-Plus
-Environment=VIRTUAL_ENV=/home/bphillips/GEEKS-AD-Plus/venv
-Environment=PATH=/home/bphillips/GEEKS-AD-Plus/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=PYTHONPATH=/home/bphillips/GEEKS-AD-Plus:/home/bphillips/GEEKS-AD-Plus/venv/lib/python3.12/site-packages
-ExecStart=/home/bphillips/GEEKS-AD-Plus/venv/bin/python /home/bphillips/GEEKS-AD-Plus/app.py
+WorkingDirectory=/home/bphillips/GEEKS-AD-Tools
+Environment=VIRTUAL_ENV=/home/bphillips/GEEKS-AD-Tools/venv
+Environment=PATH=/home/bphillips/GEEKS-AD-Tools/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/bphillips/GEEKS-AD-Tools/venv/bin/python /home/bphillips/GEEKS-AD-Tools/app.py
 Restart=on-failure
+RestartSec=10
 Environment=FLASK_ENV=production
 
 [Install]
