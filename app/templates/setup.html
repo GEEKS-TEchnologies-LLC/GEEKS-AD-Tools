@@ -253,21 +253,27 @@
                 <div class="row">
                     <div class="col-md-6 mb-3">
                         <label for="users_ou" class="form-label">
-                            <i class="fas fa-users me-2"></i>Users OU DN (Optional)
+                            <i class="fas fa-users me-2"></i>Primary Users OU (Optional)
                         </label>
                         <input type="text" class="form-control" id="users_ou" name="users_ou" 
-                               value="{{ config.users_ou if config else '' }}"
-                               placeholder="e.g., OU=Users,DC=yourdomain,DC=com">
-                        <div class="form-text">If blank, Base DN will be used.</div>
+                               value="{{ config.organization_ous.primary_users_ou if config and config.get('organization_ous') else (config.users_ou if config else '') }}"
+                               placeholder="e.g., OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal">
+                        <div class="form-text">
+                            <strong>Where your users are located.</strong><br>
+                            This is the OU where user accounts are stored. If blank, Base DN will be used.
+                        </div>
                     </div>
                     <div class="col-md-6 mb-3">
                         <label for="groups_ou" class="form-label">
-                            <i class="fas fa-user-friends me-2"></i>Groups OU DN (Optional)
+                            <i class="fas fa-user-friends me-2"></i>Groups OU (Optional)
                         </label>
                         <input type="text" class="form-control" id="groups_ou" name="groups_ou" 
                                value="{{ config.groups_ou if config else '' }}"
                                placeholder="e.g., OU=Groups,DC=yourdomain,DC=com">
-                        <div class="form-text">If blank, Base DN will be used.</div>
+                        <div class="form-text">
+                            <strong>Where your groups are located.</strong><br>
+                            This is the OU where security groups are stored. If blank, Base DN will be used.
+                        </div>
                     </div>
                 </div>
                 
@@ -299,7 +305,9 @@
                         <div class="col-md-6">
                             <ul class="text-muted small">
                                 <li><i class="fas fa-user me-2"></i><strong>Bind DN:</strong> The distinguished name of the user account for binding</li>
-                                <li><i class="fas fa-sitemap me-2"></i><strong>Base DN:</strong> The root distinguished name of your Active Directory</li>
+                                <li><i class="fas fa-sitemap me-2"></i><strong>Base DN:</strong> The root distinguished name of your Active Directory (e.g., DC=sunray,DC=internal)</li>
+                                <li><i class="fas fa-users me-2 text-warning"></i><strong>Primary Users OU:</strong> Where your USER ACCOUNTS are located (e.g., OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal)</li>
+                                <li><i class="fas fa-user-friends me-2 text-info"></i><strong>Groups OU:</strong> Where your SECURITY GROUPS are located (separate from users)</li>
                             </ul>
                         </div>
                     </div>
