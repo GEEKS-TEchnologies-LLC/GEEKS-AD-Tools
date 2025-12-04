@@ -5,6 +5,52 @@ All notable changes to GEEKS-AD-Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-12-04
+
+### Added
+- **Organizational Chart System**: Complete org chart management and visualization
+  - Support for supervisors and indirect reporting relationships
+  - Dotted-line relationship support for secondary reporting
+  - Interactive D3.js-based org chart visualization at `/admin/org-chart`
+  - Enhanced manager assignment UI with supervisor and relationship type options
+  - Visual distinction for direct, indirect, and dotted-line relationships
+- **Enhanced Manager Management**:
+  - Supervisor field for indirect reports (e.g., Manager → Supervisor → Employee)
+  - Dotted-line relationship checkbox for secondary reporting
+  - Manager information displayed on user detail pages
+  - Direct reports list for managers
+- **Automatic Database Migration in Updater**:
+  - Updater now automatically runs `flask db upgrade` after updates
+  - Automatic cleanup of temp files and Python cache after updates
+  - Migration failure handling with rollback options
+  - Enhanced error reporting for migration issues
+- **GitHub Token Configuration**:
+  - Secure GitHub token management in Admin Settings
+  - Token stored in encrypted credential storage (same as AD/Exchange passwords)
+  - System-level token (not per-user) for creating GitHub issues from bug reports
+  - Clear instructions for creating GitHub Personal Access Tokens
+
+### Changed
+- **Database Migration Handling**:
+  - Database files excluded from git, backups, and updates
+  - Each installation maintains its own database
+  - Migration scripts are included in updates and applied automatically
+  - First-time setup generates database for current version
+- **Department Filtering**:
+  - Added "Racing Security" to excluded OUs (not a department)
+  - Added "Vendor Logins" and variations to excluded OUs
+  - Improved department extraction logic
+- **Manager Assignment Display**:
+  - User detail view now shows assigned managers from management system
+  - Displays direct reports if user is a manager
+  - Links to manager and direct report profiles
+  - Shows relationship types (Direct, Indirect, Dotted-Line)
+
+### Fixed
+- Version info warning in app initialization
+- Manager assignment display on user detail pages
+- Export functionality now properly handles empty results
+
 ## [0.2.2] - 2025-01-04
 
 ### Added

@@ -665,8 +665,8 @@ def user_search():
             user_stats['with_email'] += 1
         else:
             user_stats['without_email'] += 1
-        
-        # Compute category counts for Service Accounts and Internal Tools (for migration planning)
+
+    # Compute category counts for Service Accounts and Internal Tools (for migration planning)
         # Use the already-fetched users list instead of making another query
         dn = user.get('distinguishedName') or user.get('dn') or ''
         mail = (user.get('mail') or '').strip()
@@ -1012,7 +1012,8 @@ def export_migration_ready():
                 part = part.strip()
                 if part.startswith('OU='):
                     ou_name = part.replace('OU=', '')
-                    if ou_name.lower() not in ['users', 'disabled users', 'service accounts', 'internal tools', 'sunray users', 'sunray']:
+                    skip_ous = ['users', 'disabled users', 'service accounts', 'internal tools', 'sunray users', 'sunray', 'racing security', 'vendor logins', 'vendor login']
+                    if ou_name.lower() not in skip_ous:
                         ous.append(ou_name)
             if ous:
                 return ous[0]
@@ -1310,11 +1311,11 @@ def export_internal_tools():
 
 def get_exchange_config():
     """Get Exchange configuration with secure credential injection"""
-    config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
+        config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
     config = None
     
     # Load base config from file (non-sensitive data)
-    if os.path.exists(config_path):
+        if os.path.exists(config_path):
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
@@ -2281,16 +2282,52 @@ def user_details(user_dn):
         flash(f"User with DN '{user_dn}' not found.", 'danger')
         return redirect(url_for('main.user_search'))
     
-    # Fetch manager display name if possible
+    # Fetch manager information from multiple sources
     manager_display_name = None
-    manager_dn = user.get('manager', [None])[0] if user.get('manager') else None
-    if manager_dn:
+    manager_username = None
+    manager_dn = None
+    assigned_manager = None  # Manager from DepartmentManager/UserDirectReport system
+    direct_reports = []  # Users who report to this user if they're a manager
+    
+    # First, check AD manager attribute
+    ad_manager_dn = user.get('manager', [None])[0] if user.get('manager') else None
+    if ad_manager_dn:
         from .ad import ad_connection
+        import ldap3
         with ad_connection(**ad_args) as conn:
-            if conn.search(manager_dn, '(objectClass=user)', search_scope=ldap3.BASE, attributes=['displayName']):
+            if conn.search(ad_manager_dn, '(objectClass=user)', search_scope=ldap3.BASE, attributes=['displayName', 'sAMAccountName']):
                 entry = conn.entries[0]
                 if hasattr(entry, 'displayName') and entry.displayName:
                     manager_display_name = entry.displayName.value
+                if hasattr(entry, 'sAMAccountName') and entry.sAMAccountName:
+                    manager_username = entry.sAMAccountName.value
+                manager_dn = ad_manager_dn
+    
+    # Check for assigned manager from DepartmentManager/UserDirectReport system
+    user_username = user.get('sAMAccountName', [None])[0] if user.get('sAMAccountName') else None
+    if user_username:
+        # Check if this user has a direct report relationship (has a manager assigned)
+        direct_report = UserDirectReport.query.filter_by(employee_username=user_username).first()
+        if direct_report:
+            assigned_manager = {
+                'username': direct_report.manager_username,
+                'dn': direct_report.manager_dn,
+                'display_name': direct_report.manager_display_name
+            }
+            # Use assigned manager if AD manager is not set, or show both
+            if not manager_display_name:
+                manager_display_name = direct_report.manager_display_name
+                manager_username = direct_report.manager_username
+                manager_dn = direct_report.manager_dn
+        
+        # Check if this user is a manager (has direct reports)
+        direct_reports_list = UserDirectReport.query.filter_by(manager_username=user_username).all()
+        if direct_reports_list:
+            direct_reports = [{
+                'username': dr.employee_username,
+                'dn': dr.employee_dn,
+                'display_name': dr.employee_display_name
+            } for dr in direct_reports_list]
 
     user_groups = get_user_groups(user_dn, **ad_args)
     all_groups = get_all_groups(**ad_args)
@@ -2352,6 +2389,10 @@ def user_details(user_dn):
         group_type_counts=group_type_counts,
         os_breakdown=os_breakdown,
         manager_display_name=manager_display_name,
+        manager_username=manager_username,
+        manager_dn=manager_dn,
+        assigned_manager=assigned_manager,
+        direct_reports=direct_reports,
         password_info=password_info,
         password_expired=password_expired,
         password_expiring_soon=password_expiring_soon,
@@ -2498,7 +2539,8 @@ def create_user_route():
                     # Skip the primary users OU itself and common structural OUs
                     skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
                                  'internal tools', 'sunray', 'owners', 'owner', 'administrators',
-                                 'admins', 'managers', 'management', 'western gaming']
+                                 'admins', 'managers', 'management', 'western gaming', 'racing security',
+                                 'vendor logins', 'vendor login', 'vendors']
                     if ou_name_from_dn.lower() not in skip_names:
                         department_name = ou_name_from_dn
                         break
@@ -2510,7 +2552,8 @@ def create_user_route():
                 # Check if the OU name itself should be skipped
                 skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
                              'internal tools', 'sunray', 'owners', 'owner', 'administrators',
-                             'admins', 'managers', 'management', 'western gaming']
+                             'admins', 'managers', 'management', 'western gaming', 'racing security',
+                             'vendor logins', 'vendor login', 'vendors']
                 if ou_name.lower() not in skip_names:
                     final_name = ou_name
                 else:
@@ -2572,7 +2615,8 @@ def manage_managers():
                     ou_name_from_dn = part.replace('OU=', '')
                     skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
                                  'internal tools', 'sunray', 'owners', 'owner', 'administrators',
-                                 'admins', 'managers', 'management', 'western gaming']
+                                 'admins', 'managers', 'management', 'western gaming', 'racing security',
+                                 'vendor logins', 'vendor login', 'vendors']
                     if ou_name_from_dn.lower() not in skip_names:
                         department_name = ou_name_from_dn
                         break
@@ -2582,7 +2626,8 @@ def manage_managers():
             elif ou_name:
                 skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
                              'internal tools', 'sunray', 'owners', 'owner', 'administrators',
-                             'admins', 'managers', 'management', 'western gaming']
+                             'admins', 'managers', 'management', 'western gaming', 'racing security',
+                             'vendor logins', 'vendor login', 'vendors']
                 if ou_name.lower() not in skip_names:
                     final_name = ou_name
                 else:
@@ -2633,8 +2678,10 @@ def manage_managers():
             manager_display = manager.get('displayName') or manager.get('cn') or manager_username
             
             # Update or create department manager
+            old_manager_dn = None
             dept_mgr = DepartmentManager.query.filter_by(department=department).first()
             if dept_mgr:
+                old_manager_dn = dept_mgr.manager_dn
                 dept_mgr.manager_username = manager_username
                 dept_mgr.manager_dn = manager_dn
                 dept_mgr.manager_display_name = manager_display
@@ -2649,7 +2696,31 @@ def manage_managers():
                 db.session.add(dept_mgr)
             
             db.session.commit()
-            flash(f'Manager for {department} set to {manager_display}.', 'success')
+            
+            # Update AD manager attribute for all existing direct reports in this department
+            # (if manager changed, update all users in department)
+            if old_manager_dn and old_manager_dn != manager_dn:
+                # Manager changed - update all direct reports in this department
+                dept_direct_reports = UserDirectReport.query.filter_by(department=department).all()
+                updated_count = 0
+                for report in dept_direct_reports:
+                    try:
+                        ok, msg = set_user_manager(report.employee_dn, manager_dn, **ad_args)
+                        if ok:
+                            report.manager_dn = manager_dn
+                            report.manager_username = manager_username
+                            updated_count += 1
+                    except Exception as e:
+                        current_app.logger.warning(f"Failed to update AD manager for {report.employee_username}: {e}")
+                
+                if updated_count > 0:
+                    db.session.commit()
+                    flash(f'Manager for {department} set to {manager_display}. Updated AD manager attribute for {updated_count} existing users.', 'success')
+                else:
+                    flash(f'Manager for {department} set to {manager_display}.', 'success')
+            else:
+                flash(f'Manager for {department} set to {manager_display}.', 'success')
+            
             return redirect(url_for('main.manage_managers'))
         
         elif action == 'assign_direct_report':
@@ -2682,15 +2753,44 @@ def manage_managers():
             manager_dept = manager.get('department') or ''
             is_same_dept = (employee_dept.lower() == manager_dept.lower())
             
+            # Check if this is a dotted-line relationship
+            is_dotted_line = request.form.get('is_dotted_line') == 'true'
+            
+            # Check if this is an indirect report (through a supervisor)
+            supervisor_username = request.form.get('supervisor_username', '').strip()
+            is_indirect = bool(supervisor_username)
+            supervisor_dn = None
+            if supervisor_username:
+                supervisors = search_users(supervisor_username, **ad_args)
+                if supervisors:
+                    supervisor_dn = supervisors[0].get('distinguishedName') or supervisors[0].get('dn')
+            
             # Update or create direct report
-            direct_report = UserDirectReport.query.filter_by(employee_username=employee_username).first()
+            old_manager_dn = None
+            # For dotted-line, allow multiple relationships; for primary, only one
+            if is_dotted_line:
+                direct_report = UserDirectReport.query.filter_by(
+                    employee_username=employee_username,
+                    is_dotted_line=True
+                ).first()
+            else:
+                direct_report = UserDirectReport.query.filter_by(
+                    employee_username=employee_username,
+                    is_dotted_line=False
+                ).first()
+            
             if direct_report:
+                old_manager_dn = direct_report.manager_dn
                 direct_report.manager_username = manager_username
                 direct_report.manager_dn = manager_dn
                 direct_report.employee_dn = employee_dn
                 direct_report.employee_display_name = employee_display
                 direct_report.department = employee_dept
                 direct_report.is_same_department = is_same_dept
+                direct_report.is_dotted_line = is_dotted_line
+                direct_report.is_indirect_report = is_indirect
+                direct_report.supervisor_username = supervisor_username if is_indirect else None
+                direct_report.supervisor_dn = supervisor_dn if is_indirect else None
                 direct_report.updated_at = datetime.now(timezone.utc)
             else:
                 direct_report = UserDirectReport(
@@ -2700,15 +2800,24 @@ def manage_managers():
                     employee_dn=employee_dn,
                     employee_display_name=employee_display,
                     department=employee_dept,
-                    is_same_department=is_same_dept
+                    is_same_department=is_same_dept,
+                    is_dotted_line=is_dotted_line,
+                    is_indirect_report=is_indirect,
+                    supervisor_username=supervisor_username if is_indirect else None,
+                    supervisor_dn=supervisor_dn if is_indirect else None
                 )
                 db.session.add(direct_report)
             
-            # Update AD manager attribute
-            set_user_manager(employee_dn, manager_dn, **ad_args)
+            # Update AD manager attribute (always update, even if manager changed)
+            try:
+                ok, msg = set_user_manager(employee_dn, manager_dn, **ad_args)
+                if not ok:
+                    current_app.logger.warning(f"Failed to update AD manager for {employee_username}: {msg}")
+            except Exception as e:
+                current_app.logger.error(f"Exception updating AD manager for {employee_username}: {e}")
             
             db.session.commit()
-            flash(f'Direct report assigned: {employee_display} -> {manager.get("displayName", manager_username)}.', 'success')
+            flash(f'Direct report assigned: {employee_display} -> {manager.get("displayName", manager_username)}. AD manager attribute updated.', 'success')
             return redirect(url_for('main.manage_managers'))
         
         elif action == 'bulk_assign_department':
@@ -2790,6 +2899,113 @@ def manage_managers():
                          departments=departments,
                          dept_managers=dept_managers,
                          reports_by_manager=reports_by_manager)
+
+@main.route('/admin/org-chart')
+@login_required
+@admin_required
+def org_chart():
+    """Display organizational chart visualization"""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    # Get all manager relationships
+    all_reports = UserDirectReport.query.filter_by(is_dotted_line=False).all()  # Only primary relationships for main chart
+    dotted_line_reports = UserDirectReport.query.filter_by(is_dotted_line=True).all()
+    
+    # Build org chart data structure
+    org_data = {}
+    root_nodes = []
+    
+    # Process all direct reports
+    for report in all_reports:
+        manager_username = report.manager_username
+        employee_username = report.employee_username
+        
+        # Initialize manager node if not exists
+        if manager_username not in org_data:
+            # Try to get manager details from AD
+            managers = search_users(manager_username, **ad_args)
+            if managers:
+                manager = managers[0]
+                org_data[manager_username] = {
+                    'username': manager_username,
+                    'name': report.manager_dn.split(',')[0].replace('CN=', '') if report.manager_dn else manager_username,
+                    'display_name': manager.get('displayName') or manager.get('cn') or manager_username,
+                    'title': manager.get('title') or '',
+                    'department': manager.get('department') or '',
+                    'dn': report.manager_dn,
+                    'children': [],
+                    'is_root': True  # Will be updated if they report to someone
+                }
+        
+        # Initialize employee node if not exists
+        if employee_username not in org_data:
+            employees = search_users(employee_username, **ad_args)
+            if employees:
+                employee = employees[0]
+                org_data[employee_username] = {
+                    'username': employee_username,
+                    'name': report.employee_dn.split(',')[0].replace('CN=', '') if report.employee_dn else employee_username,
+                    'display_name': report.employee_display_name or employee.get('displayName') or employee.get('cn') or employee_username,
+                    'title': employee.get('title') or '',
+                    'department': report.department or employee.get('department') or '',
+                    'dn': report.employee_dn,
+                    'children': [],
+                    'is_root': False,
+                    'is_indirect': report.is_indirect_report,
+                    'supervisor': report.supervisor_username if report.is_indirect_report else None
+                }
+        
+        # Add employee as child of manager
+        if employee_username not in [c['username'] for c in org_data[manager_username]['children']]:
+            org_data[manager_username]['children'].append(org_data[employee_username])
+            org_data[employee_username]['is_root'] = False
+        
+        # If employee has indirect supervisor, mark relationship
+        if report.is_indirect_report and report.supervisor_username:
+            if report.supervisor_username in org_data:
+                org_data[employee_username]['supervisor'] = org_data[report.supervisor_username]
+    
+    # Add dotted-line relationships
+    dotted_lines = []
+    for report in dotted_line_reports:
+        dotted_lines.append({
+            'from': report.manager_username,
+            'to': report.employee_username,
+            'type': 'dotted'
+        })
+    
+    # Find root nodes (those who don't report to anyone in our data)
+    for username, node in org_data.items():
+        # Check if this person is a manager but doesn't appear as an employee
+        is_manager = any(r.manager_username == username for r in all_reports)
+        is_employee = any(r.employee_username == username for r in all_reports)
+        
+        if is_manager and not is_employee:
+            root_nodes.append(node)
+    
+    # If no root nodes found, use department managers as roots
+    if not root_nodes:
+        dept_managers = DepartmentManager.query.all()
+        for dept_mgr in dept_managers:
+            if dept_mgr.manager_username in org_data:
+                org_data[dept_mgr.manager_username]['is_root'] = True
+                root_nodes.append(org_data[dept_mgr.manager_username])
+    
+    return render_template('org_chart.html',
+                         org_data=org_data,
+                         root_nodes=root_nodes,
+                         dotted_lines=dotted_lines)
 
 @main.route('/admin/gpo-deployment')
 @login_required
@@ -3245,7 +3461,7 @@ def bug_report():
                         'github_issue_url': result['github_issue_url'],
                         'description': description[:100]
                     })
-                else:
+            else:
                     flash(f'Bug report saved locally. {result.get("github_issue_message", "GitHub issue creation failed")}', 'warning')
                     log_admin_action('bug_report_submitted', 'partial', {
                         'filename': result['filename'],
@@ -3681,28 +3897,28 @@ def admin_settings():
                 # Also update branding for UI settings
                 branding_data = branding.copy() if branding else {}
                 branding_data['flash_countdown'] = 'flash_countdown' in request.form
-                branding_data['debug_mode'] = 'debug_mode' in request.form
-                
-                # Flash timeout setting
-                try:
-                    flash_timeout = int(request.form.get('flash_timeout', 180))
-                    flash_timeout = max(30, min(600, flash_timeout))  # Clamp between 30-600 seconds
-                    branding_data['flash_timeout'] = flash_timeout
-                except ValueError:
-                    branding_data['flash_timeout'] = 180
-                
-                # Log level setting
-                log_level = request.form.get('log_level', 'INFO')
-                if log_level in ['INFO', 'DEBUG', 'WARNING', 'ERROR']:
-                    branding_data['log_level'] = log_level
-                
+            branding_data['debug_mode'] = 'debug_mode' in request.form
+            
+            # Flash timeout setting
+            try:
+                flash_timeout = int(request.form.get('flash_timeout', 180))
+                flash_timeout = max(30, min(600, flash_timeout))  # Clamp between 30-600 seconds
+                branding_data['flash_timeout'] = flash_timeout
+            except ValueError:
+                branding_data['flash_timeout'] = 180
+            
+            # Log level setting
+            log_level = request.form.get('log_level', 'INFO')
+            if log_level in ['INFO', 'DEBUG', 'WARNING', 'ERROR']:
+                branding_data['log_level'] = log_level
+            
                 # Save config.json
                 with open(config_path, 'w') as f:
                     json.dump(config_data, f, indent=2)
                 
                 # Save branding config
-                save_branding_config(branding_data)
-                flash('Debug settings updated successfully!', 'success')
+            save_branding_config(branding_data)
+            flash('Debug settings updated successfully!', 'success')
             except Exception as e:
                 current_app.logger.error(f"Error saving debug settings: {e}")
                 flash(f'Error saving debug settings: {str(e)}', 'danger')
@@ -3801,7 +4017,7 @@ def admin_settings():
     return render_template('admin_settings.html', 
                          config=main_config,  # Use main_config which includes debug setting
                          ad_config=ad_config,  # Pass AD config separately
-                         branding=branding,
+                         branding=branding, 
                          github_token_configured=github_token_configured, 
                          admin_groups=admin_groups)
 

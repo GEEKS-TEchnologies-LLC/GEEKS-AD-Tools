@@ -286,9 +286,41 @@
                                     <div class="mb-3"><label class="form-label">Job Title</label><input type="text" class="form-control" name="title" value="{{ user.title[0] if user.title }}"></div>
                                     <div class="mb-3"><label class="form-label">Department</label><input type="text" class="form-control" name="department" value="{{ user.department[0] if user.department }}"></div>
                                     <div class="mb-3"><label class="form-label">Company</label><input type="text" class="form-control" name="company" value="{{ user.company[0] if user.company }}"></div>
-                                    <div class="mb-3"><label class="form-label">Manager</label>
-                                        <input type="text" class="form-control" value="{{ manager_display_name if manager_display_name else (user.manager[0] if user.manager else '') }}" disabled style="color: #ffd700; background: rgba(255,255,255,0.08); border: none; font-weight: 600;">
+                                    <div class="mb-3">
+                                        <label class="form-label">Manager</label>
+                                        {% if manager_display_name %}
+                                            <div class="input-group">
+                                                <input type="text" class="form-control" value="{{ manager_display_name }}{% if assigned_manager %} (Assigned){% endif %}" disabled style="color: #ffd700; background: rgba(255,255,255,0.08); border: none; font-weight: 600;">
+                                                {% if manager_dn %}
+                                                    <a href="{{ url_for('main.user_details', user_dn=manager_dn) }}" class="btn btn-sm btn-outline-primary">
+                                                        <i class="fas fa-external-link-alt"></i> View Manager
+                                                    </a>
+                                                {% endif %}
+                                            </div>
+                                            {% if assigned_manager and not user.manager %}
+                                                <small class="text-muted">
+                                                    <i class="fas fa-info-circle"></i> Manager assigned via department management system
+                                                </small>
+                                            {% endif %}
+                                        {% else %}
+                                            <input type="text" class="form-control" value="No manager assigned" disabled style="color: #999; background: rgba(255,255,255,0.08); border: none;">
+                                        {% endif %}
                                     </div>
+                                    {% if direct_reports %}
+                                    <div class="mb-3">
+                                        <label class="form-label">Direct Reports ({{ direct_reports|length }})</label>
+                                        <div class="list-group">
+                                            {% for report in direct_reports %}
+                                                <div class="list-group-item d-flex justify-content-between align-items-center" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                                                    <span><i class="fas fa-user me-2"></i>{{ report.display_name or report.username }}</span>
+                                                    <a href="{{ url_for('main.user_details', user_dn=report.dn) }}" class="btn btn-sm btn-outline-primary">
+                                                        <i class="fas fa-external-link-alt"></i> View
+                                                    </a>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
                                 </div>
 
                                 <!-- Account Tab -->

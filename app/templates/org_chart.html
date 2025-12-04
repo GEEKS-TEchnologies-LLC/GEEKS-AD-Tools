@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organizational Chart - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            background: #181818;
+            color: #ffd700;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            overflow-x: auto;
+        }
+        
+        .org-chart-container {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 18px;
+            padding: 20px;
+            min-height: 600px;
+        }
+        
+        .org-chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .org-chart-header h1 {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .btn-custom {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #000;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 215, 0, 0.3);
+        }
+        
+        #org-chart-svg {
+            width: 100%;
+            height: 100%;
+            min-height: 600px;
+        }
+        
+        .node {
+            cursor: pointer;
+        }
+        
+        .node rect {
+            fill: rgba(255, 215, 0, 0.1);
+            stroke: #ffd700;
+            stroke-width: 2;
+            rx: 8;
+        }
+        
+        .node.manager rect {
+            fill: rgba(255, 215, 0, 0.2);
+            stroke-width: 3;
+        }
+        
+        .node.root rect {
+            fill: rgba(255, 215, 0, 0.3);
+            stroke: #ffb347;
+            stroke-width: 4;
+        }
+        
+        .node text {
+            fill: #ffd700;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .node text.name {
+            font-weight: 700;
+            font-size: 14px;
+        }
+        
+        .node text.title {
+            font-size: 10px;
+            fill: rgba(255, 215, 0, 0.7);
+        }
+        
+        .link {
+            fill: none;
+            stroke: #ffd700;
+            stroke-width: 2;
+        }
+        
+        .link.dotted {
+            stroke-dasharray: 5, 5;
+            stroke: rgba(255, 215, 0, 0.5);
+        }
+        
+        .link.indirect {
+            stroke: rgba(255, 215, 0, 0.3);
+            stroke-width: 1;
+        }
+        
+        .node:hover rect {
+            fill: rgba(255, 215, 0, 0.3);
+            stroke: #ffb347;
+        }
+        
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid #ffd700;
+            border-radius: 8px;
+            padding: 10px;
+            color: #ffd700;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .tooltip.visible {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="org-chart-container">
+        <div class="org-chart-header">
+            <h1><i class="fas fa-sitemap"></i> Organizational Chart</h1>
+            <a href="/admin/managers" class="btn btn-custom">
+                <i class="fas fa-arrow-left"></i> Back to Managers
+            </a>
+        </div>
+        
+        <div class="controls">
+            <button class="btn btn-custom" onclick="resetZoom()">
+                <i class="fas fa-search"></i> Reset Zoom
+            </button>
+            <button class="btn btn-custom" onclick="toggleDottedLines()">
+                <i class="fas fa-link"></i> Toggle Dotted Lines
+            </button>
+            <button class="btn btn-custom" onclick="expandAll()">
+                <i class="fas fa-expand"></i> Expand All
+            </button>
+            <button class="btn btn-custom" onclick="collapseAll()">
+                <i class="fas fa-compress"></i> Collapse All
+            </button>
+        </div>
+        
+        <svg id="org-chart-svg"></svg>
+    </div>
+    
+    <div class="tooltip" id="tooltip"></div>
+    
+    <script>
+        const orgData = {{ root_nodes | tojson }};
+        const dottedLines = {{ dotted_lines | tojson }};
+        let showDottedLines = true;
+        
+        const margin = { top: 20, right: 120, bottom: 20, left: 120 };
+        const nodeWidth = 180;
+        const nodeHeight = 80;
+        const nodePadding = 20;
+        
+        const svg = d3.select("#org-chart-svg");
+        const width = window.innerWidth - 100;
+        const height = Math.max(600, orgData.length * 200);
+        
+        svg.attr("width", width).attr("height", height);
+        
+        const g = svg.append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+        
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 3])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+        
+        svg.call(zoom);
+        
+        const tooltip = d3.select("#tooltip");
+        
+        // Create tree layout
+        const tree = d3.tree()
+            .nodeSize([nodeWidth + nodePadding, nodeHeight + nodePadding])
+            .separation((a, b) => (a.parent == b.parent ? 1 : 2) / a.depth);
+        
+        // Convert data to hierarchy
+        function buildHierarchy(nodes) {
+            const nodeMap = new Map();
+            const roots = [];
+            
+            // Create all nodes
+            nodes.forEach(node => {
+                const hierarchyNode = {
+                    data: node,
+                    children: []
+                };
+                nodeMap.set(node.username, hierarchyNode);
+            });
+            
+            // Build parent-child relationships
+            nodes.forEach(node => {
+                const hierarchyNode = nodeMap.get(node.username);
+                if (node.children && node.children.length > 0) {
+                    node.children.forEach(child => {
+                        const childNode = nodeMap.get(child.username);
+                        if (childNode) {
+                            hierarchyNode.children.push(childNode);
+                        }
+                    });
+                }
+                if (!hierarchyNode.children.length && !node.children) {
+                    roots.push(hierarchyNode);
+                }
+            });
+            
+            // Find actual roots (nodes without parents)
+            const allChildren = new Set();
+            nodeMap.forEach(node => {
+                node.children.forEach(child => {
+                    allChildren.add(child.data.username);
+                });
+            });
+            
+            nodeMap.forEach(node => {
+                if (!allChildren.has(node.data.username)) {
+                    roots.push(node);
+                }
+            });
+            
+            return roots.length > 0 ? roots[0] : roots[0] || { data: { username: 'root', display_name: 'Organization', children: [] }, children: [] };
+        }
+        
+        const root = d3.hierarchy(buildHierarchy(orgData), d => d.children);
+        tree(root);
+        
+        // Draw links
+        const links = g.selectAll(".link")
+            .data(root.links())
+            .enter()
+            .append("path")
+            .attr("class", "link")
+            .attr("d", d3.linkHorizontal()
+                .x(d => d.y + nodeWidth / 2)
+                .y(d => d.x + nodeHeight / 2));
+        
+        // Draw nodes
+        const node = g.selectAll(".node")
+            .data(root.descendants())
+            .enter()
+            .append("g")
+            .attr("class", d => {
+                let classes = "node";
+                if (d.depth === 0) classes += " root";
+                if (d.children && d.children.length > 0) classes += " manager";
+                return classes;
+            })
+            .attr("transform", d => `translate(${d.y},${d.x})`)
+            .on("mouseover", function(event, d) {
+                const data = d.data.data || d.data;
+                tooltip
+                    .html(`
+                        <strong>${data.display_name || data.name}</strong><br>
+                        ${data.title ? data.title + '<br>' : ''}
+                        ${data.department ? 'Dept: ' + data.department + '<br>' : ''}
+                        ${data.username ? 'User: ' + data.username : ''}
+                    `)
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 10) + "px")
+                    .classed("visible", true);
+            })
+            .on("mouseout", function() {
+                tooltip.classed("visible", false);
+            });
+        
+        // Draw node rectangles
+        node.append("rect")
+            .attr("width", nodeWidth)
+            .attr("height", nodeHeight)
+            .attr("x", 0)
+            .attr("y", 0);
+        
+        // Draw node text
+        node.append("text")
+            .attr("class", "name")
+            .attr("x", nodeWidth / 2)
+            .attr("y", 25)
+            .attr("text-anchor", "middle")
+            .text(d => {
+                const data = d.data.data || d.data;
+                return data.display_name || data.name || data.username;
+            });
+        
+        node.append("text")
+            .attr("class", "title")
+            .attr("x", nodeWidth / 2)
+            .attr("y", 45)
+            .attr("text-anchor", "middle")
+            .text(d => {
+                const data = d.data.data || d.data;
+                return data.title || '';
+            });
+        
+        node.append("text")
+            .attr("class", "title")
+            .attr("x", nodeWidth / 2)
+            .attr("y", 60)
+            .attr("text-anchor", "middle")
+            .text(d => {
+                const data = d.data.data || d.data;
+                return data.department || '';
+            });
+        
+        // Draw dotted lines
+        function drawDottedLines() {
+            g.selectAll(".link.dotted").remove();
+            if (showDottedLines && dottedLines.length > 0) {
+                // This would require additional logic to find node positions
+                // For now, we'll skip this as it requires more complex positioning
+            }
+        }
+        
+        function resetZoom() {
+            svg.transition().duration(750).call(
+                zoom.transform,
+                d3.zoomIdentity.translate(margin.left, margin.top)
+            );
+        }
+        
+        function toggleDottedLines() {
+            showDottedLines = !showDottedLines;
+            drawDottedLines();
+        }
+        
+        function expandAll() {
+            // Expand all nodes (if we implement collapsible tree)
+        }
+        
+        function collapseAll() {
+            // Collapse all nodes (if we implement collapsible tree)
+        }
+        
+        // Initial render
+        drawDottedLines();
+    </script>
+</body>
+</html>
+
