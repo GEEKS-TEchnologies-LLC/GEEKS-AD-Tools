@@ -5,6 +5,29 @@ All notable changes to GEEKS-AD-Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-01-04
+
+### Added
+- **Statistics Filter System**: Checkbox-based filtering for Exchange Migration Statistics
+  - Filter by disabled users, users without email, service accounts, and internal tools
+  - Persistent filters using sessionStorage (survives page reloads)
+  - Dynamic statistics recalculation via API endpoint
+  - Auto-save and auto-apply filter preferences
+
+### Changed
+- **Setup Page Improvements**: 
+  - Clearer labels distinguishing Base DN, Users OU, and Groups OU
+  - Better descriptions explaining what each field represents
+- **Secure Credential Storage**: 
+  - Encrypted credential storage system (Fernet encryption)
+  - Credentials stored in .credentials.enc (excluded from git)
+  - Automatic credential injection into config functions
+  - Migration scripts for existing credentials
+
+### Security
+- **PII Removal**: Removed plaintext passwords from git history
+- **Credential Protection**: All sensitive credentials now stored in encrypted files excluded from git
+
 ## [0.2.0] - 2025-01-03
 
 ### Added
