@@ -1,0 +1,8 @@
+{
+  "exchange_server": "mail.example.com",
+  "username": "service_account",
+  "password": "YOUR_EXCHANGE_PASSWORD_HERE",
+  "domain": "example.internal",
+  "enabled": true
+}
+
