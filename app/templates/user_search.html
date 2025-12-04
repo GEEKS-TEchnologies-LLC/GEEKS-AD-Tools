@@ -521,11 +521,72 @@
         
         <!-- Exchange Migration Statistics -->
         <div class="glass-card">
-            <div class="card-header">
-                <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Exchange Migration Statistics</h5>
-                <small class="text-muted">Showing only users in primary users OU (excluding Disabled Users OU)</small>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Exchange Migration Statistics</h5>
+                    <small class="text-muted">Showing only users in primary users OU (excluding Disabled Users OU)</small>
+                </div>
+                <button 
+                    class="btn btn-sm btn-outline-warning" 
+                    type="button" 
+                    data-bs-toggle="collapse" 
+                    data-bs-target="#statsFilters"
+                    aria-expanded="false"
+                    aria-controls="statsFilters"
+                >
+                    <i class="fas fa-filter"></i> Filter Stats
+                </button>
             </div>
             <div class="card-body">
+                <!-- Statistics Filters -->
+                <div class="collapse mb-3" id="statsFilters">
+                    <div class="card card-body" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,215,0,0.3);">
+                        <h6 class="text-warning mb-3"><i class="fas fa-filter"></i> Filter Statistics</h6>
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="form-check">
+                                    <input class="form-check-input stats-filter" type="checkbox" id="filterIncludeDisabled" checked>
+                                    <label class="form-check-label text-white" for="filterIncludeDisabled">
+                                        Include Disabled Users
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="form-check">
+                                    <input class="form-check-input stats-filter" type="checkbox" id="filterIncludeNoEmail" checked>
+                                    <label class="form-check-label text-white" for="filterIncludeNoEmail">
+                                        Include Users Without Email
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="form-check">
+                                    <input class="form-check-input stats-filter" type="checkbox" id="filterIncludeServiceAccounts" checked>
+                                    <label class="form-check-label text-white" for="filterIncludeServiceAccounts">
+                                        Include Service Accounts
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="form-check">
+                                    <input class="form-check-input stats-filter" type="checkbox" id="filterIncludeInternalTools" checked>
+                                    <label class="form-check-label text-white" for="filterIncludeInternalTools">
+                                        Include Internal Tools
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <button class="btn btn-sm btn-custom" onclick="applyStatsFilters()">
+                                <i class="fas fa-check"></i> Apply Filters
+                            </button>
+                            <button class="btn btn-sm btn-secondary ms-2" onclick="resetStatsFilters()">
+                                <i class="fas fa-undo"></i> Reset
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
                 <div class="d-flex justify-content-end mb-3">
                     <a
                         class="btn btn-sm btn-custom"
@@ -570,72 +631,74 @@
                         <i class="fas fa-file-export"></i> Export Orphaned
                     </a>
                 </div>
-                <div class="row">
+                <div class="row" id="statsDisplay">
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-primary">{{ user_stats.primary_users_total }}</h3>
+                            <h3 class="text-primary" id="statPrimaryUsers">{{ user_stats.primary_users_total }}</h3>
                             <p class="text-muted mb-0">Total Primary Users</p>
                             <small class="text-info">In Primary Users OU</small>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-success">{{ user_stats.active_users }}</h3>
+                            <h3 class="text-success" id="statActiveUsers">{{ user_stats.active_users }}</h3>
                             <p class="text-muted mb-0">Active Users</p>
                             <small class="text-success">Ready for Migration</small>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-warning">{{ user_stats.total_enabled }}</h3>
+                            <h3 class="text-warning" id="statEnabled">{{ user_stats.total_enabled }}</h3>
                             <p class="text-muted mb-0">Enabled Users</p>
                             <small class="text-success">Account Active</small>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-danger">{{ user_stats.total_disabled }}</h3>
+                            <h3 class="text-danger" id="statDisabled">{{ user_stats.total_disabled }}</h3>
                             <p class="text-muted mb-0">Disabled Users</p>
                             <small class="text-warning">Review Required</small>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-info">{{ user_stats.with_email }}</h3>
+                            <h3 class="text-info" id="statWithEmail">{{ user_stats.with_email }}</h3>
                             <p class="text-muted mb-0">Users with Email</p>
                             <small class="text-success">Mailbox Ready</small>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-secondary">{{ user_stats.without_email }}</h3>
+                            <h3 class="text-secondary" id="statWithoutEmail">{{ user_stats.without_email }}</h3>
                             <p class="text-muted mb-0">No Email</p>
                             <small class="text-warning">Setup Required</small>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-info">{{ user_stats.service_accounts }}</h3>
+                            <h3 class="text-info" id="statServiceAccounts">{{ user_stats.service_accounts }}</h3>
                             <p class="text-muted mb-0">Service Accounts</p>
-                            <small class="text-info">Mail-enabled (excluded)</small>
+                            <small class="text-info">Mail-enabled</small>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="text-center">
-                            <h3 class="text-info">{{ user_stats.internal_tools }}</h3>
+                            <h3 class="text-info" id="statInternalTools">{{ user_stats.internal_tools }}</h3>
                             <p class="text-muted mb-0">Internal Tools</p>
-                            <small class="text-info">Mail-enabled (excluded)</small>
+                            <small class="text-info">Mail-enabled</small>
                         </div>
                     </div>
                 </div>
                 <div class="mt-3">
-                    <div class="alert alert-info">
+                    <div class="alert alert-info" id="migrationPlanningAlert">
                         <i class="fas fa-info-circle"></i>
                         <strong>Exchange Online Migration Planning:</strong>
-                        You have <strong>{{ user_stats.active_users }}</strong> active users ready for migration (enabled accounts in primary users OU, excluding Disabled Users OU). 
-                        {% if user_stats.without_email > 0 %}
-                        <strong>{{ user_stats.without_email }}</strong> users need email addresses configured before migration.
-                        {% endif %}
+                        <span id="migrationPlanningText">
+                            You have <strong id="migrationActiveUsers">{{ user_stats.active_users }}</strong> active users ready for migration (enabled accounts in primary users OU, excluding Disabled Users OU). 
+                            {% if user_stats.without_email > 0 %}
+                            <strong id="migrationWithoutEmail">{{ user_stats.without_email }}</strong> users need email addresses configured before migration.
+                            {% endif %}
+                        </span>
                         {% if exclude_ous %}
                         <br><small class="text-muted"><i class="fas fa-filter"></i> Additional exclusions: {{ exclude_ous_str }}</small>
                         {% endif %}
@@ -2384,6 +2447,179 @@
                     sessionStorage.removeItem('exportFilters');
                 }
             }
+        });
+        // Statistics filter functions
+        let currentStatsFilters = {
+            includeDisabled: true,
+            includeNoEmail: true,
+            includeServiceAccounts: true,
+            includeInternalTools: true
+        };
+
+        function applyStatsFilters() {
+            const filters = {
+                includeDisabled: document.getElementById('filterIncludeDisabled').checked,
+                includeNoEmail: document.getElementById('filterIncludeNoEmail').checked,
+                includeServiceAccounts: document.getElementById('filterIncludeServiceAccounts').checked,
+                includeInternalTools: document.getElementById('filterIncludeInternalTools').checked
+            };
+            
+            currentStatsFilters = filters;
+            
+            // Save to session storage
+            sessionStorage.setItem('statsFilters', JSON.stringify(filters));
+            
+            // Get current page filters
+            const urlParams = new URLSearchParams(window.location.search);
+            const query = urlParams.get('query') || '';
+            const statusFilter = urlParams.get('status_filter') || 'all';
+            const excludeOUs = urlParams.get('exclude_ous') || '';
+            
+            // Show loading state
+            const statsDisplay = document.getElementById('statsDisplay');
+            if (statsDisplay) {
+                statsDisplay.style.opacity = '0.5';
+            }
+            
+            // Call API to recalculate stats
+            fetch('/api/users/stats?' + new URLSearchParams({
+                query: query,
+                status_filter: statusFilter,
+                exclude_ous: excludeOUs,
+                include_disabled: filters.includeDisabled ? '1' : '0',
+                include_no_email: filters.includeNoEmail ? '1' : '0',
+                include_service_accounts: filters.includeServiceAccounts ? '1' : '0',
+                include_internal_tools: filters.includeInternalTools ? '1' : '0'
+            }))
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateStatsDisplay(data.stats);
+                        if (statsDisplay) {
+                            statsDisplay.style.opacity = '1';
+                        }
+                    } else {
+                        alert('Error updating statistics: ' + (data.error || 'Unknown error'));
+                        if (statsDisplay) {
+                            statsDisplay.style.opacity = '1';
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error updating statistics: ' + error);
+                    if (statsDisplay) {
+                        statsDisplay.style.opacity = '1';
+                    }
+                });
+        }
+
+        function resetStatsFilters() {
+            document.getElementById('filterIncludeDisabled').checked = true;
+            document.getElementById('filterIncludeNoEmail').checked = true;
+            document.getElementById('filterIncludeServiceAccounts').checked = true;
+            document.getElementById('filterIncludeInternalTools').checked = true;
+            
+            // Save reset state
+            const defaultFilters = {
+                includeDisabled: true,
+                includeNoEmail: true,
+                includeServiceAccounts: true,
+                includeInternalTools: true
+            };
+            sessionStorage.setItem('statsFilters', JSON.stringify(defaultFilters));
+            currentStatsFilters = defaultFilters;
+            
+            applyStatsFilters();
+        }
+
+        function updateStatsDisplay(stats) {
+            const elements = {
+                'statPrimaryUsers': stats.primary_users_total || 0,
+                'statActiveUsers': stats.active_users || 0,
+                'statEnabled': stats.total_enabled || 0,
+                'statDisabled': stats.total_disabled || 0,
+                'statWithEmail': stats.with_email || 0,
+                'statWithoutEmail': stats.without_email || 0,
+                'statServiceAccounts': stats.service_accounts || 0,
+                'statInternalTools': stats.internal_tools || 0
+            };
+            
+            for (const [id, value] of Object.entries(elements)) {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.textContent = value;
+                }
+            }
+            
+            // Update migration planning text
+            const planningText = `You have <strong>${stats.active_users || 0}</strong> active users ready for migration (enabled accounts in primary users OU, excluding Disabled Users OU).`;
+            const withoutEmailText = stats.without_email > 0 ? ` <strong>${stats.without_email}</strong> users need email addresses configured before migration.` : '';
+            const planningEl = document.getElementById('migrationPlanningText');
+            if (planningEl) {
+                planningEl.innerHTML = planningText + withoutEmailText;
+            }
+            const activeUsersEl = document.getElementById('migrationActiveUsers');
+            if (activeUsersEl) {
+                activeUsersEl.textContent = stats.active_users || 0;
+            }
+            const withoutEmailEl = document.getElementById('migrationWithoutEmail');
+            if (withoutEmailEl && stats.without_email > 0) {
+                withoutEmailEl.textContent = stats.without_email;
+            }
+        }
+
+        // Load saved filter state on page load and apply immediately
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load saved filters from sessionStorage
+            const savedFilters = sessionStorage.getItem('statsFilters');
+            if (savedFilters) {
+                try {
+                    const filters = JSON.parse(savedFilters);
+                    const disabledCheck = document.getElementById('filterIncludeDisabled');
+                    const noEmailCheck = document.getElementById('filterIncludeNoEmail');
+                    const serviceAccountsCheck = document.getElementById('filterIncludeServiceAccounts');
+                    const internalToolsCheck = document.getElementById('filterIncludeInternalTools');
+                    
+                    if (disabledCheck) disabledCheck.checked = filters.includeDisabled !== false;
+                    if (noEmailCheck) noEmailCheck.checked = filters.includeNoEmail !== false;
+                    if (serviceAccountsCheck) serviceAccountsCheck.checked = filters.includeServiceAccounts !== false;
+                    if (internalToolsCheck) internalToolsCheck.checked = filters.includeInternalTools !== false;
+                    
+                    currentStatsFilters = filters;
+                    
+                    // Always apply saved filters on page load to update stats
+                    setTimeout(function() {
+                        applyStatsFilters();
+                    }, 300); // Small delay to ensure page is fully loaded
+                } catch (e) {
+                    console.error('Error loading saved stats filters:', e);
+                }
+            } else {
+                // No saved filters - save defaults
+                const defaultFilters = {
+                    includeDisabled: true,
+                    includeNoEmail: true,
+                    includeServiceAccounts: true,
+                    includeInternalTools: true
+                };
+                sessionStorage.setItem('statsFilters', JSON.stringify(defaultFilters));
+            }
+            
+            // Also save filter state whenever checkboxes change
+            const filterCheckboxes = document.querySelectorAll('.stats-filter');
+            filterCheckboxes.forEach(function(checkbox) {
+                checkbox.addEventListener('change', function() {
+                    const filters = {
+                        includeDisabled: document.getElementById('filterIncludeDisabled').checked,
+                        includeNoEmail: document.getElementById('filterIncludeNoEmail').checked,
+                        includeServiceAccounts: document.getElementById('filterIncludeServiceAccounts').checked,
+                        includeInternalTools: document.getElementById('filterIncludeInternalTools').checked
+                    };
+                    sessionStorage.setItem('statsFilters', JSON.stringify(filters));
+                    currentStatsFilters = filters;
+                });
+            });
         });
     </script>
     

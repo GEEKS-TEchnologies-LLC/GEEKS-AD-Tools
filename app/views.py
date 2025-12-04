@@ -154,21 +154,41 @@ def setup():
         return redirect(url_for('main.admin_login'))
 
     if request.method == 'POST':
+        # Get password from secure storage or form
+        from .credentials import get_credential
+        ad_password = request.form.get('ad_password') or get_credential('ad_password') or ''
+        
+        # Save password to secure storage if provided
+        if request.form.get('ad_password'):
+            from .credentials import set_credential
+            set_credential('ad_password', request.form['ad_password'])
+        
         config_data = {
             'ad_server': request.form['ad_server'],
             'ad_port': request.form['ad_port'],
             'ad_bind_dn': request.form['ad_bind_dn'],
-            'ad_password': request.form['ad_password'],
+            'ad_password': '',  # Don't store in config file
             'ad_base_dn': request.form['ad_base_dn'],
-            'users_ou': request.form.get('users_ou'),
-            'groups_ou': request.form.get('groups_ou')
+            'users_ou': request.form.get('users_ou', ''),
+            'groups_ou': request.form.get('groups_ou', '')
         }
+        
+        # Set up organization_ous if users_ou is provided
+        if request.form.get('users_ou'):
+            if 'organization_ous' not in config_data:
+                config_data['organization_ous'] = {}
+            config_data['organization_ous']['primary_users_ou'] = request.form.get('users_ou')
+            config_data['organization_ous']['primary_users_label'] = request.form.get('users_ou').split('OU=')[-1].split(',')[0] if 'OU=' in request.form.get('users_ou') else 'Users'
+        
         save_ad_config(config_data)
+        # Get password from secure storage for testing
+        test_password = get_credential('ad_password') or request.form.get('ad_password', '')
+        
         ok, msg = test_ad_connection(
             server=config_data['ad_server'],
             port=config_data['ad_port'],
             bind_user=config_data['ad_bind_dn'],
-            bind_password=config_data['ad_password']
+            bind_password=test_password
         )
         if ok:
             flash('Setup saved and AD connection successful!', 'success')
@@ -675,6 +695,153 @@ def user_search():
         sort_order=sort_order,
         user_stats=user_stats
     )
+
+@main.route('/api/users/stats')
+@login_required
+@admin_required
+def api_get_user_stats():
+    """API endpoint to get filtered user statistics"""
+    try:
+        config = get_ad_config()
+        if not config:
+            return jsonify({'success': False, 'error': 'AD not configured'}), 400
+        
+        ad_args = {
+            'server': config['ad_server'],
+            'port': config['ad_port'],
+            'bind_user': config['ad_bind_dn'],
+            'bind_password': config['ad_password'],
+            'base_dn': config['ad_base_dn']
+        }
+        
+        # Get filter parameters
+        query = request.args.get('query', '')
+        status_filter = request.args.get('status_filter', 'all')
+        exclude_ous_raw = request.args.get('exclude_ous', '')
+        exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+        
+        # Get stats filter parameters
+        include_disabled = request.args.get('include_disabled', '1') == '1'
+        include_no_email = request.args.get('include_no_email', '1') == '1'
+        include_service_accounts = request.args.get('include_service_accounts', '1') == '1'
+        include_internal_tools = request.args.get('include_internal_tools', '1') == '1'
+        
+        # Get all users (for accurate stats)
+        all_users = search_users(query, status_filter='all', exclude_ous=[], **ad_args)
+        
+        # Get organization OU configuration
+        from .ad import get_organization_ous, get_primary_users_label
+        org_ous = get_organization_ous(ad_args.get('ad_base_dn'))
+        primary_users_label = get_primary_users_label()
+        
+        # Initialize stats
+        user_stats = {
+            'total_enabled': 0,
+            'total_disabled': 0,
+            'with_email': 0,
+            'without_email': 0,
+            'active_users': 0,
+            'primary_users_total': 0,
+            'service_accounts': 0,
+            'internal_tools': 0
+        }
+        
+        # Count users with filters applied
+        for user in all_users:
+            # Check if user is in primary users OU
+            dn = user.get('distinguishedName') or user.get('dn') or ''
+            if 'OU=Disabled Users' in dn or org_ous.get('disabled_users_ou', '') in dn:
+                continue  # Always exclude disabled users OU
+            
+            # Check excluded OUs
+            if exclude_ous:
+                should_exclude = False
+                for excluded_ou in exclude_ous:
+                    if excluded_ou.strip() and excluded_ou.strip() in dn:
+                        should_exclude = True
+                        break
+                if should_exclude:
+                    continue
+            
+            # Apply status filter
+            if status_filter == 'enabled' and user.get('accountStatus') != 'enabled':
+                continue
+            if status_filter == 'disabled' and user.get('accountStatus') != 'disabled':
+                continue
+            
+            # Count primary users
+            user_stats['primary_users_total'] += 1
+            
+            # Count by status
+            if user.get('accountStatus') == 'enabled':
+                user_stats['total_enabled'] += 1
+                if include_disabled:  # Only count as active if including disabled
+                    user_stats['active_users'] += 1
+            else:
+                if include_disabled:
+                    user_stats['total_disabled'] += 1
+            
+            # Count by email
+            has_email = bool(user.get('mail'))
+            if has_email:
+                user_stats['with_email'] += 1
+            else:
+                if include_no_email:
+                    user_stats['without_email'] += 1
+            
+            # Count service accounts and internal tools
+            mail = (user.get('mail') or '').strip()
+            if mail and user.get('accountStatus') == 'enabled':
+                service_accounts_ou = org_ous.get('service_accounts_ou', '')
+                internal_tools_ou = org_ous.get('internal_tools_ou', '')
+                if service_accounts_ou in dn or 'Service Accounts' in dn:
+                    if include_service_accounts:
+                        user_stats['service_accounts'] += 1
+                elif internal_tools_ou in dn or 'Internal Tools' in dn:
+                    if include_internal_tools:
+                        user_stats['internal_tools'] += 1
+        
+        # Recalculate active users based on filters
+        if include_disabled and include_no_email:
+            user_stats['active_users'] = user_stats['total_enabled']
+        else:
+            # Active = enabled, with email, and respecting other filters
+            user_stats['active_users'] = 0
+            for user in all_users:
+                dn = user.get('distinguishedName') or user.get('dn') or ''
+                if 'OU=Disabled Users' in dn or org_ous.get('disabled_users_ou', '') in dn:
+                    continue
+                if exclude_ous:
+                    should_exclude = False
+                    for excluded_ou in exclude_ous:
+                        if excluded_ou.strip() and excluded_ou.strip() in dn:
+                            should_exclude = True
+                            break
+                    if should_exclude:
+                        continue
+                if status_filter == 'enabled' and user.get('accountStatus') != 'enabled':
+                    continue
+                if status_filter == 'disabled' and user.get('accountStatus') != 'disabled':
+                    continue
+                if user.get('accountStatus') == 'enabled' and user.get('mail'):
+                    if not include_service_accounts:
+                        if 'Service Accounts' in dn or org_ous.get('service_accounts_ou', '') in dn:
+                            continue
+                    if not include_internal_tools:
+                        if 'Internal Tools' in dn or org_ous.get('internal_tools_ou', '') in dn:
+                            continue
+                    user_stats['active_users'] += 1
+        
+        return jsonify({
+            'success': True,
+            'stats': user_stats
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error getting user stats: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @main.route('/admin/export/mailbox_ready')
