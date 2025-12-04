@@ -107,14 +107,21 @@ class UserDirectReport(db.Model):
     employee_display_name = db.Column(db.String(256), nullable=True)
     department = db.Column(db.String(128), nullable=True, index=True)  # Employee's department (can be different from manager's)
     is_same_department = db.Column(db.Boolean, default=True, nullable=False)
+    supervisor_username = db.Column(db.String(64), nullable=True, index=True)  # Supervisor's sAMAccountName (for indirect reports)
+    supervisor_dn = db.Column(db.String(512), nullable=True)  # Supervisor's full DN
+    is_indirect_report = db.Column(db.Boolean, default=False, nullable=False)  # True if employee reports through a supervisor
+    is_dotted_line = db.Column(db.Boolean, default=False, nullable=False)  # True for dotted-line/secondary reporting relationships
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
     
-    # One manager per employee (but employee can be in different department)
-    __table_args__ = (db.UniqueConstraint('employee_username', name='_employee_manager_uc'),)
+    # Allow one primary manager per employee, but multiple dotted-line relationships
+    __table_args__ = (
+        db.Index('idx_employee_primary', 'employee_username', unique=True, postgresql_where=db.text('is_dotted_line = false')),
+    )
     
     def __repr__(self):
-        return f'<UserDirectReport {self.employee_username} -> {self.manager_username}>'
+        report_type = "dotted-line" if self.is_dotted_line else ("indirect" if self.is_indirect_report else "direct")
+        return f'<UserDirectReport {self.employee_username} -> {self.manager_username} ({report_type})>'
 
 class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)

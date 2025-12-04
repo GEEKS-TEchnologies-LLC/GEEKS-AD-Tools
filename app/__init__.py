@@ -84,13 +84,13 @@ def create_app():
     @app.context_processor
     def inject_version_info():
         """Make version information available to all templates"""
+        from .version import __version__
         try:
             from .version_checker import get_version_info
             version_info = get_version_info()
             return {'version_info': version_info, 'app_version': __version__}
         except Exception as e:
             app.logger.warning(f"Could not load version info: {e}")
-            from .version import __version__
             return {'version_info': None, 'app_version': __version__}
 
     return app

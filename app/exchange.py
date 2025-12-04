@@ -489,7 +489,7 @@ class ExchangeManager:
             Dictionary with 'orphaned' and 'missing' mailboxes
         """
         try:
-            all_mailboxes = self.get_all_mailboxes()
+        all_mailboxes = self.get_all_mailboxes()
         except Exception as e:
             logger.error(f"Error getting all mailboxes: {e}")
             return {'orphaned': [], 'missing': []}
@@ -512,13 +512,13 @@ class ExchangeManager:
         if orphaned_emails:
             logger.info(f"Fetching mailbox statistics for {len(orphaned_emails)} orphaned mailboxes...")
             try:
-                stats = self.get_mailbox_stats(orphaned_emails)
-                
-                # Merge stats into orphaned mailboxes
-                for mailbox in orphaned:
-                    email = (mailbox.get('PrimarySmtpAddress') or '').lower()
-                    if email in stats:
-                        mailbox.update(stats[email])
+            stats = self.get_mailbox_stats(orphaned_emails)
+            
+            # Merge stats into orphaned mailboxes
+            for mailbox in orphaned:
+                email = (mailbox.get('PrimarySmtpAddress') or '').lower()
+                if email in stats:
+                    mailbox.update(stats[email])
             except Exception as e:
                 logger.error(f"Error getting mailbox stats for orphaned mailboxes: {e}")
         

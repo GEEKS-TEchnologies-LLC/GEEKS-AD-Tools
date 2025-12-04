@@ -98,13 +98,25 @@ class Updater:
             os.makedirs(backup_dir, exist_ok=True)
             
             # Files/directories to backup
+            # Note: Database files are NOT backed up - each installation has its own DB
+            # Migrations are backed up so we can rollback migration files if needed
             items_to_backup = [
                 'app',
                 'config.json',
                 'requirements.txt',
                 'app.py',
-                'database.db'  # If exists
+                'migrations',  # Backup migrations directory (not the DB, just migration files)
             ]
+            
+            # Also backup credentials and other important files (but NOT database)
+            important_files = [
+                '.credentials.enc',
+                '.credentials.key'
+            ]
+            for important_file in important_files:
+                file_path = os.path.join(self.base_path, important_file)
+                if os.path.exists(file_path):
+                    items_to_backup.append(important_file)
             
             logger.info(f"Creating backup in {backup_dir}")
             
@@ -270,6 +282,143 @@ class Updater:
             logger.error(f"Error extracting archive: {e}")
             return None
     
+    def run_database_migrations(self):
+        """
+        Run database migrations after update
+        
+        This applies new migrations to the local database. Each installation
+        maintains its own database file, which is not included in updates.
+        Migrations are applied to bring the local database schema up to date.
+        
+        Returns:
+            dict with migration result
+        """
+        try:
+            logger.info("Running database migrations...")
+            logger.info("Note: This updates the local database schema. Database files are not included in updates.")
+            
+            # Change to base path for Flask commands
+            original_cwd = os.getcwd()
+            os.chdir(self.base_path)
+            
+            try:
+                # Set Flask app environment variable
+                env = os.environ.copy()
+                env['FLASK_APP'] = 'app.py'
+                
+                # Find the Flask executable (could be in venv)
+                flask_cmd = 'flask'
+                venv_flask = os.path.join(self.base_path, 'venv', 'bin', 'flask')
+                if os.path.exists(venv_flask):
+                    flask_cmd = venv_flask
+                
+                # Run flask db upgrade
+                result = subprocess.run(
+                    [flask_cmd, 'db', 'upgrade'],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minute timeout
+                    env=env,
+                    cwd=self.base_path
+                )
+                
+                if result.returncode == 0:
+                    logger.info("Database migrations completed successfully")
+                    logger.debug(f"Migration output: {result.stdout}")
+                    return {
+                        'success': True,
+                        'message': 'Database migrations completed successfully',
+                        'output': result.stdout
+                    }
+                else:
+                    error_msg = result.stderr or result.stdout or 'Unknown migration error'
+                    logger.error(f"Database migration failed: {error_msg}")
+                    return {
+                        'success': False,
+                        'message': f'Database migration failed: {error_msg}',
+                        'output': result.stdout,
+                        'error': result.stderr
+                    }
+                    
+            finally:
+                os.chdir(original_cwd)
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Database migration timed out")
+            return {
+                'success': False,
+                'message': 'Database migration timed out (exceeded 5 minutes)'
+            }
+        except Exception as e:
+            logger.error(f"Error running database migrations: {e}")
+            return {
+                'success': False,
+                'message': f'Error running database migrations: {str(e)}'
+            }
+    
+    def cleanup_after_update(self):
+        """
+        Cleanup temporary files and old data after successful update
+        
+        Returns:
+            dict with cleanup result
+        """
+        try:
+            logger.info("Cleaning up after update...")
+            
+            cleanup_items = []
+            
+            # Cleanup temp update directory
+            if os.path.exists(self.temp_path):
+                try:
+                    shutil.rmtree(self.temp_path)
+                    cleanup_items.append(f"Removed temp directory: {self.temp_path}")
+                    logger.info(f"Cleaned up temp directory: {self.temp_path}")
+                except Exception as e:
+                    logger.warning(f"Could not remove temp directory: {e}")
+            
+            # Cleanup old Python cache files (__pycache__)
+            for root, dirs, files in os.walk(self.base_path):
+                # Skip venv and other important directories
+                if 'venv' in root or '.git' in root or 'backups' in root:
+                    continue
+                    
+                if '__pycache__' in dirs:
+                    pycache_dir = os.path.join(root, '__pycache__')
+                    try:
+                        shutil.rmtree(pycache_dir)
+                        cleanup_items.append(f"Removed __pycache__: {pycache_dir}")
+                    except Exception as e:
+                        logger.warning(f"Could not remove __pycache__ {pycache_dir}: {e}")
+            
+            # Cleanup .pyc files
+            for root, dirs, files in os.walk(self.base_path):
+                if 'venv' in root or '.git' in root or 'backups' in root:
+                    continue
+                    
+                for file in files:
+                    if file.endswith('.pyc'):
+                        pyc_file = os.path.join(root, file)
+                        try:
+                            os.remove(pyc_file)
+                            cleanup_items.append(f"Removed .pyc file: {pyc_file}")
+                        except Exception as e:
+                            logger.warning(f"Could not remove .pyc file {pyc_file}: {e}")
+            
+            logger.info(f"Cleanup completed. Removed {len(cleanup_items)} items")
+            return {
+                'success': True,
+                'message': f'Cleanup completed successfully',
+                'items_cleaned': cleanup_items
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            return {
+                'success': False,
+                'message': f'Error during cleanup: {str(e)}'
+            }
+    
     def install_update(self, source_dir, backup_dir=None):
         """
         Install the update from extracted source
@@ -285,11 +434,17 @@ class Updater:
             logger.info(f"Installing update from {source_dir}")
             
             # Files/directories to update
+            # Note: Database files are NOT updated - each installation maintains its own DB
+            # Migrations are updated so new migrations can be run
             items_to_update = [
                 'app',
                 'requirements.txt',
-                'app.py'
+                'app.py',
+                'migrations'  # Include migrations directory (migration files, not DB)
             ]
+            
+            # Do NOT update database files - each installation has its own
+            # The database will be migrated using the new migration files
             
             # Update each item
             for item in items_to_update:
@@ -316,12 +471,33 @@ class Updater:
                 
                 logger.info(f"Updated {item}")
             
+            # Step 1: Run database migrations
+            migration_result = self.run_database_migrations()
+            if not migration_result.get('success'):
+                logger.error(f"Migration failed: {migration_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f'Update installed but database migration failed: {migration_result.get("message")}',
+                    'backup_dir': backup_dir,
+                    'migration_error': migration_result.get('message'),
+                    'step': 'migration'
+                }
+            
+            # Step 2: Cleanup temporary files
+            cleanup_result = self.cleanup_after_update()
+            if not cleanup_result.get('success'):
+                logger.warning(f"Cleanup had issues: {cleanup_result.get('message')}")
+                # Don't fail the update if cleanup fails, just log it
+            
             # Save update metadata
             update_metadata = {
                 'timestamp': datetime.now().isoformat(),
                 'source_dir': source_dir,
                 'backup_dir': backup_dir,
-                'items_updated': items_to_update
+                'items_updated': items_to_update,
+                'migration_success': migration_result.get('success'),
+                'migration_output': migration_result.get('output', ''),
+                'cleanup_success': cleanup_result.get('success')
             }
             
             metadata_path = os.path.join(self.base_path, 'update_metadata.json')
@@ -331,8 +507,10 @@ class Updater:
             logger.info("Update installed successfully")
             return {
                 'success': True,
-                'message': 'Update installed successfully',
-                'backup_dir': backup_dir
+                'message': 'Update installed and database migrations completed successfully',
+                'backup_dir': backup_dir,
+                'migration_result': migration_result,
+                'cleanup_result': cleanup_result
             }
             
         except Exception as e:
@@ -368,7 +546,8 @@ class Updater:
                     items_to_restore = metadata.get('items_backed_up', [])
             else:
                 # Fallback: restore common items
-                items_to_restore = ['app', 'config.json', 'requirements.txt', 'app.py']
+                # Note: Database files are NOT restored - each installation maintains its own DB
+                items_to_restore = ['app', 'config.json', 'requirements.txt', 'app.py', 'migrations']
             
             logger.info(f"Rolling back from {backup_dir}")
             
@@ -395,10 +574,17 @@ class Updater:
                 
                 logger.info(f"Restored {item}")
             
+            # After rollback, we may need to rollback database migrations too
+            # This is tricky - we'd need to know which migration to rollback to
+            # For now, we'll just log a warning
+            logger.warning("Rollback completed. Note: Database migrations were not automatically rolled back.")
+            logger.warning("If you need to rollback database changes, you may need to manually run: flask db downgrade")
+            
             logger.info("Rollback completed successfully")
             return {
                 'success': True,
-                'message': 'Rollback completed successfully'
+                'message': 'Rollback completed successfully. Note: Database migrations may need manual rollback.',
+                'migration_note': 'Database migrations were not automatically rolled back. Run "flask db downgrade" if needed.'
             }
             
         except Exception as e:
@@ -450,10 +636,16 @@ class Updater:
                     'backup_dir': backup_dir
                 }
             
-            # Step 4: Install update
+            # Step 4: Install update (includes migrations and cleanup)
             result = self.install_update(source_dir, backup_dir)
             
-            # Cleanup temp files
+            # If update failed at migration step, offer rollback option
+            if not result.get('success') and result.get('step') == 'migration':
+                logger.warning("Update failed during migration. Backup is available for rollback.")
+                result['rollback_available'] = True
+                result['rollback_message'] = 'Update installed but database migration failed. You may need to rollback or manually fix the database.'
+            
+            # Final cleanup of temp files (if not already done)
             try:
                 if os.path.exists(self.temp_path):
                     shutil.rmtree(self.temp_path)
