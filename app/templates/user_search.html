@@ -452,6 +452,7 @@
         <nav class="nav flex-column">
             <a class="nav-link" href="/admin/dashboard"><i class="fas fa-tachometer-alt me-2"></i> <span class="nav-text">Dashboard</span></a>
             <a class="nav-link active" href="/admin/users"><i class="fas fa-user-edit me-2"></i> <span class="nav-text">User Management</span></a>
+            <a class="nav-link" href="/admin/managers"><i class="fas fa-user-tie me-2"></i> <span class="nav-text">Manage Managers</span></a>
             <a class="nav-link" href="/admin/ous"><i class="fas fa-folder-tree me-2"></i> <span class="nav-text">OU Management</span></a>
             <a class="nav-link" href="/admin/audit"><i class="fas fa-clipboard-list me-2"></i> <span class="nav-text">Audit Logs</span></a>
             <a class="nav-link" href="/admin/gpo-deployment"><i class="fas fa-download me-2"></i> <span class="nav-text">GPD</span></a>
@@ -653,6 +654,17 @@
                 {% endif %}
             </div>
             <div class="card-body">
+                <div class="d-flex justify-content-end mb-3">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-custom"
+                        data-bs-toggle="modal"
+                        data-bs-target="#exportFiltersModal"
+                        title="Export users with custom filters"
+                    >
+                        <i class="fas fa-file-export"></i> Filtered Export
+                    </button>
+                </div>
                 <!-- Pagination Controls (Top) -->
                 <nav aria-label="User pagination" class="mb-3">
                   <ul class="pagination justify-content-center">
@@ -1502,21 +1514,32 @@
                 if (email && matchedKey && mailboxSizes[matchedKey]) {
                     updatedCount++;
                     const mbData = mailboxSizes[matchedKey];
-                    // Handle size - might be in bytes, or already converted
+                    // Handle size - might be in bytes (number), or already converted
                     let sizeBytes = mbData.TotalItemSize || 0;
                     if (typeof sizeBytes === 'string') {
-                        // Parse string like "10 GB" or "500 MB"
+                        // Parse string like "10 GB" or "500 MB" or "30.94 GB (33,221,930,407 bytes)"
                         sizeBytes = parseSizeString(sizeBytes);
+                    } else if (typeof sizeBytes === 'number') {
+                        // Already in bytes, use as-is
+                    } else {
+                        sizeBytes = 0;
                     }
-                    const sizeMB = Math.round(sizeBytes / (1024 * 1024));
-                    const sizeGB = (sizeMB / 1024).toFixed(2);
-                    const sizeDisplay = sizeMB >= 1024 ? `${sizeGB} GB` : `${sizeMB} MB`;
+                    
+                    // Format size display
+                    let sizeDisplay = '0 B';
+                    if (sizeBytes > 0) {
+                        const sizeMB = Math.round(sizeBytes / (1024 * 1024));
+                        const sizeGB = (sizeBytes / (1024 * 1024 * 1024)).toFixed(2);
+                        sizeDisplay = sizeBytes >= (1024 * 1024 * 1024) ? `${sizeGB} GB` : `${sizeMB} MB`;
+                    }
+                    
+                    const itemCount = mbData.TotalItemCount || 0;
                     const lastLogon = mbData.LastLogonTime ? new Date(mbData.LastLogonTime).toLocaleDateString() : 'Never';
                     
                     textSpan.innerHTML = `
                         <div class="small text-white">
                             <div><strong>${sizeDisplay}</strong></div>
-                            <div class="text-warning">${mbData.TotalItemCount || 0} items</div>
+                            <div class="text-warning">${itemCount.toLocaleString()} items</div>
                             <div class="text-muted">Last: ${lastLogon}</div>
                         </div>
                     `;
@@ -1899,7 +1922,6 @@
         });
         
         // Helper function to parse size strings like "10 GB" or "500 MB" to bytes
-        function parseSizeString(sizeStr) {
             if (!sizeStr || typeof sizeStr !== 'string') return 0;
             const match = sizeStr.match(/([\d.]+)\s*(\w+)/i);
             if (!match) return 0;
@@ -2005,5 +2027,367 @@
             });
         });
     </script>
+
+    <!-- Export Filters Modal -->
+    <div class="modal fade" id="exportFiltersModal" tabindex="-1" aria-labelledby="exportFiltersModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exportFiltersModalLabel">
+                        <i class="fas fa-filter"></i> Filtered Export - Filter Options
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold"><i class="fas fa-search"></i> Search Query</label>
+                            <input type="text" class="form-control" id="exportQuery" value="{{ query }}" placeholder="Search by username, name, or email">
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold"><i class="fas fa-toggle-on"></i> Account Status</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="exportStatusFilter" id="exportStatusAll" value="all" {% if status_filter == 'all' or not status_filter %}checked{% endif %}>
+                                <label class="form-check-label" for="exportStatusAll">
+                                    All Users
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="exportStatusFilter" id="exportStatusEnabled" value="enabled" {% if status_filter == 'enabled' %}checked{% endif %}>
+                                <label class="form-check-label" for="exportStatusEnabled">
+                                    Enabled Only
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="exportStatusFilter" id="exportStatusDisabled" value="disabled" {% if status_filter == 'disabled' %}checked{% endif %}>
+                                <label class="form-check-label" for="exportStatusDisabled">
+                                    Disabled Only
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold"><i class="fas fa-folder-minus"></i> Exclude OUs</label>
+                            <input type="text" class="form-control" id="exportExcludeOUs" value="{{ exclude_ous_str }}" placeholder="Comma-separated OUs to exclude">
+                            <small class="text-muted">Example: OU=Service Accounts,OU=Internal Tools</small>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold"><i class="fas fa-check-square"></i> Additional Filters</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="exportRequireEmail" checked>
+                                <label class="form-check-label" for="exportRequireEmail">
+                                    Require Email Address (Migration Ready)
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="exportGroupByDept" checked>
+                                <label class="form-check-label" for="exportGroupByDept">
+                                    Group by Department OU
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold"><i class="fas fa-file"></i> Export Format</label>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="exportFormatXlsx" role="switch">
+                                <label class="form-check-label" for="exportFormatXlsx">
+                                    <span id="formatLabel">CSV Format</span>
+                                    <small class="text-muted d-block">Toggle for XLSX (with multiple sheets)</small>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> 
+                        <strong>Preview:</strong> <span id="exportPreview">Loading...</span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="cancelExportBtn">Cancel</button>
+                    <button type="button" class="btn btn-custom" id="applyFiltersBtn">
+                        <i class="fas fa-filter"></i> Apply Filters & Preview
+                    </button>
+                    <a href="#" class="btn btn-custom" id="exportBtn" style="display: none;" onclick="sessionStorage.removeItem('exportModalOpen'); sessionStorage.removeItem('exportFilters'); filtersApplied = false;">
+                        <i class="fas fa-file-csv"></i> Export
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Export Filters Modal JavaScript
+        let originalFilters = {
+            query: '{{ query }}',
+            status_filter: '{{ status_filter }}',
+            exclude_ous: '{{ exclude_ous_str }}'
+        };
+        let currentExportFilters = {...originalFilters};
+        let filtersApplied = false;
+
+        // Store original filters and reset when modal opens
+        document.getElementById('exportFiltersModal').addEventListener('show.bs.modal', function() {
+            // Store current filters as original
+            originalFilters = {
+                query: '{{ query }}',
+                status_filter: '{{ status_filter }}',
+                exclude_ous: '{{ exclude_ous_str }}'
+            };
+            currentExportFilters = {...originalFilters};
+            filtersApplied = false;
+            
+            // Check if we have saved export settings to restore
+            const savedFilters = sessionStorage.getItem('exportFilters');
+            if (savedFilters) {
+                try {
+                    const filters = JSON.parse(savedFilters);
+                    document.getElementById('exportQuery').value = filters.query || '';
+                    const statusRadio = document.querySelector(`input[name="exportStatusFilter"][value="${filters.status_filter || 'all'}"]`);
+                    if (statusRadio) statusRadio.checked = true;
+                    document.getElementById('exportExcludeOUs').value = filters.exclude_ous || '';
+                    document.getElementById('exportFormatXlsx').checked = filters.format_xlsx || false;
+                    document.getElementById('formatLabel').textContent = filters.format_xlsx ? 'XLSX Format' : 'CSV Format';
+                } catch(e) {
+                    console.error('Error parsing saved filters:', e);
+                }
+            } else {
+                // Reset form to original values
+                document.getElementById('exportQuery').value = originalFilters.query || '';
+                const statusRadio = document.querySelector(`input[name="exportStatusFilter"][value="${originalFilters.status_filter || 'all'}"]`);
+                if (statusRadio) statusRadio.checked = true;
+                document.getElementById('exportExcludeOUs').value = originalFilters.exclude_ous || '';
+                document.getElementById('exportFormatXlsx').checked = false;
+                document.getElementById('formatLabel').textContent = 'CSV Format';
+            }
+            
+            // Hide export button initially
+            const exportBtn = document.getElementById('exportBtn');
+            if (exportBtn) {
+                exportBtn.style.display = 'none';
+            }
+            
+            updateExportPreview();
+        });
+
+        // Restore original filters when modal is closed (only if Cancel was clicked)
+        document.getElementById('exportFiltersModal').addEventListener('hidden.bs.modal', function(event) {
+            // Only restore if filters were applied and user clicked Cancel
+            if (filtersApplied) {
+                // Clear saved filters
+                sessionStorage.removeItem('exportFilters');
+                // Remove any export button that was added
+                const exportArea = document.querySelector('.export-filtered-area');
+                if (exportArea) exportArea.remove();
+                // Revert to original filters
+                restoreOriginalFilters();
+            }
+            filtersApplied = false;
+        });
+
+        // Update preview when filters change
+        // Debounce function for performance
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+        
+        // Debounced update functions (300ms delay)
+        const debouncedUpdatePreview = debounce(updateExportPreview, 300);
+        
+        document.getElementById('exportQuery').addEventListener('input', debouncedUpdatePreview);
+        document.querySelectorAll('input[name="exportStatusFilter"]').forEach(radio => {
+            radio.addEventListener('change', updateExportPreview);
+        });
+        document.getElementById('exportExcludeOUs').addEventListener('input', debouncedUpdatePreview);
+        document.getElementById('exportFormatXlsx').addEventListener('change', function() {
+            document.getElementById('formatLabel').textContent = this.checked ? 'XLSX Format' : 'CSV Format';
+            updateExportButton();
+        });
+
+        function updateExportPreview() {
+            const query = document.getElementById('exportQuery').value;
+            const statusFilter = document.querySelector('input[name="exportStatusFilter"]:checked').value;
+            const excludeOUs = document.getElementById('exportExcludeOUs').value;
+            const requireEmail = document.getElementById('exportRequireEmail').checked;
+            const format = document.getElementById('exportFormatXlsx').checked ? 'XLSX' : 'CSV';
+            
+            let preview = `Status: ${statusFilter === 'all' ? 'All Users' : statusFilter === 'enabled' ? 'Enabled Only' : 'Disabled Only'}`;
+            if (query) preview += ` | Search: "${query}"`;
+            if (excludeOUs) preview += ` | Exclude: ${excludeOUs}`;
+            if (requireEmail) preview += ` | Requires Email`;
+            preview += ` | Format: ${format}`;
+            
+            document.getElementById('exportPreview').textContent = preview;
+        }
+
+        function updateExportButton() {
+            const exportBtn = document.getElementById('exportBtn');
+            const isXlsx = document.getElementById('exportFormatXlsx').checked;
+            if (exportBtn.href && exportBtn.href !== '#') {
+                // Update the format in the URL
+                exportBtn.href = exportBtn.href.replace(/format=(csv|xlsx)/, 'format=' + (isXlsx ? 'xlsx' : 'csv'));
+                // Update icon
+                exportBtn.querySelector('i').className = isXlsx ? 'fas fa-file-excel' : 'fas fa-file-csv';
+            }
+            updateExportPreview();
+        }
+
+        // Apply filters button
+        document.getElementById('applyFiltersBtn').addEventListener('click', function() {
+            const query = document.getElementById('exportQuery').value;
+            const statusFilter = document.querySelector('input[name="exportStatusFilter"]:checked').value;
+            const excludeOUs = document.getElementById('exportExcludeOUs').value;
+            
+            // Update current filters
+            currentExportFilters = {
+                query: query,
+                status_filter: statusFilter,
+                exclude_ous: excludeOUs
+            };
+            
+            // Build export URLs
+            let params = [];
+            if (query) params.push('query=' + encodeURIComponent(query));
+            if (statusFilter && statusFilter !== 'all') params.push('status_filter=' + encodeURIComponent(statusFilter));
+            if (excludeOUs) params.push('exclude_ous=' + encodeURIComponent(excludeOUs));
+            
+            const paramString = params.length > 0 ? '&' + params.join('&') : '';
+            
+            // Get selected format
+            const isXlsx = document.getElementById('exportFormatXlsx').checked;
+            const format = isXlsx ? 'xlsx' : 'csv';
+            
+            // Update export button URL and icon
+            const exportBtn = document.getElementById('exportBtn');
+            if (exportBtn) {
+                exportBtn.href = '/admin/export/migration_ready?format=' + format + paramString;
+                const icon = exportBtn.querySelector('i');
+                if (icon) {
+                    icon.className = isXlsx ? 'fas fa-file-excel' : 'fas fa-file-csv';
+                }
+                // Show export button
+                exportBtn.style.display = 'inline-block';
+            }
+            
+            // Reload the user list with new filters (AJAX call)
+            loadFilteredUsers(query, statusFilter, excludeOUs);
+        });
+
+        function loadFilteredUsers(query, statusFilter, excludeOUs) {
+            // Build URL with filters
+            let url = '/admin/users?';
+            const params = [];
+            if (query) params.push('query=' + encodeURIComponent(query));
+            if (statusFilter && statusFilter !== 'all') params.push('status_filter=' + encodeURIComponent(statusFilter));
+            if (excludeOUs) params.push('exclude_ous=' + encodeURIComponent(excludeOUs));
+            url += params.join('&');
+            
+            // Store export settings in sessionStorage (but don't auto-open modal)
+            sessionStorage.setItem('exportFilters', JSON.stringify({
+                query: query,
+                status_filter: statusFilter,
+                exclude_ous: excludeOUs,
+                format_xlsx: document.getElementById('exportFormatXlsx').checked
+            }));
+            
+            // Close modal before reload
+            const modalElement = document.getElementById('exportFiltersModal');
+            if (modalElement) {
+                const modal = bootstrap.Modal.getInstance(modalElement);
+                if (modal) modal.hide();
+            }
+            
+            // Small delay then reload
+            setTimeout(function() {
+                window.location.href = url;
+            }, 100);
+        }
+
+        function restoreOriginalFilters() {
+            // Build URL with original filters
+            let url = '/admin/users?';
+            const params = [];
+            if (originalFilters.query) params.push('query=' + encodeURIComponent(originalFilters.query));
+            if (originalFilters.status_filter && originalFilters.status_filter !== 'all') {
+                params.push('status_filter=' + encodeURIComponent(originalFilters.status_filter));
+            }
+            if (originalFilters.exclude_ous) params.push('exclude_ous=' + encodeURIComponent(originalFilters.exclude_ous));
+            url += params.join('&');
+            
+            // Reload with original filters
+            window.location.href = url;
+        }
+
+        // Show export button on page if we have saved filters (after applying filters)
+        document.addEventListener('DOMContentLoaded', function() {
+            const savedFilters = sessionStorage.getItem('exportFilters');
+            if (savedFilters) {
+                try {
+                    const filters = JSON.parse(savedFilters);
+                    // Create a visible export button in the All Users section
+                    const userSection = document.querySelector('.glass-card:has(#userTable)');
+                    if (userSection) {
+                        const cardBody = userSection.querySelector('.card-body');
+                        if (cardBody) {
+                            // Check if export button area exists
+                            let exportArea = cardBody.querySelector('.export-filtered-area');
+                            if (!exportArea) {
+                                exportArea = document.createElement('div');
+                                exportArea.className = 'd-flex justify-content-end mb-3 export-filtered-area';
+                                cardBody.insertBefore(exportArea, cardBody.firstChild);
+                            }
+                            
+                            // Build export URL
+                            let params = [];
+                            if (filters.query) params.push('query=' + encodeURIComponent(filters.query));
+                            if (filters.status_filter && filters.status_filter !== 'all') params.push('status_filter=' + encodeURIComponent(filters.status_filter));
+                            if (filters.exclude_ous) params.push('exclude_ous=' + encodeURIComponent(filters.exclude_ous));
+                            const paramString = params.length > 0 ? '&' + params.join('&') : '';
+                            const format = filters.format_xlsx ? 'xlsx' : 'csv';
+                            
+                            // Create export button
+                            const exportBtn = document.createElement('a');
+                            exportBtn.href = '/admin/export/migration_ready?format=' + format + paramString;
+                            exportBtn.className = 'btn btn-sm btn-custom';
+                            exportBtn.innerHTML = '<i class="fas fa-file-' + (format === 'xlsx' ? 'excel' : 'csv') + '"></i> Export Filtered (' + format.toUpperCase() + ')';
+                            exportBtn.onclick = function() {
+                                sessionStorage.removeItem('exportFilters');
+                                this.parentElement.remove();
+                            };
+                            
+                            // Clear existing and add new
+                            exportArea.innerHTML = '';
+                            exportArea.appendChild(exportBtn);
+                        }
+                    }
+                } catch(e) {
+                    console.error('Error processing saved filters:', e);
+                    sessionStorage.removeItem('exportFilters');
+                }
+            }
+        });
+    </script>
+    
+    <!-- Version Information -->
+    {% include 'version_info.html' %}
 </body>
 </html> 

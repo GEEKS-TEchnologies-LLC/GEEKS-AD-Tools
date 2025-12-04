@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Updates - GEEKS-AD-Plus</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: #181818;
+            color: #ffd700;
+            min-height: 100vh;
+        }
+        .glass-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .btn-custom {
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+            border: none;
+            color: #000;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 215, 0, 0.3);
+            color: #000;
+        }
+        .btn-danger-custom {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: #fff;
+        }
+        .update-available {
+            background: rgba(255, 107, 107, 0.1);
+            border: 2px solid #ff6b6b;
+        }
+        .update-current {
+            background: rgba(81, 207, 102, 0.1);
+            border: 2px solid #51cf66;
+        }
+        .spinner-border-sm {
+            width: 1rem;
+            height: 1rem;
+            border-width: 0.15em;
+        }
+        .backup-item {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        #changelogContent, #updateChangelogContent {
+            color: #ffd700;
+            line-height: 1.8;
+        }
+        #changelogContent h3, #updateChangelogContent h3 {
+            color: #ffd700;
+            border-bottom: 1px solid rgba(255,215,0,0.3);
+            padding-bottom: 0.5rem;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        #changelogContent h4, #updateChangelogContent h4 {
+            color: #ffb347;
+            margin-top: 0.75rem;
+            margin-bottom: 0.25rem;
+        }
+        #changelogContent ul, #updateChangelogContent ul {
+            margin-left: 1.5rem;
+            margin-top: 0.5rem;
+        }
+        #changelogContent li, #updateChangelogContent li {
+            margin-bottom: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-sync-alt"></i> System Updates</h1>
+            <a href="/admin/dashboard" class="btn btn-custom">
+                <i class="fas fa-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+
+        <!-- Current Version Info -->
+        <div class="glass-card">
+            <h3><i class="fas fa-info-circle"></i> Current Version</h3>
+            <p class="mb-0" style="font-size: 1.2rem;">
+                <strong>v{{ current_version }}</strong>
+            </p>
+        </div>
+
+        <!-- Update Status -->
+        <div class="glass-card {% if update_info.available %}update-available{% else %}update-current{% endif %}" id="updateStatusCard">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h3>
+                        {% if update_info.available %}
+                            <i class="fas fa-exclamation-triangle text-warning"></i> Update Available
+                        {% else %}
+                            <i class="fas fa-check-circle text-success"></i> System Up to Date
+                        {% endif %}
+                    </h3>
+                    {% if update_info.available %}
+                        <p class="mb-0">
+                            Latest version: <strong>v{{ update_info.latest_version }}</strong>
+                        </p>
+                        {% if update_info.changelog %}
+                            <div class="mt-3">
+                                <h5><i class="fas fa-list"></i> Changelog:</h5>
+                                <div style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; max-height: 400px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.9rem;">
+                                    <div id="changelogContent">{{ update_info.changelog | replace('\n', '<br>') | safe }}</div>
+                                </div>
+                            </div>
+                        {% elif update_info.release_notes %}
+                            <div class="mt-3">
+                                <h5>Release Notes:</h5>
+                                <div style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; max-height: 200px; overflow-y: auto;">
+                                    {{ update_info.release_notes | replace('\n', '<br>') | safe }}
+                                </div>
+                            </div>
+                        {% endif %}
+                    {% endif %}
+                </div>
+                <div>
+                    <button class="btn btn-custom" onclick="checkForUpdates()" id="checkUpdateBtn">
+                        <i class="fas fa-sync"></i> Check for Updates
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Update Actions -->
+        {% if update_info.available %}
+        <div class="glass-card">
+            <h3><i class="fas fa-download"></i> Install Update</h3>
+            <p>This will download and install version <strong>v{{ update_info.latest_version }}</strong>.</p>
+            
+            {% if update_info.changelog %}
+            <div class="mt-3 mb-3">
+                <h5><i class="fas fa-list"></i> What's New in v{{ update_info.latest_version }}:</h5>
+                <div style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; max-height: 300px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.6;">
+                    <div id="updateChangelogContent">{{ update_info.changelog | replace('\n', '<br>') | safe }}</div>
+                </div>
+            </div>
+            {% endif %}
+            
+            <div class="alert alert-warning" style="background: rgba(255,193,7,0.2); border-color: #ffc107; color: #ffd700;">
+                <i class="fas fa-exclamation-triangle"></i> 
+                <strong>Warning:</strong> A backup will be created automatically before updating. 
+                The system will need to be restarted after the update.
+            </div>
+            <button class="btn btn-custom btn-lg" onclick="performUpdate()" id="performUpdateBtn">
+                <i class="fas fa-download"></i> Install Update Now
+            </button>
+            {% if update_info.release_url %}
+                <a href="{{ update_info.release_url }}" target="_blank" class="btn btn-secondary ms-2">
+                    <i class="fas fa-external-link-alt"></i> View Release on GitHub
+                </a>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Backups -->
+        <div class="glass-card">
+            <h3><i class="fas fa-history"></i> Available Backups</h3>
+            <p class="text-muted">Backups are created automatically before each update.</p>
+            <div id="backupsList">
+                {% if backups %}
+                    {% for backup in backups %}
+                    <div class="backup-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong><i class="fas fa-archive"></i> {{ backup.display }}</strong>
+                                <div class="text-muted" style="font-size: 0.9rem;">{{ backup.path }}</div>
+                            </div>
+                            <button class="btn btn-danger-custom btn-sm" onclick="rollbackToBackup('{{ backup.path }}')">
+                                <i class="fas fa-undo"></i> Rollback
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted">No backups available</p>
+                {% endif %}
+            </div>
+            <button class="btn btn-secondary mt-3" onclick="refreshBackups()">
+                <i class="fas fa-sync"></i> Refresh Backups
+            </button>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function checkForUpdates() {
+            const btn = document.getElementById('checkUpdateBtn');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Checking...';
+            
+            fetch('/api/updates/check')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (data.available) {
+                            // Update the page with new info including changelog
+                            if (data.changelog) {
+                                // Update changelog display
+                                const changelogDiv = document.getElementById('changelogContent');
+                                if (changelogDiv) {
+                                    changelogDiv.innerHTML = data.changelog.replace(/\n/g, '<br>');
+                                }
+                            }
+                            location.reload(); // Reload to show update info
+                        } else {
+                            alert('System is up to date!');
+                        }
+                    } else {
+                        alert('Error checking for updates: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(error => {
+                    alert('Error checking for updates: ' + error);
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                });
+        }
+
+        function performUpdate() {
+            if (!confirm('Are you sure you want to install the update? A backup will be created automatically.')) {
+                return;
+            }
+            
+            const btn = document.getElementById('performUpdateBtn');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Installing...';
+            
+            fetch('/api/updates/perform', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({})
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Update installed successfully! The system will need to be restarted. Please restart the application manually.');
+                        location.reload();
+                    } else {
+                        alert('Error installing update: ' + (data.message || 'Unknown error'));
+                        if (data.backup_dir) {
+                            alert('A backup was created at: ' + data.backup_dir + '\nYou can rollback if needed.');
+                        }
+                    }
+                })
+                .catch(error => {
+                    alert('Error installing update: ' + error);
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                });
+        }
+
+        function rollbackToBackup(backupDir) {
+            if (!confirm('Are you sure you want to rollback to this backup? This will restore the previous version.')) {
+                return;
+            }
+            
+            fetch('/api/updates/rollback', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ backup_dir: backupDir })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Rollback completed successfully! The system will need to be restarted.');
+                        location.reload();
+                    } else {
+                        alert('Error during rollback: ' + (data.message || 'Unknown error'));
+                    }
+                })
+                .catch(error => {
+                    alert('Error during rollback: ' + error);
+                });
+        }
+
+        function refreshBackups() {
+            fetch('/api/updates/backups')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        alert('Error refreshing backups: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(error => {
+                    alert('Error refreshing backups: ' + error);
+                });
+        }
+    </script>
+    
+    <!-- Version Information -->
+    {% include 'version_info.html' %}
+</body>
+</html>
+

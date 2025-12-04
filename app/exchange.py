@@ -347,13 +347,20 @@ class ExchangeManager:
                 data = json.loads(stdout.strip())
                 if isinstance(data, list):
                     return data
-                else:
+                elif isinstance(data, dict):
                     return [data]
+                else:
+                    logger.warning(f"Unexpected data type from get_all_mailboxes: {type(data)}")
+                    return []
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse mailbox data: {e}")
+                logger.error(f"Stdout (first 500 chars): {stdout[:500] if stdout else 'empty'}")
+                logger.error(f"Stderr (first 500 chars): {stderr[:500] if stderr else 'empty'}")
                 return []
         else:
-            logger.error(f"Failed to get mailboxes: {stderr}")
+            logger.error(f"Failed to get mailboxes. Success: {success}")
+            logger.error(f"Stdout (first 500 chars): {stdout[:500] if stdout else 'empty'}")
+            logger.error(f"Stderr (first 500 chars): {stderr[:500] if stderr else 'empty'}")
             return []
     
     def get_mailbox_stats(self, email_addresses: List[str]) -> Dict[str, Dict]:
@@ -461,7 +468,12 @@ class ExchangeManager:
         Returns:
             Dictionary with 'orphaned' and 'missing' mailboxes
         """
-        all_mailboxes = self.get_all_mailboxes()
+        try:
+            all_mailboxes = self.get_all_mailboxes()
+        except Exception as e:
+            logger.error(f"Error getting all mailboxes: {e}")
+            return {'orphaned': [], 'missing': []}
+        
         # Convert all active emails to lowercase for case-insensitive comparison
         active_email_set = set(email.lower() for email in active_emails if email)
         
@@ -479,13 +491,16 @@ class ExchangeManager:
         # Get mailbox statistics for orphaned mailboxes (size, item count, last logon)
         if orphaned_emails:
             logger.info(f"Fetching mailbox statistics for {len(orphaned_emails)} orphaned mailboxes...")
-            stats = self.get_mailbox_stats(orphaned_emails)
-            
-            # Merge stats into orphaned mailboxes
-            for mailbox in orphaned:
-                email = (mailbox.get('PrimarySmtpAddress') or '').lower()
-                if email in stats:
-                    mailbox.update(stats[email])
+            try:
+                stats = self.get_mailbox_stats(orphaned_emails)
+                
+                # Merge stats into orphaned mailboxes
+                for mailbox in orphaned:
+                    email = (mailbox.get('PrimarySmtpAddress') or '').lower()
+                    if email in stats:
+                        mailbox.update(stats[email])
+            except Exception as e:
+                logger.error(f"Error getting mailbox stats for orphaned mailboxes: {e}")
         
         # Find emails that should have mailboxes but don't (missing mailboxes)
         all_mailbox_emails = set((mb.get('PrimarySmtpAddress') or '').lower() for mb in all_mailboxes if mb.get('PrimarySmtpAddress'))

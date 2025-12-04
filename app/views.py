@@ -15,11 +15,12 @@ from .ad import (
     enable_user as ad_enable_user, disable_user as ad_disable_user,
     unlock_user as ad_unlock_user, force_password_change as ad_force_password_change,
     update_user_attributes, list_ous, create_ou, move_user_to_ou, get_ou_tree,
-    get_group_types_for_user, get_os_breakdown
+    get_group_types_for_user, get_os_breakdown, get_organization_ous,
+    set_user_manager, remove_user_manager, get_user_manager
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
-from .models import Admin
+from .models import Admin, DepartmentManager, UserDirectReport
 from . import db
 from werkzeug.security import generate_password_hash
 from functools import wraps
@@ -31,6 +32,8 @@ from .audit import (
 from .bug_report import generate_bug_report, save_bug_report, get_bug_report_summary
 from urllib.parse import unquote
 from .version import __version__
+from .version_checker import get_version_info, check_github_version
+from .updater import Updater
 import ldap3
 import json
 from datetime import datetime, timezone
@@ -627,7 +630,7 @@ def user_search():
     org_ous = get_organization_ous(ad_args.get('ad_base_dn'))
     primary_users_label = get_primary_users_label()
     
-    # Count users by status and email
+    # Count users by status and email - use already fetched users list
     for user in users:
         # All users shown are already filtered to be in primary users OU and not in Disabled Users OU
         user_stats['primary_users_total'] += 1
@@ -642,25 +645,18 @@ def user_search():
             user_stats['with_email'] += 1
         else:
             user_stats['without_email'] += 1
-
-    # Compute category counts for Service Accounts and Internal Tools (for migration planning)
-    # Fetch a broader set (respecting user-provided exclusions only) and partition
-    try:
-        all_for_cats = search_users(query, status_filter='enabled', exclude_ous=exclude_ous, **ad_args)
-        for u in all_for_cats:
-            dn = u.get('distinguishedName') or u.get('dn') or ''
-            mail = (u.get('mail') or '').strip()
-            if not mail:
-                continue
-            # Check if user is in Service Accounts or Internal Tools OUs
+        
+        # Compute category counts for Service Accounts and Internal Tools (for migration planning)
+        # Use the already-fetched users list instead of making another query
+        dn = user.get('distinguishedName') or user.get('dn') or ''
+        mail = (user.get('mail') or '').strip()
+        if mail and user.get('accountStatus') == 'enabled':
             service_accounts_ou = org_ous['service_accounts_ou']
             internal_tools_ou = org_ous['internal_tools_ou']
             if service_accounts_ou in dn or 'Service Accounts' in dn:
                 user_stats['service_accounts'] += 1
             elif internal_tools_ou in dn or 'Internal Tools' in dn:
                 user_stats['internal_tools'] += 1
-    except Exception:
-        pass
     
     return render_template(
         'user_search.html', 
@@ -796,6 +792,192 @@ def export_mailbox_ready():
         mimetype='text/csv',
         headers={'Content-Disposition': f'attachment; filename={filename}'}
     )
+
+
+@main.route('/admin/export/migration_ready')
+@login_required
+@admin_required
+def export_migration_ready():
+    """Export migration-ready users grouped by department OU to CSV and XLSX.
+    
+    Respects current filters from the user search page: query, status_filter, exclude_ous.
+    Always enforces enabled status and requires non-empty email for export.
+    """
+    import sys
+    import os
+    from collections import defaultdict
+    from flask import Response
+    from datetime import datetime
+    
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': int(config['ad_port']),
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    # Get filters from query string
+    query = request.args.get('query', '')
+    status_filter = request.args.get('status_filter', 'enabled')  # Respect user's filter choice
+    exclude_ous_raw = request.args.get('exclude_ous', '')
+    exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+    
+    try:
+        # Search for users with current filters (respect all filters including status)
+        users = search_users(query, status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
+        
+        # Helper function to extract department from OU
+        def extract_department_from_ou(dn):
+            """Extract department name from OU path."""
+            if not dn:
+                return "Unknown"
+            parts = dn.split(',')
+            ous = []
+            for part in parts:
+                part = part.strip()
+                if part.startswith('OU='):
+                    ou_name = part.replace('OU=', '')
+                    if ou_name.lower() not in ['users', 'disabled users', 'service accounts', 'internal tools', 'sunray users', 'sunray']:
+                        ous.append(ou_name)
+            if ous:
+                return ous[0]
+            for part in parts:
+                if part.startswith('CN='):
+                    cn_name = part.replace('CN=', '')
+                    if cn_name.lower() not in ['users']:
+                        return cn_name
+            return "Root"
+        
+        # Filter for migration-ready criteria (must have email)
+        # Note: This respects all filters (query, status_filter, exclude_ous) from the search page
+        # but still requires email addresses (that's what "migration ready" means)
+        migration_ready = []
+        for user in users:
+            email = (user.get('mail') or '').strip()
+            if not email:
+                continue  # Skip users without email (migration-ready requirement)
+            
+            # Extract department from OU
+            dn = user.get('distinguishedName') or user.get('dn') or ''
+            department = extract_department_from_ou(dn)
+            
+            user_data = {
+                'Name': user.get('displayName') or user.get('cn') or '',
+                'Username': user.get('sAMAccountName') or user.get('username') or '',
+                'Email': email,
+                'Department': department,
+                'OU Path': dn,
+                'Title': user.get('title') or '',
+                'Department (AD)': user.get('department') or '',
+                'Company': user.get('company') or '',
+                'Phone': user.get('telephoneNumber') or user.get('phone') or '',
+                'Mobile': user.get('mobile') or user.get('mobilePhone') or '',
+            }
+            migration_ready.append(user_data)
+        
+        if not migration_ready:
+            flash(f'No migration-ready users found with current filters (users must have email addresses). Status filter: {status_filter}, Query: {query if query else "all"}', 'warning')
+            return redirect(url_for('main.user_search'))
+        
+        # Group by department
+        users_by_dept = defaultdict(list)
+        for user in migration_ready:
+            department = user.get('Department', 'Unknown')
+            users_by_dept[department].append(user)
+        
+        # Sort departments
+        users_by_dept = dict(sorted(users_by_dept.items()))
+        
+        # Determine export format
+        export_format = request.args.get('format', 'csv').lower()
+        
+        if export_format == 'xlsx':
+            # XLSX export
+            try:
+                import pandas as pd
+                from io import BytesIO
+                
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    # Summary sheet
+                    summary_data = []
+                    for department, dept_users in sorted(users_by_dept.items()):
+                        summary_data.append({
+                            'Department': department,
+                            'User Count': len(dept_users)
+                        })
+                    summary_df = pd.DataFrame(summary_data)
+                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                    
+                    # Department sheets
+                    for department, dept_users in sorted(users_by_dept.items()):
+                        sheet_name = department[:31] if len(department) <= 31 else department[:28] + '...'
+                        df = pd.DataFrame(dept_users)
+                        column_order = ['Name', 'Username', 'Email', 'Title', 
+                                      'Department (AD)', 'Company', 'Phone', 'Mobile']
+                        existing_columns = [col for col in column_order if col in df.columns]
+                        if existing_columns:
+                            df = df[existing_columns]
+                        df.to_excel(writer, sheet_name=sheet_name, index=False)
+                
+                output.seek(0)
+                filename = f'migration_ready_by_department_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+                return Response(
+                    output.read(),
+                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    headers={'Content-Disposition': f'attachment; filename={filename}'}
+                )
+            except ImportError:
+                flash('XLSX export requires pandas and openpyxl. Install with: pip install pandas openpyxl', 'error')
+                return redirect(url_for('main.user_search'))
+        else:
+            # CSV export (default)
+            import io
+            import csv
+            
+            output = io.StringIO()
+            writer = csv.writer(output)
+            
+            # Write header
+            writer.writerow(['Department', 'Name', 'Username', 'Email', 'Title', 
+                           'Department (AD)', 'Company', 'Phone', 'Mobile', 'OU Path'])
+            
+            # Write data grouped by department
+            for department, dept_users in sorted(users_by_dept.items()):
+                for user in sorted(dept_users, key=lambda x: x.get('Name', '')):
+                    writer.writerow([
+                        department,
+                        user.get('Name', ''),
+                        user.get('Username', ''),
+                        user.get('Email', ''),
+                        user.get('Title', ''),
+                        user.get('Department (AD)', ''),
+                        user.get('Company', ''),
+                        user.get('Phone', ''),
+                        user.get('Mobile', ''),
+                        user.get('OU Path', '')
+                    ])
+            
+            csv_data = output.getvalue()
+            filename = f'migration_ready_by_department_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+            return Response(
+                csv_data,
+                mimetype='text/csv',
+                headers={'Content-Disposition': f'attachment; filename={filename}'}
+            )
+            
+    except Exception as e:
+        current_app.logger.error(f"Error exporting migration-ready users: {e}")
+        import traceback
+        current_app.logger.error(traceback.format_exc())
+        flash(f'Error exporting migration-ready users: {str(e)}', 'error')
+        return redirect(url_for('main.user_search'))
 
 
 @main.route('/admin/export/service_accounts')
@@ -1932,38 +2114,419 @@ def create_user_route():
         'base_dn': config['ad_base_dn']
     }
     
+    # Check Exchange configuration
+    exchange_config = get_exchange_config()
+    exchange_enabled = exchange_config and exchange_config.get('enabled', False)
+    
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
         display_name = request.form['display_name']
-        mail = request.form.get('mail', '')  # Get mail with empty string as default
-        target_ou = request.form.get('target_ou', '')  # Get target OU
+        mail = request.form.get('mail', '').strip()
+        target_ou = request.form.get('target_ou', '')
+        given_name = request.form.get('given_name', '').strip()
+        surname = request.form.get('surname', '').strip()
+        title = request.form.get('title', '').strip()
+        department = request.form.get('department', '').strip()
+        telephone_number = request.form.get('telephone_number', '').strip()
+        create_mailbox = request.form.get('create_mailbox') == 'on' and exchange_enabled
+        selected_groups = request.form.getlist('groups')  # Get list of selected group DNs
         
         # Use target_ou if provided, otherwise None (will use base_dn)
         target_ou = target_ou if target_ou else None
         
-        ok, msg = ad_create_user(
+        # Create user
+        ok, msg, user_dn = ad_create_user(
             username, 
             password, 
             display_name, 
-            mail,
+            mail=mail if mail else None,
             target_ou=target_ou,
+            given_name=given_name if given_name else None,
+            surname=surname if surname else None,
+            title=title if title else None,
+            department=department if department else None,
+            telephone_number=telephone_number if telephone_number else None,
             server=config['ad_server'],
             port=config['ad_port'],
             bind_user=config['ad_bind_dn'],
             bind_password=config['ad_password'],
             base_dn=config['ad_base_dn']
         )
-        log_user_action('create', username, 'success' if ok else 'failure', {'display_name': display_name, 'mail': mail, 'target_ou': target_ou})
-        if ok:
-            flash(msg, 'success')
+        
+        if ok and user_dn:
+            # Add user to selected groups
+            group_messages = []
+            for group_dn in selected_groups:
+                if group_dn:
+                    group_ok, group_msg = add_user_to_group(user_dn, group_dn, **ad_args)
+                    if group_ok:
+                        group_messages.append(f"Added to group: {group_msg}")
+                    else:
+                        group_messages.append(f"Group add warning: {group_msg}")
+            
+            # Create mailbox if requested and Exchange is configured
+            mailbox_message = ""
+            if create_mailbox and mail:
+                try:
+                    exchange = ExchangeManager(
+                        exchange_server=exchange_config['exchange_server'],
+                        username=exchange_config['username'],
+                        password=exchange_config['password'],
+                        domain=exchange_config['domain']
+                    )
+                    mailbox_ok, mailbox_msg = exchange.create_mailbox(mail, display_name)
+                    if mailbox_ok:
+                        mailbox_message = f" Mailbox created: {mailbox_msg}"
+                    else:
+                        mailbox_message = f" Mailbox creation failed: {mailbox_msg}"
+                except Exception as e:
+                    mailbox_message = f" Mailbox creation error: {str(e)}"
+            
+            # Combine messages
+            full_message = msg
+            if group_messages:
+                full_message += " " + " ".join(group_messages)
+            if mailbox_message:
+                full_message += mailbox_message
+            
+            log_user_action('create', username, 'success', {
+                'display_name': display_name, 
+                'mail': mail, 
+                'target_ou': target_ou,
+                'groups': selected_groups,
+                'mailbox_created': create_mailbox
+            })
+            flash(full_message, 'success')
             return redirect(url_for('main.user_search'))
         else:
+            log_user_action('create', username, 'failure', {'display_name': display_name, 'mail': mail, 'target_ou': target_ou})
             flash(msg, 'danger')
     
-    # Get available OUs for the form
+    # Get available OUs and groups for the form
     ous = list_ous(**ad_args)
-    return render_template('create_user.html', ous=ous, base_dn=config['ad_base_dn'])
+    all_groups = get_all_groups(**ad_args)
+    
+    # Filter OUs to get departments (OUs under "Sunray Users")
+    # Get the primary users OU from config
+    org_ous = get_organization_ous()
+    primary_users_ou = org_ous.get('primary_users_ou', 'OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal')
+    
+    # Filter OUs that are direct children of the primary users OU
+    departments = []
+    seen_departments = set()
+    
+    # OUs are returned as dictionaries with 'dn' and 'name' keys
+    for ou in ous:
+        ou_dn = ou.get('dn', '') if isinstance(ou, dict) else (ou.dn if hasattr(ou, 'dn') else str(ou))
+        ou_name = ou.get('name', '') if isinstance(ou, dict) else (ou.name if hasattr(ou, 'name') else '')
+        
+        # Check if this OU is directly under the primary users OU
+        # The OU DN should be: OU=DepartmentName,OU=Sunray Users,OU=Sunray,DC=...
+        if primary_users_ou.lower() in ou_dn.lower():
+            # Extract the first OU name (the department name)
+            ou_parts = ou_dn.split(',')
+            department_name = None
+            
+            for part in ou_parts:
+                part = part.strip()
+                if part.startswith('OU='):
+                    ou_name_from_dn = part.replace('OU=', '')
+                    # Skip the primary users OU itself and common structural OUs
+                    skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
+                                 'internal tools', 'sunray', 'owners', 'owner', 'administrators',
+                                 'admins', 'managers', 'management', 'western gaming']
+                    if ou_name_from_dn.lower() not in skip_names:
+                        department_name = ou_name_from_dn
+                        break
+            
+            # Use the extracted name or the OU name attribute
+            if department_name:
+                final_name = department_name
+            elif ou_name:
+                # Check if the OU name itself should be skipped
+                skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
+                             'internal tools', 'sunray', 'owners', 'owner', 'administrators',
+                             'admins', 'managers', 'management', 'western gaming']
+                if ou_name.lower() not in skip_names:
+                    final_name = ou_name
+                else:
+                    continue
+            else:
+                continue
+            
+            # Only add if we haven't seen this department before
+            if final_name and final_name.lower() not in seen_departments:
+                departments.append({'name': final_name, 'dn': ou_dn})
+                seen_departments.add(final_name.lower())
+    
+    # Sort departments alphabetically
+    departments.sort(key=lambda x: x['name'].lower())
+    
+    return render_template('create_user.html', 
+                         ous=ous, 
+                         base_dn=config['ad_base_dn'],
+                         groups=all_groups,
+                         departments=departments,
+                         exchange_enabled=exchange_enabled)
+
+@main.route('/admin/managers', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def manage_managers():
+    """Manage department managers and direct reports"""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    # Get departments
+    org_ous = get_organization_ous()
+    primary_users_ou = org_ous.get('primary_users_ou', 'OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal')
+    ous = list_ous(**ad_args)
+    
+    # Filter departments (same logic as create_user)
+    departments = []
+    seen_departments = set()
+    for ou in ous:
+        ou_dn = ou.get('dn', '') if isinstance(ou, dict) else (ou.dn if hasattr(ou, 'dn') else str(ou))
+        ou_name = ou.get('name', '') if isinstance(ou, dict) else (ou.name if hasattr(ou, 'name') else '')
+        
+        if primary_users_ou.lower() in ou_dn.lower():
+            ou_parts = ou_dn.split(',')
+            department_name = None
+            for part in ou_parts:
+                part = part.strip()
+                if part.startswith('OU='):
+                    ou_name_from_dn = part.replace('OU=', '')
+                    skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
+                                 'internal tools', 'sunray', 'owners', 'owner', 'administrators',
+                                 'admins', 'managers', 'management', 'western gaming']
+                    if ou_name_from_dn.lower() not in skip_names:
+                        department_name = ou_name_from_dn
+                        break
+            
+            if department_name:
+                final_name = department_name
+            elif ou_name:
+                skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
+                             'internal tools', 'sunray', 'owners', 'owner', 'administrators',
+                             'admins', 'managers', 'management', 'western gaming']
+                if ou_name.lower() not in skip_names:
+                    final_name = ou_name
+                else:
+                    continue
+            else:
+                continue
+            
+            if final_name and final_name.lower() not in seen_departments:
+                departments.append({'name': final_name, 'dn': ou_dn})
+                seen_departments.add(final_name.lower())
+    
+    departments.sort(key=lambda x: x['name'].lower())
+    
+    # Get existing department managers
+    dept_managers = {}
+    for dept_mgr in DepartmentManager.query.all():
+        dept_managers[dept_mgr.department] = dept_mgr
+    
+    # Get all direct reports
+    direct_reports = UserDirectReport.query.all()
+    
+    # Group direct reports by manager
+    reports_by_manager = {}
+    for report in direct_reports:
+        if report.manager_username not in reports_by_manager:
+            reports_by_manager[report.manager_username] = []
+        reports_by_manager[report.manager_username].append(report)
+    
+    if request.method == 'POST':
+        action = request.form.get('action')
+        
+        if action == 'set_department_manager':
+            department = request.form.get('department')
+            manager_username = request.form.get('manager_username')
+            
+            if not department or not manager_username:
+                flash('Department and manager are required.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            
+            # Get manager details from AD
+            users = search_users(manager_username, **ad_args)
+            if not users:
+                flash(f'Manager user "{manager_username}" not found.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            
+            manager = users[0]
+            manager_dn = manager.get('distinguishedName') or manager.get('dn')
+            manager_display = manager.get('displayName') or manager.get('cn') or manager_username
+            
+            # Update or create department manager
+            dept_mgr = DepartmentManager.query.filter_by(department=department).first()
+            if dept_mgr:
+                dept_mgr.manager_username = manager_username
+                dept_mgr.manager_dn = manager_dn
+                dept_mgr.manager_display_name = manager_display
+                dept_mgr.updated_at = datetime.now(timezone.utc)
+            else:
+                dept_mgr = DepartmentManager(
+                    department=department,
+                    manager_username=manager_username,
+                    manager_dn=manager_dn,
+                    manager_display_name=manager_display
+                )
+                db.session.add(dept_mgr)
+            
+            db.session.commit()
+            flash(f'Manager for {department} set to {manager_display}.', 'success')
+            return redirect(url_for('main.manage_managers'))
+        
+        elif action == 'assign_direct_report':
+            manager_username = request.form.get('manager_username')
+            employee_username = request.form.get('employee_username')
+            
+            if not manager_username or not employee_username:
+                flash('Manager and employee are required.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            
+            # Get manager and employee details from AD
+            managers = search_users(manager_username, **ad_args)
+            employees = search_users(employee_username, **ad_args)
+            
+            if not managers:
+                flash(f'Manager user "{manager_username}" not found.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            if not employees:
+                flash(f'Employee user "{employee_username}" not found.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            
+            manager = managers[0]
+            employee = employees[0]
+            manager_dn = manager.get('distinguishedName') or manager.get('dn')
+            employee_dn = employee.get('distinguishedName') or employee.get('dn')
+            employee_display = employee.get('displayName') or employee.get('cn') or employee_username
+            employee_dept = employee.get('department') or ''
+            
+            # Check if same department
+            manager_dept = manager.get('department') or ''
+            is_same_dept = (employee_dept.lower() == manager_dept.lower())
+            
+            # Update or create direct report
+            direct_report = UserDirectReport.query.filter_by(employee_username=employee_username).first()
+            if direct_report:
+                direct_report.manager_username = manager_username
+                direct_report.manager_dn = manager_dn
+                direct_report.employee_dn = employee_dn
+                direct_report.employee_display_name = employee_display
+                direct_report.department = employee_dept
+                direct_report.is_same_department = is_same_dept
+                direct_report.updated_at = datetime.now(timezone.utc)
+            else:
+                direct_report = UserDirectReport(
+                    manager_username=manager_username,
+                    manager_dn=manager_dn,
+                    employee_username=employee_username,
+                    employee_dn=employee_dn,
+                    employee_display_name=employee_display,
+                    department=employee_dept,
+                    is_same_department=is_same_dept
+                )
+                db.session.add(direct_report)
+            
+            # Update AD manager attribute
+            set_user_manager(employee_dn, manager_dn, **ad_args)
+            
+            db.session.commit()
+            flash(f'Direct report assigned: {employee_display} -> {manager.get("displayName", manager_username)}.', 'success')
+            return redirect(url_for('main.manage_managers'))
+        
+        elif action == 'bulk_assign_department':
+            department = request.form.get('department')
+            
+            if not department:
+                flash('Department is required.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            
+            # Get department manager
+            dept_mgr = DepartmentManager.query.filter_by(department=department).first()
+            if not dept_mgr:
+                flash(f'No manager assigned for {department}. Please assign a manager first.', 'warning')
+                return redirect(url_for('main.manage_managers'))
+            
+            # Find department OU
+            dept_ou = None
+            for dept in departments:
+                if dept['name'] == department:
+                    dept_ou = dept['dn']
+                    break
+            
+            if not dept_ou:
+                flash(f'Could not find OU for department {department}.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            
+            # Get all users in this department OU
+            dept_users = search_users('', status_filter='all', **ad_args)
+            dept_users = [u for u in dept_users if dept_ou.lower() in (u.get('distinguishedName') or u.get('dn') or '').lower()]
+            
+            manager_dn = dept_mgr.manager_dn
+            assigned_count = 0
+            skipped_count = 0
+            
+            for user in dept_users:
+                user_dn = user.get('distinguishedName') or user.get('dn')
+                username = user.get('sAMAccountName') or user.get('username')
+                display_name = user.get('displayName') or user.get('cn') or username
+                
+                # Skip if already assigned
+                existing = UserDirectReport.query.filter_by(employee_username=username).first()
+                if existing:
+                    skipped_count += 1
+                    continue
+                
+                # Create direct report record
+                direct_report = UserDirectReport(
+                    manager_username=dept_mgr.manager_username,
+                    manager_dn=manager_dn,
+                    employee_username=username,
+                    employee_dn=user_dn,
+                    employee_display_name=display_name,
+                    department=department,
+                    is_same_department=True
+                )
+                db.session.add(direct_report)
+                
+                # Update AD manager attribute
+                set_user_manager(user_dn, manager_dn, **ad_args)
+                assigned_count += 1
+            
+            db.session.commit()
+            flash(f'Bulk assignment complete: {assigned_count} users assigned, {skipped_count} already assigned.', 'success')
+            return redirect(url_for('main.manage_managers'))
+        
+        elif action == 'remove_direct_report':
+            report_id = request.form.get('report_id')
+            if report_id:
+                report = UserDirectReport.query.get(report_id)
+                if report:
+                    # Remove manager from AD
+                    remove_user_manager(report.employee_dn, **ad_args)
+                    db.session.delete(report)
+                    db.session.commit()
+                    flash('Direct report removed.', 'success')
+            return redirect(url_for('main.manage_managers'))
+    
+    return render_template('manage_managers.html',
+                         departments=departments,
+                         dept_managers=dept_managers,
+                         reports_by_manager=reports_by_manager)
 
 @main.route('/admin/gpo-deployment')
 @login_required
@@ -5001,3 +5564,149 @@ def load_import_results():
         with open(IMPORT_RESULTS_FILE, 'r') as f:
             return json.load(f)
     return None
+
+@main.route('/api/version/check')
+@login_required
+def check_version():
+    """API endpoint to check for updates"""
+    try:
+        force_refresh = request.args.get('force', 'false').lower() == 'true'
+        version_data = check_github_version(force_refresh=force_refresh)
+        return jsonify({
+            'success': True,
+            'current_version': version_data['current_version'],
+            'latest_version': version_data['latest_version'],
+            'update_available': version_data['update_available'],
+            'release_url': version_data['release_url'],
+            'release_notes': version_data['release_notes'],
+            'changelog': version_data.get('changelog'),
+            'error': version_data['error'],
+            'cached': version_data['cached']
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error checking version: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@main.route('/admin/updates')
+@login_required
+@admin_required
+def updates_page():
+    """Update management page"""
+    try:
+        updater = Updater()
+        update_info = updater.check_update_available()
+        backups = updater.get_backup_list()
+        
+        return render_template('updates.html',
+                             update_info=update_info,
+                             backups=backups,
+                             current_version=__version__)
+    except Exception as e:
+        current_app.logger.error(f"Error loading updates page: {e}")
+        flash(f'Error loading updates page: {str(e)}', 'danger')
+        return redirect(url_for('main.home'))
+
+@main.route('/api/updates/check')
+@login_required
+@admin_required
+def api_check_updates():
+    """API endpoint to check for updates"""
+    try:
+        updater = Updater()
+        update_info = updater.check_update_available()
+        
+        # Changelog is already included from version_checker via check_update_available
+        # But we can also try to get it locally if not available
+        if update_info.get('available') and update_info.get('latest_version') and not update_info.get('changelog'):
+            try:
+                from .version_checker import get_changelog_for_version
+                changelog = get_changelog_for_version(update_info['latest_version'])
+                if changelog:
+                    update_info['changelog'] = changelog
+            except:
+                pass
+        
+        return jsonify({
+            'success': True,
+            **update_info
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error checking updates: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@main.route('/api/updates/perform', methods=['POST'])
+@login_required
+@admin_required
+def api_perform_update():
+    """API endpoint to perform update"""
+    try:
+        data = request.get_json()
+        version = data.get('version') if data else None
+        
+        updater = Updater()
+        result = updater.perform_update(version=version)
+        
+        if result.get('success'):
+            log_admin_action('system_update', f"Updated to version {version or 'latest'}", 'success')
+        
+        return jsonify(result)
+    except Exception as e:
+        current_app.logger.error(f"Error performing update: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error performing update: {str(e)}'
+        }), 500
+
+@main.route('/api/updates/rollback', methods=['POST'])
+@login_required
+@admin_required
+def api_rollback():
+    """API endpoint to rollback to a backup"""
+    try:
+        data = request.get_json()
+        backup_dir = data.get('backup_dir') if data else None
+        
+        if not backup_dir:
+            return jsonify({
+                'success': False,
+                'message': 'Backup directory not specified'
+            }), 400
+        
+        updater = Updater()
+        result = updater.rollback(backup_dir)
+        
+        if result.get('success'):
+            log_admin_action('system_rollback', f"Rolled back to backup: {backup_dir}", 'success')
+        
+        return jsonify(result)
+    except Exception as e:
+        current_app.logger.error(f"Error during rollback: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Error during rollback: {str(e)}'
+        }), 500
+
+@main.route('/api/updates/backups')
+@login_required
+@admin_required
+def api_get_backups():
+    """API endpoint to get list of backups"""
+    try:
+        updater = Updater()
+        backups = updater.get_backup_list()
+        return jsonify({
+            'success': True,
+            'backups': backups
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error getting backups: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

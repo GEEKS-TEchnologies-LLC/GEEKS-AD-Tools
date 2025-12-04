@@ -17,14 +17,14 @@ class Admin(UserMixin, db.Model):
 
 class AuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    timestamp = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False)
-    user = db.Column(db.String(64), nullable=True)  # Username or 'System'
-    action = db.Column(db.String(128), nullable=False)  # e.g., 'login', 'password_reset', 'user_create'
+    timestamp = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False, index=True)
+    user = db.Column(db.String(64), nullable=True, index=True)  # Username or 'System'
+    action = db.Column(db.String(128), nullable=False, index=True)  # e.g., 'login', 'password_reset', 'user_create'
     details = db.Column(db.Text, nullable=True)  # Additional details in JSON format
-    result = db.Column(db.String(32), nullable=False)  # 'success', 'failure', 'error'
+    result = db.Column(db.String(32), nullable=False, index=True)  # 'success', 'failure', 'error'
     ip_address = db.Column(db.String(45), nullable=True)  # IPv4 or IPv6
     user_agent = db.Column(db.String(256), nullable=True)
-    session_id = db.Column(db.String(64), nullable=True)
+    session_id = db.Column(db.String(64), nullable=True, index=True)
 
     def __repr__(self):
         return f'<AuditLog {self.timestamp}: {self.user} - {self.action} - {self.result}>'
@@ -48,13 +48,13 @@ class SecurityQuestion(db.Model):
 
 class PasswordReset(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(64), nullable=False)
-    reset_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False)
+    username = db.Column(db.String(64), nullable=False, index=True)
+    reset_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False, index=True)
     reset_by = db.Column(db.String(64), nullable=True)  # admin username if reset by admin
     method = db.Column(db.String(32), nullable=False)  # 'self', 'admin', 'security_question'
     ip_address = db.Column(db.String(45), nullable=True)
     user_agent = db.Column(db.String(256), nullable=True)
-    success = db.Column(db.Boolean, default=True, nullable=False)
+    success = db.Column(db.Boolean, default=True, nullable=False, index=True)
     notes = db.Column(db.Text, nullable=True)
     
     def days_since_reset(self):
@@ -68,18 +68,53 @@ class PasswordReset(db.Model):
 class MailboxSizeCache(db.Model):
     """Cache for mailbox size data, keyed by user and filter parameters"""
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(64), nullable=False)  # Admin user who fetched the data
-    query = db.Column(db.String(256), nullable=False, default='')
+    username = db.Column(db.String(64), nullable=False, index=True)  # Admin user who fetched the data
+    query = db.Column(db.String(256), nullable=False, default='', index=True)
     status_filter = db.Column(db.String(32), nullable=False, default='all')
     exclude_ous = db.Column(db.String(512), nullable=False, default='')
     mailbox_sizes = db.Column(db.Text, nullable=False)  # JSON string of mailbox sizes
-    updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False, onupdate=datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False, onupdate=datetime.now(timezone.utc), index=True)
     
     # Composite unique constraint: one cache entry per user/filter combination
     __table_args__ = (db.UniqueConstraint('username', 'query', 'status_filter', 'exclude_ous', name='_mailbox_size_cache_uc'),)
     
     def __repr__(self):
         return f'<MailboxSizeCache {self.username}: {self.query}/{self.status_filter} @ {self.updated_at}>'
+
+class DepartmentManager(db.Model):
+    """Stores manager assignments for departments"""
+    id = db.Column(db.Integer, primary_key=True)
+    department = db.Column(db.String(128), nullable=False, index=True)
+    manager_username = db.Column(db.String(64), nullable=False, index=True)  # sAMAccountName
+    manager_dn = db.Column(db.String(512), nullable=False)  # Full DN
+    manager_display_name = db.Column(db.String(256), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
+    
+    # One manager per department
+    __table_args__ = (db.UniqueConstraint('department', name='_department_manager_uc'),)
+    
+    def __repr__(self):
+        return f'<DepartmentManager {self.department}: {self.manager_username}>'
+
+class UserDirectReport(db.Model):
+    """Stores direct report assignments (can be within or outside department)"""
+    id = db.Column(db.Integer, primary_key=True)
+    manager_username = db.Column(db.String(64), nullable=False, index=True)  # Manager's sAMAccountName
+    manager_dn = db.Column(db.String(512), nullable=False)  # Manager's full DN
+    employee_username = db.Column(db.String(64), nullable=False, index=True)  # Employee's sAMAccountName
+    employee_dn = db.Column(db.String(512), nullable=False)  # Employee's full DN
+    employee_display_name = db.Column(db.String(256), nullable=True)
+    department = db.Column(db.String(128), nullable=True, index=True)  # Employee's department (can be different from manager's)
+    is_same_department = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
+    
+    # One manager per employee (but employee can be in different department)
+    __table_args__ = (db.UniqueConstraint('employee_username', name='_employee_manager_uc'),)
+    
+    def __repr__(self):
+        return f'<UserDirectReport {self.employee_username} -> {self.manager_username}>'
 
 class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)

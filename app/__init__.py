@@ -79,6 +79,19 @@ def create_app():
     # Register blueprints here (placeholder)
     from .views import main as main_blueprint
     app.register_blueprint(main_blueprint)
+    
+    # Add version info to all templates via context processor
+    @app.context_processor
+    def inject_version_info():
+        """Make version information available to all templates"""
+        try:
+            from .version_checker import get_version_info
+            version_info = get_version_info()
+            return {'version_info': version_info, 'app_version': __version__}
+        except Exception as e:
+            app.logger.warning(f"Could not load version info: {e}")
+            from .version import __version__
+            return {'version_info': None, 'app_version': __version__}
 
     return app
 

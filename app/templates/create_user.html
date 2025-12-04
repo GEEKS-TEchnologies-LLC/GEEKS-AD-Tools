@@ -8,63 +8,329 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #181818;
             min-height: 100vh;
+            color: #fff;
+        }
+        .sidebar {
+            background: #111;
+            color: #ffd700;
+            min-height: 100vh;
+            width: 240px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1040;
+            transition: width 0.2s;
+        }
+        .sidebar.collapsed {
+            width: 60px;
+        }
+        .sidebar .nav-link {
             display: flex;
             align-items: center;
-            justify-content: center;
-            padding: 20px;
+            justify-content: flex-start;
+            color: #ffd700;
+            font-weight: 500;
+            padding: 1rem 1.5rem;
+            transition: all 0.2s;
         }
-        .create-card {
-            background: white;
+        .sidebar .nav-link i {
+            font-size: 1.4rem;
+            margin-right: 1rem;
+            min-width: 24px;
+            text-align: center;
+            transition: margin 0.2s;
+        }
+        .sidebar .nav-link .nav-text {
+            transition: opacity 0.2s, width 0.2s;
+            white-space: nowrap;
+        }
+        .sidebar.collapsed .nav-link {
+            justify-content: center;
+            padding: 1rem 0;
+        }
+        .sidebar.collapsed .nav-link i {
+            margin-right: 0;
+        }
+        .sidebar.collapsed .nav-link .nav-text {
+            opacity: 0;
+            width: 0;
+            overflow: hidden;
+        }
+        .sidebar .sidebar-toggle {
+            color: #ffd700;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            margin: 1rem 0 1rem 1.5rem;
+            transition: margin 0.2s;
+            cursor: pointer;
+        }
+        .sidebar.collapsed .sidebar-toggle {
+            margin: 1rem 0;
+        }
+        .topbar {
+            background: #222;
+            color: #ffd700;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 2rem 0 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 1030;
+            margin-left: 240px;
+            transition: margin-left 0.3s;
+        }
+        .sidebar.collapsed ~ .topbar {
+            padding-left: 1.5rem;
+            margin-left: 60px;
+        }
+        .topbar .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .logo img {
+            max-height: 40px;
+            width: auto;
+            object-fit: contain;
+        }
+        .logo-text {
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: #ffd700;
+            font-size: 1.25rem;
+            font-weight: bold;
+            letter-spacing: 1px;
+            white-space: nowrap;
+        }
+        .status-dot {
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-dot.green { background: #28a745; }
+        .status-dot.red { background: #dc3545; }
+        .user-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .user-dropdown-toggle {
+            background: none;
+            border: none;
+            color: #ffd700;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+        .user-dropdown-menu {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 120%;
+            background: #222;
+            color: #ffd700;
+            min-width: 160px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+        .user-dropdown-menu.show {
+            display: block;
+        }
+        .user-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1rem;
+            color: #ffd700;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .user-dropdown-menu a:hover {
+            background: rgba(255,215,0,0.1);
+        }
+        .main-content {
+            margin-left: 240px;
+            padding: 2rem;
+            transition: margin-left 0.3s;
+        }
+        .sidebar.collapsed ~ .main-content {
+            margin-left: 60px;
+        }
+        .glass-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.05) 100%);
+            backdrop-filter: blur(10px);
             border-radius: 15px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
-            padding: 3rem;
-            max-width: 600px;
-            width: 100%;
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 8px 32px 0 rgba(0,0,0,0.37);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            position: relative;
+            overflow: hidden;
+        }
+        /* Removed hover animation - was annoying on mouse over */
+        .glass-card .card-header {
+            background: transparent;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding: 1rem 0;
+            margin-bottom: 1.5rem;
         }
         .btn-custom {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
             border: none;
-            color: white;
+            color: #000;
+            font-weight: 600;
             padding: 12px 30px;
-            border-radius: 25px;
+            border-radius: 8px;
             margin-top: 1rem;
+            transition: all 0.3s;
         }
         .btn-custom:hover {
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-            color: white;
+            box-shadow: 0 5px 15px rgba(255,215,0,0.4);
+            color: #000;
         }
         .form-label {
             font-weight: 600;
-            color: #333;
+            color: #ffd700;
+            margin-bottom: 0.5rem;
         }
-        .form-control {
-            border-radius: 10px;
-            border: 2px solid #e9ecef;
+        .form-control, .form-select {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
             padding: 12px 15px;
+            color: #ffd700;
         }
-        .form-control:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        .form-control:focus, .form-select:focus {
+            background: rgba(255,255,255,0.15);
+            border-color: #ffd700;
+            box-shadow: 0 0 0 0.2rem rgba(255,215,0,0.25);
+            color: #ffd700;
         }
-        /* Make all muted/secondary text white with a black outline for readability */
-        .text-muted, .text-secondary, .text-muted *, .text-secondary * {
-            color: #fff !important;
-            text-shadow:
-                -1px -1px 0 #000,
-                 1px -1px 0 #000,
-                -1px  1px 0 #000,
-                 1px  1px 0 #000;
+        .form-select option {
+            background: #2d2d2d;
+            color: #ffd700;
+            padding: 8px;
+        }
+        .form-select option:hover {
+            background: rgba(255,215,0,0.2);
+        }
+        .form-control::placeholder {
+            color: rgba(255,255,255,0.5);
+        }
+        .form-text {
+            color: rgba(255,255,255,0.7);
+            font-size: 0.875rem;
+        }
+        .form-section {
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .form-section h5 {
+            color: #ffd700;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid rgba(255,215,0,0.3);
+            padding-bottom: 0.5rem;
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .groups-select {
+            min-height: 200px;
+            max-height: 300px;
+        }
+        .required-field::after {
+            content: " *";
+            color: #ff6b6b;
+        }
+        .text-muted {
+            color: rgba(255,255,255,0.7) !important;
+        }
+        .alert {
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .bg-light {
+            background: rgba(255,255,255,0.05) !important;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .btn-outline-secondary {
+            border-color: rgba(255,255,255,0.3);
+            color: rgba(255,255,255,0.8);
+        }
+        .btn-outline-secondary:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.5);
+            color: #fff;
+        }
+        h2 {
+            color: #ffd700;
+            background: linear-gradient(90deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .form-check-input:checked {
+            background-color: #ffd700;
+            border-color: #ffd700;
+        }
+        .form-check-label {
+            color: rgba(255,255,255,0.9);
         }
     </style>
 </head>
 <body>
-    <div class="create-card">
+    <div class="sidebar" id="sidebar">
+        <button class="sidebar-toggle" id="sidebarToggle"><i class="fas fa-bars"></i></button>
+        <nav class="nav flex-column">
+            <a class="nav-link" href="/admin/dashboard"><i class="fas fa-tachometer-alt me-2"></i> <span class="nav-text">Dashboard</span></a>
+            <a class="nav-link active" href="/admin/users"><i class="fas fa-user-edit me-2"></i> <span class="nav-text">User Management</span></a>
+            <a class="nav-link" href="/admin/ous"><i class="fas fa-folder-tree me-2"></i> <span class="nav-text">OU Management</span></a>
+            <a class="nav-link" href="/admin/audit"><i class="fas fa-clipboard-list me-2"></i> <span class="nav-text">Audit Logs</span></a>
+            <a class="nav-link" href="/admin/gpo-deployment"><i class="fas fa-download me-2"></i> <span class="nav-text">GPD</span></a>
+            <hr class="my-2" style="border-color: #ffd700;">
+            <a class="nav-link" href="/admin/settings"><i class="fas fa-cog me-2"></i> <span class="nav-text">Settings</span></a>
+        </nav>
+    </div>
+    <div class="topbar" id="topbar">
+        <div class="logo">
+            <img src="/static/img/geeks_logo.png" alt="Logo">
+            <span class="logo-text">GEEKS-AD-Plus</span>
+        </div>
+        <div class="topbar-right">
+            <span class="status-dot green" title="AD Health"></span>
+            <div class="user-dropdown" id="userDropdown">
+                <button class="user-dropdown-toggle" id="userDropdownToggle" type="button">
+                    <i class="fas fa-user-circle me-2"></i> <span class="d-none d-md-inline">{{ current_user.username if current_user and current_user.is_authenticated else 'User' }}</span> <i class="fas fa-caret-down ms-1"></i>
+                </button>
+                <div class="user-dropdown-menu" id="userDropdownMenu">
+                    <a href="/admin/profile"><i class="fas fa-id-badge me-2"></i> Profile</a>
+                    <a href="/logout"><i class="fas fa-sign-out-alt me-2"></i> Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="main-content" id="mainContent">
+        <div class="glass-card">
         <div class="text-center mb-4">
             <h2><i class="fas fa-user-plus text-primary"></i> Create New User</h2>
-            <p class="text-muted">Add a new user to Active Directory</p>
+            <p class="text-muted">Add a new user to Active Directory with email and group membership</p>
         </div>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -78,55 +344,156 @@
           {% endif %}
         {% endwith %}
         
-        <form method="post">
-            <div class="mb-3">
-                <label for="username" class="form-label">
-                    <i class="fas fa-user"></i> Username
-                </label>
-                <input type="text" class="form-control" id="username" name="username" 
-                       placeholder="Enter username (e.g., jdoe)" required>
-                <div class="form-text">This will be the user's login name in Active Directory.</div>
+        <form method="post" id="createUserForm">
+            <!-- Basic Information Section -->
+            <div class="form-section">
+                <h5><i class="fas fa-user"></i> Basic Information</h5>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="username" class="form-label required-field">
+                            <i class="fas fa-user"></i> Username
+                        </label>
+                        <input type="text" class="form-control" id="username" name="username" 
+                               placeholder="Enter username (e.g., jdoe)" required>
+                        <div class="form-text">This will be the user's login name (sAMAccountName).</div>
+                    </div>
+                    
+                    <div class="col-md-6 mb-3">
+                        <label for="display_name" class="form-label required-field">
+                            <i class="fas fa-id-card"></i> Display Name
+                        </label>
+                        <input type="text" class="form-control" id="display_name" name="display_name" 
+                               placeholder="Enter full name (e.g., John Doe)" required>
+                        <div class="form-text">This is the name that will appear in the directory.</div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="given_name" class="form-label">
+                            <i class="fas fa-user"></i> First Name
+                        </label>
+                        <input type="text" class="form-control" id="given_name" name="given_name" 
+                               placeholder="Enter first name">
+                    </div>
+                    
+                    <div class="col-md-6 mb-3">
+                        <label for="surname" class="form-label">
+                            <i class="fas fa-user"></i> Last Name
+                        </label>
+                        <input type="text" class="form-control" id="surname" name="surname" 
+                               placeholder="Enter last name">
+                    </div>
+                </div>
             </div>
             
-            <div class="mb-3">
-                <label for="display_name" class="form-label">
-                    <i class="fas fa-id-card"></i> Display Name
-                </label>
-                <input type="text" class="form-control" id="display_name" name="display_name" 
-                       placeholder="Enter full name (e.g., John Doe)" required>
-                <div class="form-text">This is the name that will appear in the directory.</div>
+            <!-- Contact Information Section -->
+            <div class="form-section">
+                <h5><i class="fas fa-envelope"></i> Contact Information</h5>
+                
+                <div class="mb-3">
+                    <label for="mail" class="form-label">
+                        <i class="fas fa-envelope"></i> Email Address
+                    </label>
+                    <input type="email" class="form-control" id="mail" name="mail" 
+                           placeholder="Enter email address (e.g., john.doe@company.com)">
+                    <div class="form-text">This will be the user's primary email address and UPN (User Principal Name).</div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="telephone_number" class="form-label">
+                        <i class="fas fa-phone"></i> Phone Number
+                    </label>
+                    <input type="tel" class="form-control" id="telephone_number" name="telephone_number" 
+                           placeholder="Enter phone number">
+                </div>
             </div>
             
-            <div class="mb-3">
-                <label for="mail" class="form-label">
-                    <i class="fas fa-envelope"></i> Email Address
-                </label>
-                <input type="email" class="form-control" id="mail" name="mail" 
-                       placeholder="Enter email address (e.g., john.doe@company.com)">
-                <div class="form-text">This will be the user's primary email address (optional).</div>
+            <!-- Job Information Section -->
+            <div class="form-section">
+                <h5><i class="fas fa-briefcase"></i> Job Information</h5>
+                
+                <div class="mb-3">
+                    <label for="title" class="form-label">
+                        <i class="fas fa-user-tie"></i> Job Title
+                    </label>
+                    <input type="text" class="form-control" id="title" name="title" 
+                           placeholder="Enter job title">
+                </div>
+                
+                <div class="mb-3">
+                    <label for="department" class="form-label">
+                        <i class="fas fa-building"></i> Department
+                    </label>
+                    <select class="form-select" id="department" name="department">
+                        <option value="">Select Department</option>
+                        {% for dept in departments %}
+                        <option value="{{ dept.name }}">{{ dept.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Select the department from the available OUs under Sunray Users.</div>
+                </div>
             </div>
             
-            <div class="mb-3">
-                <label for="password" class="form-label">
-                    <i class="fas fa-lock"></i> Password
-                </label>
-                <input type="password" class="form-control" id="password" name="password" 
-                       placeholder="Enter a strong password" required>
-                <div class="form-text">Use a strong password that meets your organization's policy. Typically requires: 8+ characters, uppercase, lowercase, numbers, and special characters.</div>
+            <!-- Account Settings Section -->
+            <div class="form-section">
+                <h5><i class="fas fa-cog"></i> Account Settings</h5>
+                
+                <div class="mb-3">
+                    <label for="password" class="form-label required-field">
+                        <i class="fas fa-lock"></i> Password
+                    </label>
+                    <input type="password" class="form-control" id="password" name="password" 
+                           placeholder="Enter a strong password" required>
+                    <div class="form-text">Use a strong password that meets your organization's policy. Typically requires: 8+ characters, uppercase, lowercase, numbers, and special characters.</div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="target_ou" class="form-label">
+                        <i class="fas fa-folder"></i> Organizational Unit
+                    </label>
+                    <select class="form-select" id="target_ou" name="target_ou">
+                        <option value="">Default (Domain Root)</option>
+                        {% for ou in ous %}
+                        <option value="{{ ou.dn }}">{{ ou.name }} ({{ ou.dn }})</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Select which OU to create the user in. Leave empty to create in the domain root.</div>
+                </div>
             </div>
             
-            <div class="mb-3">
-                <label for="target_ou" class="form-label">
-                    <i class="fas fa-folder"></i> Organizational Unit
-                </label>
-                <select class="form-control" id="target_ou" name="target_ou">
-                    <option value="">Default (Domain Root)</option>
-                    {% for ou in ous %}
-                    <option value="{{ ou.dn }}">{{ ou.name }} ({{ ou.dn }})</option>
-                    {% endfor %}
-                </select>
-                <div class="form-text">Select which OU to create the user in. Leave empty to create in the domain root.</div>
+            <!-- Group Membership Section -->
+            <div class="form-section">
+                <h5><i class="fas fa-users"></i> Group Membership</h5>
+                
+                <div class="mb-3">
+                    <label for="groups" class="form-label">
+                        <i class="fas fa-users"></i> Add to Groups
+                    </label>
+                    <select class="form-select groups-select" id="groups" name="groups" multiple>
+                        {% for group in groups %}
+                        <option value="{{ group.dn }}">{{ group.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Hold Ctrl (Windows) or Cmd (Mac) to select multiple groups. The user will be added to all selected groups.</div>
+                </div>
             </div>
+            
+            <!-- Exchange Mailbox Section -->
+            {% if exchange_enabled %}
+            <div class="form-section">
+                <h5><i class="fas fa-mail-bulk"></i> Exchange Mailbox</h5>
+                
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="create_mailbox" name="create_mailbox">
+                    <label class="form-check-label" for="create_mailbox">
+                        <i class="fas fa-envelope"></i> Create Exchange Mailbox
+                    </label>
+                    <div class="form-text">Automatically create an Exchange mailbox for this user. Email address must be provided above.</div>
+                </div>
+            </div>
+            {% endif %}
             
             <div class="text-center">
                 <button type="submit" class="btn btn-custom">
@@ -144,14 +511,115 @@
         <div class="mt-4 p-3 bg-light rounded">
             <h6 class="text-muted">User Creation Information:</h6>
             <ul class="text-muted small">
-                <li><strong>Username:</strong> Must be unique in the domain</li>
+                <li><strong>Username:</strong> Must be unique in the domain (sAMAccountName)</li>
                 <li><strong>Display Name:</strong> Full name as it appears in AD</li>
-                <li><strong>Email:</strong> Primary email address for the user (optional)</li>
+                <li><strong>Email:</strong> Primary email address and User Principal Name (UPN)</li>
                 <li><strong>Password:</strong> Must meet domain password policy requirements</li>
+                <li><strong>Groups:</strong> User will be added to selected groups automatically</li>
+                {% if exchange_enabled %}
+                <li><strong>Mailbox:</strong> Exchange mailbox can be created automatically if email is provided</li>
+                {% endif %}
             </ul>
         </div>
     </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Sidebar toggle
+        document.getElementById('sidebarToggle')?.addEventListener('click', function() {
+            document.getElementById('sidebar').classList.toggle('collapsed');
+        });
+        
+        // User dropdown toggle
+        document.getElementById('userDropdownToggle')?.addEventListener('click', function(e) {
+            e.stopPropagation();
+            document.getElementById('userDropdownMenu').classList.toggle('show');
+        });
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            const dropdown = document.getElementById('userDropdown');
+            if (dropdown && !dropdown.contains(e.target)) {
+                document.getElementById('userDropdownMenu').classList.remove('show');
+            }
+        });
+        
+        // Existing scripts
+        // Auto-fill display name from first and last name
+        document.getElementById('given_name').addEventListener('input', function() {
+            updateDisplayName();
+        });
+        document.getElementById('surname').addEventListener('input', function() {
+            updateDisplayName();
+        });
+        
+        function updateDisplayName() {
+            const givenName = document.getElementById('given_name').value.trim();
+            const surname = document.getElementById('surname').value.trim();
+            const displayName = document.getElementById('display_name');
+            
+            if (givenName || surname) {
+                if (!displayName.value || displayName.value === givenName + ' ' + surname || displayName.value === surname + ', ' + givenName) {
+                    displayName.value = (givenName + ' ' + surname).trim();
+                }
+            }
+        }
+        
+        // Auto-select department when OU is selected
+        document.getElementById('target_ou').addEventListener('change', function() {
+            updateDepartmentFromOU();
+        });
+        
+        function updateDepartmentFromOU() {
+            const ouSelect = document.getElementById('target_ou');
+            const departmentSelect = document.getElementById('department');
+            const selectedOU = ouSelect.value;
+            
+            if (selectedOU) {
+                // Extract department name from OU DN
+                // Example: OU=IT,OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal
+                // Should extract "IT" (the first meaningful OU)
+                const ouParts = selectedOU.split(',');
+                let departmentName = '';
+                
+                for (let part of ouParts) {
+                    part = part.trim();
+                    if (part.startsWith('OU=')) {
+                        const ouName = part.replace('OU=', '');
+                        // Skip common structural OUs that aren't departments
+                        const skipOUs = ['users', 'disabled users', 'service accounts', 'internal tools', 'sunray users', 'sunray'];
+                        if (!skipOUs.includes(ouName.toLowerCase())) {
+                            departmentName = ouName;
+                            break; // Use the first meaningful OU
+                        }
+                    }
+                }
+                
+                // If we found a department, select it in the dropdown
+                if (departmentName) {
+                    // Find the option that matches this department name
+                    for (let option of departmentSelect.options) {
+                        if (option.value === departmentName || option.text === departmentName) {
+                            departmentSelect.value = option.value;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Validate mailbox creation requires email
+        document.getElementById('createUserForm').addEventListener('submit', function(e) {
+            const createMailbox = document.getElementById('create_mailbox');
+            const mail = document.getElementById('mail').value.trim();
+            
+            if (createMailbox && createMailbox.checked && !mail) {
+                e.preventDefault();
+                alert('Email address is required to create a mailbox. Please enter an email address or uncheck "Create Exchange Mailbox".');
+                return false;
+            }
+        });
+    </script>
 </body>
-</html> 
+</html>

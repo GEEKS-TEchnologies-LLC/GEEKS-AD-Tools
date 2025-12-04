@@ -8,4 +8,6 @@ Flask-SQLAlchemy
 psutil
 gunicorn
 ldap3
-Flask-Migrate 
+Flask-Migrate
+requests
+Flask-Session 

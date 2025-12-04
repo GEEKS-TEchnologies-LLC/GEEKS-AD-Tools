@@ -6,6 +6,9 @@ from collections import namedtuple, Counter
 from contextlib import contextmanager
 import datetime
 import re
+import threading
+import time
+from functools import lru_cache
 
 CONFIG_PATH = 'app/ad_config.json'
 
@@ -13,27 +16,120 @@ CONFIG_PATH = 'app/ad_config.json'
 
 Group = namedtuple('Group', ['dn', 'name'])
 
+# Connection pool for LDAP connections
+_connection_pool = {}
+_pool_lock = threading.Lock()
+_pool_max_age = 300  # 5 minutes - connections older than this are closed
+_pool_cleanup_interval = 60  # Cleanup every 60 seconds
+
+def _get_connection_key(server, bind_user, bind_password):
+    """Generate a unique key for connection pooling"""
+    return f"{server}:{bind_user}:{hash(bind_password)}"
+
+def _cleanup_old_connections():
+    """Remove old connections from the pool"""
+    current_time = time.time()
+    keys_to_remove = []
+    
+    with _pool_lock:
+        for key, (conn, created_time) in _connection_pool.items():
+            if current_time - created_time > _pool_max_age:
+                try:
+                    conn.unbind()
+                except:
+                    pass
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            del _connection_pool[key]
+
 @contextmanager
 def ad_connection(**kwargs):
-    """Context manager for handling ldap3 connections."""
+    """Context manager for handling ldap3 connections with connection pooling."""
     # Map configuration keys to expected parameter names
     server = kwargs.get('server') or kwargs.get('ad_server')
     bind_user = kwargs.get('bind_user') or kwargs.get('ad_bind_dn')
     bind_password = kwargs.get('bind_password') or kwargs.get('ad_password')
     base_dn = kwargs.get('base_dn') or kwargs.get('ad_base_dn')
     
-    print(f"DEBUG: ad_connection - server: {server}, bind_user: {bind_user}, base_dn: {base_dn}")
+    # Cleanup old connections periodically
+    if not hasattr(ad_connection, '_last_cleanup'):
+        ad_connection._last_cleanup = 0
     
+    current_time = time.time()
+    if current_time - ad_connection._last_cleanup > _pool_cleanup_interval:
+        _cleanup_old_connections()
+        ad_connection._last_cleanup = current_time
+    
+    # Try to reuse connection from pool
+    pool_key = _get_connection_key(server, bind_user, bind_password)
+    use_pool = True  # Enable pooling by default
+    pooled = False
+    
+    if use_pool:
+        with _pool_lock:
+            if pool_key in _connection_pool:
+                conn, created_time = _connection_pool[pool_key]
+                # Check if connection is still valid
+                try:
+                    if conn.bound:
+                        # Connection is still good, use it
+                        pooled = True
+                        try:
+                            yield conn
+                        finally:
+                            # Return connection to pool (already there)
+                            pass
+                        return
+                    else:
+                        # Connection is not bound, remove from pool
+                        try:
+                            conn.unbind()
+                        except:
+                            pass
+                        del _connection_pool[pool_key]
+                except:
+                    # Connection is invalid, remove from pool
+                    try:
+                        conn.unbind()
+                    except:
+                        pass
+                    if pool_key in _connection_pool:
+                        del _connection_pool[pool_key]
+    
+    # Create new connection
     server_uri = f"ldap://{server}"
-    print(f"DEBUG: ad_connection - server_uri: {server_uri}")
     server_obj = ldap3.Server(server_uri, get_info=ldap3.ALL)
     conn = ldap3.Connection(server_obj, user=bind_user, password=bind_password, auto_bind=True, raise_exceptions=True)
-    print(f"DEBUG: ad_connection - connection established successfully")
+    
     try:
         yield conn
+    except:
+        # On error, don't pool the connection
+        try:
+            conn.unbind()
+        except:
+            pass
+        raise
     finally:
-        conn.unbind()
-        print(f"DEBUG: ad_connection - connection closed")
+        # Add to pool if pooling is enabled and no error occurred
+        if use_pool and not pooled:
+            try:
+                # Check if connection is still valid before pooling
+                if conn.bound:
+                    with _pool_lock:
+                        _connection_pool[pool_key] = (conn, time.time())
+                        # Don't unbind, keep connection alive
+                        return
+            except:
+                pass
+        
+        # Only unbind if not pooled
+        if not pooled:
+            try:
+                conn.unbind()
+            except:
+                pass
 
 # --- Configuration ---
 
@@ -45,11 +141,33 @@ def save_ad_config(config):
     with open(CONFIG_PATH, 'w') as f:
         json.dump(config, f, indent=4)
 
-def get_ad_config():
+@lru_cache(maxsize=1)
+def _get_ad_config_cached():
+    """Cached version of get_ad_config - internal use only"""
     if not os.path.exists(CONFIG_PATH):
         return None
     with open(CONFIG_PATH, 'r') as f:
         return json.load(f)
+
+def get_ad_config():
+    """Get AD configuration with caching"""
+    # Clear cache if file was modified
+    config = _get_ad_config_cached()
+    if config is None:
+        return None
+    
+    # Check if file was modified (simple check - in production, use file mtime)
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            current_config = json.load(f)
+        # If config changed, clear cache
+        if json.dumps(current_config, sort_keys=True) != json.dumps(config, sort_keys=True):
+            _get_ad_config_cached.cache_clear()
+            return current_config
+    except:
+        pass
+    
+    return config
 
 def get_organization_ous(base_dn=None):
     """
@@ -277,35 +395,77 @@ def get_user_details(user_dn, **ad_args):
         print(f"LDAP error getting user details for {user_dn}: {e}")
         return None
 
-def create_user(username, password, display_name, mail, target_ou=None, **ad_args):
+def create_user(username, password, display_name, mail=None, target_ou=None, 
+                given_name=None, surname=None, title=None, department=None, 
+                telephone_number=None, user_principal_name=None, **ad_args):
+    """
+    Create a new Active Directory user with enhanced attributes.
+    
+    Args:
+        username: sAMAccountName (required)
+        password: Initial password (required)
+        display_name: Full display name (required)
+        mail: Email address (optional)
+        target_ou: Target OU DN (optional, defaults to base_dn)
+        given_name: First name (optional)
+        surname: Last name (optional)
+        title: Job title (optional)
+        department: Department name (optional)
+        telephone_number: Phone number (optional)
+        user_principal_name: UPN format (optional, will be generated from mail if not provided)
+        **ad_args: AD connection parameters
+    
+    Returns:
+        Tuple of (success: bool, message: str, user_dn: str)
+    """
     config = get_ad_config()
     
     # Use specified OU or default to base_dn
     if target_ou:
-        user_dn = f'CN={username},{target_ou}'
+        user_dn = f'CN={display_name or username},{target_ou}'
     else:
-        user_dn = f'CN={username},{ad_args["base_dn"]}'
+        user_dn = f'CN={display_name or username},{ad_args["base_dn"]}'
     
-    # Try without userPrincipalName first
+    # Build user attributes
     attrs = {
         'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
         'sAMAccountName': username,
-        'displayName': display_name
+        'displayName': display_name,
+        'name': display_name
     }
     
-    # Only add mail attribute if email is provided
+    # Add optional attributes
+    if given_name:
+        attrs['givenName'] = given_name
+    if surname:
+        attrs['sn'] = surname
+    if title:
+        attrs['title'] = title
+    if department:
+        attrs['department'] = department
+    if telephone_number:
+        attrs['telephoneNumber'] = telephone_number
+    
+    # Handle email and UPN
     if mail and mail.strip():
-        attrs['mail'] = mail
+        attrs['mail'] = mail.strip()
+        # Set userPrincipalName if not provided (use email as UPN)
+        if not user_principal_name:
+            user_principal_name = mail.strip()
+    
+    # Set userPrincipalName if provided
+    if user_principal_name:
+        attrs['userPrincipalName'] = user_principal_name.strip()
 
     with ad_connection(**ad_args) as conn:
         try:
-            # Step 1: Create user with minimal attributes (no userPrincipalName)
+            # Step 1: Create user with all attributes
             result = conn.add(user_dn, attributes=attrs)
             if not result:
                 error_msg = f"Failed to create user: {conn.result['description']}"
-                return False, error_msg
+                return False, error_msg, None
             
-            # Step 2: Try to set password (optional)
+            # Step 2: Set password
             if password:
                 try:
                     password_result = set_password(user_dn, password, **ad_args)
@@ -314,7 +474,7 @@ def create_user(username, password, display_name, mail, target_ou=None, **ad_arg
                 except Exception as e:
                     print(f"Warning: Password set exception: {str(e)}")
             
-            # Step 3: Try to enable the account (optional)
+            # Step 3: Enable the account
             try:
                 enable_result = enable_user(user_dn, **ad_args)
                 if not enable_result[0]:
@@ -322,10 +482,74 @@ def create_user(username, password, display_name, mail, target_ou=None, **ad_arg
             except Exception as e:
                 print(f"Warning: Account enable exception: {str(e)}")
             
-            return True, f'User {username} created successfully.'
+            return True, f'User {username} created successfully.', user_dn
         except Exception as e:
             error_msg = f"Exception during user creation: {str(e)}"
-            return False, error_msg
+            return False, error_msg, None
+
+def set_user_manager(user_dn, manager_dn, **ad_args):
+    """
+    Set the manager attribute for a user in AD.
+    
+    Args:
+        user_dn: Distinguished name of the user
+        manager_dn: Distinguished name of the manager
+        **ad_args: AD connection parameters
+    
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    with ad_connection(**ad_args) as conn:
+        try:
+            changes = {'manager': [(ldap3.MODIFY_REPLACE, [manager_dn])]}
+            result = conn.modify(user_dn, changes)
+            if not result:
+                return False, f"Failed to set manager: {conn.result['description']}"
+            return True, "Manager set successfully."
+        except Exception as e:
+            return False, f"Exception setting manager: {str(e)}"
+
+def remove_user_manager(user_dn, **ad_args):
+    """
+    Remove the manager attribute for a user in AD.
+    
+    Args:
+        user_dn: Distinguished name of the user
+        **ad_args: AD connection parameters
+    
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    with ad_connection(**ad_args) as conn:
+        try:
+            changes = {'manager': [(ldap3.MODIFY_DELETE, [])]}
+            result = conn.modify(user_dn, changes)
+            if not result:
+                return False, f"Failed to remove manager: {conn.result['description']}"
+            return True, "Manager removed successfully."
+        except Exception as e:
+            return False, f"Exception removing manager: {str(e)}"
+
+def get_user_manager(user_dn, **ad_args):
+    """
+    Get the manager DN for a user.
+    
+    Args:
+        user_dn: Distinguished name of the user
+        **ad_args: AD connection parameters
+    
+    Returns:
+        Manager DN or None
+    """
+    with ad_connection(**ad_args) as conn:
+        try:
+            conn.search(user_dn, '(objectClass=user)', search_scope=ldap3.BASE, attributes=['manager'])
+            if conn.entries and hasattr(conn.entries[0], 'manager') and conn.entries[0].manager:
+                return conn.entries[0].manager.value
+            return None
+        except Exception as e:
+            print(f"Error getting manager: {e}")
+            return None
 
 def update_user_attributes(user_dn, changes, **ad_args):
     with ad_connection(**ad_args) as conn:
@@ -453,7 +677,22 @@ def get_user_groups(user_dn, **ad_args):
             return conn.entries[0].memberOf.value if conn.entries and conn.entries[0].memberOf else []
     return []
 
+@lru_cache(maxsize=1)
+def _get_all_groups_cached(groups_ou_key):
+    """Internal cached version - not used directly"""
+    pass
+
 def get_all_groups(**ad_args):
+    """Get all groups with request-level caching"""
+    try:
+        from flask import g
+        if hasattr(g, 'request_cache'):
+            cache_key = f"groups:{ad_args.get('base_dn', '')}"
+            if cache_key in g.request_cache:
+                return g.request_cache[cache_key]
+    except (ImportError, RuntimeError):
+        pass  # Not in Flask context, skip caching
+    
     groups = []
     base_dn = ad_args.get('base_dn')
     groups_ou = ad_args.get('groups_ou', base_dn)
@@ -463,7 +702,15 @@ def get_all_groups(**ad_args):
             name = entry.cn.value if entry.cn else entry.sAMAccountName.value
             if name:
                 groups.append(Group(dn=entry.distinguishedName.value, name=name))
-    return sorted(groups, key=lambda g: g.name.lower())
+    result = sorted(groups, key=lambda g: g.name.lower())
+    try:
+        from flask import g
+        if hasattr(g, 'request_cache'):
+            cache_key = f"groups:{ad_args.get('base_dn', '')}"
+            g.request_cache[cache_key] = result
+    except (ImportError, RuntimeError):
+        pass  # Not in Flask context, skip caching
+    return result
 
 def add_user_to_group(user_dn, group_dn, **ad_args):
     with ad_connection(**ad_args) as conn:
@@ -687,7 +934,16 @@ def create_ou(ou_name, parent_dn, **ad_args):
             return False, f"Exception creating OU: {str(e)}"
 
 def list_ous(**ad_args):
-    """List all OUs in the domain"""
+    """List all OUs in the domain with request-level caching"""
+    try:
+        from flask import g
+        if hasattr(g, 'request_cache'):
+            cache_key = f"ous:{ad_args.get('base_dn', '')}"
+            if cache_key in g.request_cache:
+                return g.request_cache[cache_key]
+    except (ImportError, RuntimeError):
+        pass  # Not in Flask context, skip caching
+    
     ous = []
     with ad_connection(**ad_args) as conn:
         try:
@@ -704,7 +960,15 @@ def list_ous(**ad_args):
         except Exception as e:
             print(f"Error listing OUs: {e}")
     
-    return sorted(ous, key=lambda x: x['dn'])
+    result = sorted(ous, key=lambda x: x['dn'])
+    try:
+        from flask import g
+        if hasattr(g, 'request_cache'):
+            cache_key = f"ous:{ad_args.get('base_dn', '')}"
+            g.request_cache[cache_key] = result
+    except (ImportError, RuntimeError):
+        pass  # Not in Flask context, skip caching
+    return result
 
 def get_ou_tree(**ad_args):
     """Get hierarchical OU structure"""

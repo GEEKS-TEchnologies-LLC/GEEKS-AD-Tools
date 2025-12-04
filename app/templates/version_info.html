@@ -1,0 +1,62 @@
+<!-- Version Information Component -->
+<div class="version-info" style="position: fixed; bottom: 10px; right: 10px; z-index: 1000; background: rgba(0,0,0,0.85); padding: 10px 15px; border-radius: 8px; border: 1px solid rgba(255,215,0,0.3); font-size: 0.85rem; box-shadow: 0 4px 12px rgba(0,0,0,0.3); max-width: 400px;">
+    <div style="color: #ffd700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <i class="fas fa-info-circle"></i>
+            <span style="font-weight: 500;">v{{ app_version }}</span>
+        </div>
+        {% if version_info and version_info.update_available %}
+            <div style="color: #ff6b6b; margin-left: 8px; display: flex; align-items: center; gap: 4px;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <a href="{{ version_info.release_url or '#' }}" target="_blank" style="color: #ff6b6b; text-decoration: none;" title="Click to view release notes">
+                    Update Available: v{{ version_info.latest_version }}
+                </a>
+            </div>
+        {% elif version_info and version_info.latest_version and not version_info.update_available %}
+            <div style="color: #51cf66; margin-left: 8px; display: flex; align-items: center; gap: 4px;">
+                <i class="fas fa-check-circle"></i>
+                <span>Up to date</span>
+            </div>
+        {% elif version_info and not version_info.latest_version and not version_info.has_error %}
+            <div style="color: #ffa94d; margin-left: 8px; display: flex; align-items: center; gap: 4px;" title="Checking for updates...">
+                <i class="fas fa-spinner fa-spin"></i>
+                <span>Checking...</span>
+            </div>
+        {% endif %}
+        {% if version_info and version_info.has_error %}
+            <div style="color: #ffa94d; margin-left: 8px; display: flex; align-items: center; gap: 4px;" title="{{ version_info.error_message }}">
+                <i class="fas fa-exclamation-circle"></i>
+                <span style="font-size: 0.8rem;">Update check unavailable</span>
+            </div>
+        {% endif %}
+    </div>
+    {% if version_info and version_info.cached %}
+        <div style="color: rgba(255,215,0,0.6); font-size: 0.75rem; margin-top: 4px; font-style: italic;">
+            <i class="fas fa-clock"></i> Cached
+        </div>
+    {% endif %}
+</div>
+
+<style>
+.version-info {
+    transition: opacity 0.3s ease;
+}
+.version-info:hover {
+    opacity: 1;
+    border-color: rgba(255,215,0,0.5);
+}
+.version-info a:hover {
+    text-decoration: underline !important;
+    color: #ff8787 !important;
+}
+@media (max-width: 768px) {
+    .version-info {
+        bottom: 5px;
+        right: 5px;
+        font-size: 0.75rem;
+        padding: 8px 12px;
+        max-width: 300px;
+    }
+}
+</style>
+
