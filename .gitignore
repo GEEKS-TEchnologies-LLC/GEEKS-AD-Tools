@@ -32,6 +32,7 @@ ENV/
 *.sqlite3
 app/database.db
 app/ad_config.json
+app/exchange_config.json
 
 # Logs (but keep directories)
 *.log
