@@ -1311,11 +1311,11 @@ def export_internal_tools():
 
 def get_exchange_config():
     """Get Exchange configuration with secure credential injection"""
-        config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
+    config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
     config = None
     
     # Load base config from file (non-sensitive data)
-        if os.path.exists(config_path):
+    if os.path.exists(config_path):
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
@@ -3461,7 +3461,7 @@ def bug_report():
                         'github_issue_url': result['github_issue_url'],
                         'description': description[:100]
                     })
-            else:
+                else:
                     flash(f'Bug report saved locally. {result.get("github_issue_message", "GitHub issue creation failed")}', 'warning')
                     log_admin_action('bug_report_submitted', 'partial', {
                         'filename': result['filename'],
@@ -3897,28 +3897,28 @@ def admin_settings():
                 # Also update branding for UI settings
                 branding_data = branding.copy() if branding else {}
                 branding_data['flash_countdown'] = 'flash_countdown' in request.form
-            branding_data['debug_mode'] = 'debug_mode' in request.form
-            
-            # Flash timeout setting
-            try:
-                flash_timeout = int(request.form.get('flash_timeout', 180))
-                flash_timeout = max(30, min(600, flash_timeout))  # Clamp between 30-600 seconds
-                branding_data['flash_timeout'] = flash_timeout
-            except ValueError:
-                branding_data['flash_timeout'] = 180
-            
-            # Log level setting
-            log_level = request.form.get('log_level', 'INFO')
-            if log_level in ['INFO', 'DEBUG', 'WARNING', 'ERROR']:
-                branding_data['log_level'] = log_level
-            
+                branding_data['debug_mode'] = 'debug_mode' in request.form
+                
+                # Flash timeout setting
+                try:
+                    flash_timeout = int(request.form.get('flash_timeout', 180))
+                    flash_timeout = max(30, min(600, flash_timeout))  # Clamp between 30-600 seconds
+                    branding_data['flash_timeout'] = flash_timeout
+                except ValueError:
+                    branding_data['flash_timeout'] = 180
+                
+                # Log level setting
+                log_level = request.form.get('log_level', 'INFO')
+                if log_level in ['INFO', 'DEBUG', 'WARNING', 'ERROR']:
+                    branding_data['log_level'] = log_level
+                
                 # Save config.json
                 with open(config_path, 'w') as f:
                     json.dump(config_data, f, indent=2)
                 
                 # Save branding config
-            save_branding_config(branding_data)
-            flash('Debug settings updated successfully!', 'success')
+                save_branding_config(branding_data)
+                flash('Debug settings updated successfully!', 'success')
             except Exception as e:
                 current_app.logger.error(f"Error saving debug settings: {e}")
                 flash(f'Error saving debug settings: {str(e)}', 'danger')
