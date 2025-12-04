@@ -34,6 +34,12 @@ app/database.db
 app/ad_config.json
 app/exchange_config.json
 
+# Secure credential storage (NEVER commit these)
+.credentials.enc
+.credentials.key
+*.key
+*.enc
+
 # Logs (but keep directories)
 *.log
 app/logs/*.log

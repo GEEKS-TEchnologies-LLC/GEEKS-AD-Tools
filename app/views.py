@@ -1081,16 +1081,37 @@ def export_internal_tools():
 
 
 def get_exchange_config():
-    """Get Exchange configuration from file"""
-    try:
-        # Use the same approach as ad_config.json
-        config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
-        if os.path.exists(config_path):
+    """Get Exchange configuration with secure credential injection"""
+    config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
+    config = None
+    
+    # Load base config from file (non-sensitive data)
+    if os.path.exists(config_path):
+        try:
             with open(config_path, 'r') as f:
-                return json.load(f)
+                config = json.load(f)
+        except:
+            pass
+    
+    if config is None:
+        config = {
+            'exchange_server': '',
+            'username': '',
+            'password': '',
+            'domain': '',
+            'enabled': False
+        }
+    
+    # Inject secure password if available
+    try:
+        from .credentials import get_credential
+        secure_password = get_credential('exchange_password')
+        if secure_password:
+            config['password'] = secure_password
     except Exception as e:
-        print(f"Error reading Exchange config: {e}")
-    return None
+        current_app.logger.debug(f"Could not load secure Exchange credentials: {e}")
+    
+    return config
 
 
 @main.route('/admin/exchange/setup')
@@ -1106,22 +1127,31 @@ def exchange_setup():
 @login_required
 @admin_required
 def save_exchange_config():
-    """Save Exchange configuration"""
+    """Save Exchange configuration with secure password storage"""
     try:
+        from .credentials import save_credentials
+        
+        password = request.form.get('password', '')
         config = {
             'exchange_server': request.form.get('exchange_server', ''),
             'username': request.form.get('username', ''),
-            'password': request.form.get('password', ''),
+            'password': '',  # Don't store password in config file
             'domain': request.form.get('domain', ''),
             'enabled': request.form.get('enabled') == 'on'
         }
         
+        # Save non-sensitive config to file
         config_path = os.path.join(os.path.dirname(__file__), 'exchange_config.json')
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
         
+        # Save password securely
+        if password:
+            save_credentials({'exchange_password': password})
+        
         flash('Exchange configuration saved successfully!', 'success')
     except Exception as e:
+        current_app.logger.error(f"Error saving Exchange configuration: {e}")
         flash(f'Error saving Exchange configuration: {str(e)}', 'danger')
     
     return redirect(url_for('main.exchange_setup'))

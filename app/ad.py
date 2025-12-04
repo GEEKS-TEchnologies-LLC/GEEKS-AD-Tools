@@ -150,7 +150,7 @@ def _get_ad_config_cached():
         return json.load(f)
 
 def get_ad_config():
-    """Get AD configuration with caching"""
+    """Get AD configuration with caching and secure credential injection"""
     # Clear cache if file was modified
     config = _get_ad_config_cached()
     if config is None:
@@ -163,9 +163,27 @@ def get_ad_config():
         # If config changed, clear cache
         if json.dumps(current_config, sort_keys=True) != json.dumps(config, sort_keys=True):
             _get_ad_config_cached.cache_clear()
-            return current_config
+            config = current_config
     except:
         pass
+    
+    # Inject secure credentials if available
+    try:
+        from .credentials import get_credential
+        # Override password from secure storage if available
+        secure_password = get_credential('ad_password')
+        if secure_password:
+            config['ad_password'] = secure_password
+        
+        # Also check for ad_bind_password (from config.json)
+        secure_bind_password = get_credential('ad_bind_password')
+        if secure_bind_password:
+            # This might be in a different config structure
+            pass
+    except Exception as e:
+        # If credentials module fails, continue with config file values
+        import logging
+        logging.getLogger(__name__).debug(f"Could not load secure credentials: {e}")
     
     return config
 
