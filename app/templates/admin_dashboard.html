@@ -328,13 +328,10 @@
                     {% endif %}
                 </span>
             </a>
-            <div class="form-check form-switch me-3" title="Debug Mode">
-                <input class="form-check-input" type="checkbox" id="debugToggle" style="cursor: pointer;">
-                <label class="form-check-label text-warning" for="debugToggle" style="cursor: pointer; font-size: 0.9rem;">
-                    <i class="fas fa-bug me-1"></i>
-                    <span class="d-none d-md-inline">Debug</span>
-                </label>
-            </div>
+            <a href="/bug-report" class="btn btn-sm btn-outline-warning me-3" title="Report Bug">
+                <i class="fas fa-bug me-1"></i>
+                <span class="d-none d-md-inline">Report Bug</span>
+            </a>
             <div class="user-dropdown" id="userDropdown">
                 <button class="user-dropdown-toggle" id="userDropdownToggle" type="button">
                     <i class="fas fa-user-circle me-2"></i> <span class="d-none d-md-inline">{{ current_user.username if current_user and current_user.is_authenticated else 'User' }}</span> <i class="fas fa-caret-down ms-1"></i>
@@ -948,27 +945,7 @@
             };
         }
 
-        // Debug toggle functionality
-        const debugToggle = document.getElementById('debugToggle');
-        if (debugToggle) {
-            // Set initial state from localStorage or URL param
-            const urlParams = new URLSearchParams(window.location.search);
-            const debugParam = urlParams.get('debug');
-            if (debugParam !== null) {
-                debugToggle.checked = debugParam === '1';
-                localStorage.setItem('dashboardDebug', debugToggle.checked);
-            } else {
-                debugToggle.checked = localStorage.getItem('dashboardDebug') === 'true';
-            }
-            
-            // Handle toggle changes
-            debugToggle.addEventListener('change', function() {
-                localStorage.setItem('dashboardDebug', debugToggle.checked);
-                const currentUrl = new URL(window.location);
-                currentUrl.searchParams.set('debug', debugToggle.checked ? '1' : '0');
-                window.location.href = currentUrl.toString();
-            });
-        }
+        // Bug report button functionality is handled by the link itself
     </script>
 </body>
 </html> 

@@ -994,6 +994,8 @@ def export_migration_ready():
     status_filter = request.args.get('status_filter', 'enabled')  # Respect user's filter choice
     exclude_ous_raw = request.args.get('exclude_ous', '')
     exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+    require_email = request.args.get('require_email', '1') == '1'  # Default to requiring email
+    group_by_department = request.args.get('group_by_department', '1') == '1'  # Default to grouping
     
     try:
         # Search for users with current filters (respect all filters including status)
@@ -1021,14 +1023,13 @@ def export_migration_ready():
                         return cn_name
             return "Root"
         
-        # Filter for migration-ready criteria (must have email)
-        # Note: This respects all filters (query, status_filter, exclude_ous) from the search page
-        # but still requires email addresses (that's what "migration ready" means)
+        # Filter users based on criteria
         migration_ready = []
         for user in users:
             email = (user.get('mail') or '').strip()
-            if not email:
-                continue  # Skip users without email (migration-ready requirement)
+            # Apply require_email filter if enabled
+            if require_email and not email:
+                continue  # Skip users without email
             
             # Extract department from OU
             dn = user.get('distinguishedName') or user.get('dn') or ''
@@ -1049,17 +1050,49 @@ def export_migration_ready():
             migration_ready.append(user_data)
         
         if not migration_ready:
-            flash(f'No migration-ready users found with current filters (users must have email addresses). Status filter: {status_filter}, Query: {query if query else "all"}', 'warning')
-            return redirect(url_for('main.user_search'))
+            # Return empty file instead of redirecting (for background export)
+            export_format = request.args.get('format', 'csv').lower()
+            if export_format == 'xlsx':
+                try:
+                    import pandas as pd
+                    from io import BytesIO
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        pd.DataFrame([{'Message': 'No users found matching the selected filters'}]).to_excel(writer, sheet_name='No Data', index=False)
+                    output.seek(0)
+                    filename = f'migration_ready_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+                    return Response(
+                        output.read(),
+                        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': f'attachment; filename={filename}'}
+                    )
+                except ImportError:
+                    pass
+            # CSV fallback
+            import io
+            import csv
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(['Message'])
+            writer.writerow(['No users found matching the selected filters'])
+            filename = f'migration_ready_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+            return Response(
+                output.getvalue(),
+                mimetype='text/csv',
+                headers={'Content-Disposition': f'attachment; filename={filename}'}
+            )
         
-        # Group by department
-        users_by_dept = defaultdict(list)
-        for user in migration_ready:
-            department = user.get('Department', 'Unknown')
-            users_by_dept[department].append(user)
-        
-        # Sort departments
-        users_by_dept = dict(sorted(users_by_dept.items()))
+        # Group by department if requested
+        if group_by_department:
+            users_by_dept = defaultdict(list)
+            for user in migration_ready:
+                department = user.get('Department', 'Unknown')
+                users_by_dept[department].append(user)
+            # Sort departments
+            users_by_dept = dict(sorted(users_by_dept.items()))
+        else:
+            # Single flat list
+            users_by_dept = {'All Users': migration_ready}
         
         # Determine export format
         export_format = request.args.get('format', 'csv').lower()
@@ -1072,29 +1105,39 @@ def export_migration_ready():
                 
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    # Summary sheet
-                    summary_data = []
-                    for department, dept_users in sorted(users_by_dept.items()):
-                        summary_data.append({
-                            'Department': department,
-                            'User Count': len(dept_users)
-                        })
-                    summary_df = pd.DataFrame(summary_data)
-                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
-                    
-                    # Department sheets
-                    for department, dept_users in sorted(users_by_dept.items()):
-                        sheet_name = department[:31] if len(department) <= 31 else department[:28] + '...'
-                        df = pd.DataFrame(dept_users)
+                    if group_by_department:
+                        # Summary sheet
+                        summary_data = []
+                        for department, dept_users in sorted(users_by_dept.items()):
+                            summary_data.append({
+                                'Department': department,
+                                'User Count': len(dept_users)
+                            })
+                        summary_df = pd.DataFrame(summary_data)
+                        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                        
+                        # Department sheets
+                        for department, dept_users in sorted(users_by_dept.items()):
+                            sheet_name = department[:31] if len(department) <= 31 else department[:28] + '...'
+                            df = pd.DataFrame(dept_users)
+                            column_order = ['Name', 'Username', 'Email', 'Title', 
+                                          'Department (AD)', 'Company', 'Phone', 'Mobile']
+                            existing_columns = [col for col in column_order if col in df.columns]
+                            if existing_columns:
+                                df = df[existing_columns]
+                            df.to_excel(writer, sheet_name=sheet_name, index=False)
+                    else:
+                        # Single sheet export
+                        df = pd.DataFrame(migration_ready)
                         column_order = ['Name', 'Username', 'Email', 'Title', 
                                       'Department (AD)', 'Company', 'Phone', 'Mobile']
                         existing_columns = [col for col in column_order if col in df.columns]
                         if existing_columns:
                             df = df[existing_columns]
-                        df.to_excel(writer, sheet_name=sheet_name, index=False)
+                        df.to_excel(writer, sheet_name='All Users', index=False)
                 
                 output.seek(0)
-                filename = f'migration_ready_by_department_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+                filename = f'migration_ready_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
                 return Response(
                     output.read(),
                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -1112,14 +1155,32 @@ def export_migration_ready():
             writer = csv.writer(output)
             
             # Write header
-            writer.writerow(['Department', 'Name', 'Username', 'Email', 'Title', 
-                           'Department (AD)', 'Company', 'Phone', 'Mobile', 'OU Path'])
-            
-            # Write data grouped by department
-            for department, dept_users in sorted(users_by_dept.items()):
-                for user in sorted(dept_users, key=lambda x: x.get('Name', '')):
+            if group_by_department:
+                writer.writerow(['Department', 'Name', 'Username', 'Email', 'Title', 
+                               'Department (AD)', 'Company', 'Phone', 'Mobile', 'OU Path'])
+                
+                # Write data grouped by department
+                for department, dept_users in sorted(users_by_dept.items()):
+                    for user in sorted(dept_users, key=lambda x: x.get('Name', '')):
+                        writer.writerow([
+                            department,
+                            user.get('Name', ''),
+                            user.get('Username', ''),
+                            user.get('Email', ''),
+                            user.get('Title', ''),
+                            user.get('Department (AD)', ''),
+                            user.get('Company', ''),
+                            user.get('Phone', ''),
+                            user.get('Mobile', ''),
+                            user.get('OU Path', '')
+                        ])
+            else:
+                # Flat export without department grouping
+                writer.writerow(['Name', 'Username', 'Email', 'Title', 
+                               'Department (AD)', 'Company', 'Phone', 'Mobile', 'OU Path'])
+                
+                for user in sorted(migration_ready, key=lambda x: x.get('Name', '')):
                     writer.writerow([
-                        department,
                         user.get('Name', ''),
                         user.get('Username', ''),
                         user.get('Email', ''),
@@ -1132,7 +1193,7 @@ def export_migration_ready():
                     ])
             
             csv_data = output.getvalue()
-            filename = f'migration_ready_by_department_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+            filename = f'migration_ready_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
             return Response(
                 csv_data,
                 mimetype='text/csv',
@@ -1450,8 +1511,13 @@ def get_mailbox_sizes():
         
     except Exception as e:
         db.session.rollback()
+        import traceback
+        error_details = traceback.format_exc()
         current_app.logger.error(f"Error getting mailbox sizes: {e}")
-        return jsonify({'success': False, 'message': str(e)})
+        current_app.logger.error(f"Traceback: {error_details}")
+        current_app.logger.error(f"Request params: query={query}, status_filter={status_filter}, exclude_ous={exclude_ous}")
+        current_app.logger.error(f"User emails count: {len(user_emails) if 'user_emails' in locals() else 'N/A'}")
+        return jsonify({'success': False, 'message': str(e), 'error_type': type(e).__name__})
 
 @main.route('/admin/exchange/mailbox_sizes/cached')
 @login_required
@@ -3168,15 +3234,28 @@ def bug_report():
         
         if description:
             report = generate_bug_report(description, user_email, include_logs, include_config)
-            filename = save_bug_report(report)
+            result = save_bug_report(report)
             
-            if filename:
-                flash('Bug report submitted successfully!', 'success')
-                # Log the bug report submission
-                log_admin_action('bug_report_submitted', 'success', {'filename': filename, 'description': description[:100]})
+            if result and result.get('filename'):
+                # Check if GitHub issue was created
+                if result.get('github_issue_url'):
+                    flash(f'Bug report submitted successfully! GitHub issue created: {result["github_issue_url"]}', 'success')
+                    log_admin_action('bug_report_submitted', 'success', {
+                        'filename': result['filename'],
+                        'github_issue_url': result['github_issue_url'],
+                        'description': description[:100]
+                    })
+                else:
+                    flash(f'Bug report saved locally. {result.get("github_issue_message", "GitHub issue creation failed")}', 'warning')
+                    log_admin_action('bug_report_submitted', 'partial', {
+                        'filename': result['filename'],
+                        'github_error': result.get('github_issue_message', 'Unknown error'),
+                        'description': description[:100]
+                    })
             else:
-                flash('Failed to save bug report.', 'danger')
-                log_admin_action('bug_report_submitted', 'failure', {'description': description[:100]})
+                error_msg = result.get('github_issue_message', 'Failed to save bug report') if result else 'Failed to save bug report'
+                flash(f'Error: {error_msg}', 'danger')
+                log_admin_action('bug_report_submitted', 'failure', {'description': description[:100], 'error': error_msg})
         else:
             flash('Please provide a description of the issue.', 'danger')
     
@@ -3527,9 +3606,25 @@ def drilldown_users():
 @main.route('/admin/settings', methods=['GET', 'POST'])
 @admin_required
 def admin_settings():
-    config = get_ad_config()
+    ad_config = get_ad_config()
     branding = get_branding_config()
     admin_groups = get_admin_groups()
+    
+    # Load main config.json for debug setting
+    import json
+    import os
+    from .credentials import get_credential
+    main_config = {}
+    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                main_config = json.load(f)
+        except:
+            pass
+    
+    # Check if GitHub token is configured
+    github_token_configured = bool(get_credential('github_token', ''))
     
     if request.method == 'POST':
         # Handle branding updates
@@ -3567,30 +3662,51 @@ def admin_settings():
         
         # Handle debug settings updates
         elif 'action' in request.form and request.form['action'] == 'save_debug_settings':
-            # Update branding config with debug settings
-            branding_data = branding.copy() if branding else {}
+            # Update config.json with debug settings
+            import json
+            import os
+            config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
             
-            # Flash message countdown setting
-            branding_data['flash_countdown'] = 'flash_countdown' in request.form
-            
-            # Debug mode setting
-            branding_data['debug_mode'] = 'debug_mode' in request.form
-            
-            # Flash timeout setting
             try:
-                flash_timeout = int(request.form.get('flash_timeout', 180))
-                flash_timeout = max(30, min(600, flash_timeout))  # Clamp between 30-600 seconds
-                branding_data['flash_timeout'] = flash_timeout
-            except ValueError:
-                branding_data['flash_timeout'] = 180
+                # Load existing config
+                if os.path.exists(config_path):
+                    with open(config_path, 'r') as f:
+                        config_data = json.load(f)
+                else:
+                    config_data = {}
+                
+                # Update debug setting
+                config_data['debug'] = 'debug_mode' in request.form
+                
+                # Also update branding for UI settings
+                branding_data = branding.copy() if branding else {}
+                branding_data['flash_countdown'] = 'flash_countdown' in request.form
+                branding_data['debug_mode'] = 'debug_mode' in request.form
+                
+                # Flash timeout setting
+                try:
+                    flash_timeout = int(request.form.get('flash_timeout', 180))
+                    flash_timeout = max(30, min(600, flash_timeout))  # Clamp between 30-600 seconds
+                    branding_data['flash_timeout'] = flash_timeout
+                except ValueError:
+                    branding_data['flash_timeout'] = 180
+                
+                # Log level setting
+                log_level = request.form.get('log_level', 'INFO')
+                if log_level in ['INFO', 'DEBUG', 'WARNING', 'ERROR']:
+                    branding_data['log_level'] = log_level
+                
+                # Save config.json
+                with open(config_path, 'w') as f:
+                    json.dump(config_data, f, indent=2)
+                
+                # Save branding config
+                save_branding_config(branding_data)
+                flash('Debug settings updated successfully!', 'success')
+            except Exception as e:
+                current_app.logger.error(f"Error saving debug settings: {e}")
+                flash(f'Error saving debug settings: {str(e)}', 'danger')
             
-            # Log level setting
-            log_level = request.form.get('log_level', 'INFO')
-            if log_level in ['INFO', 'DEBUG', 'WARNING', 'ERROR']:
-                branding_data['log_level'] = log_level
-            
-            save_branding_config(branding_data)
-            flash('Debug settings updated successfully!', 'success')
             return redirect(url_for('main.admin_settings'))
         
         # Handle homepage settings updates
@@ -3629,6 +3745,43 @@ def admin_settings():
             flash('Homepage configuration saved successfully!', 'success')
             return redirect(url_for('main.admin_settings'))
         
+        # Handle GitHub token configuration
+        elif 'action' in request.form and request.form['action'] == 'save_github_token':
+            from .credentials import set_credential, save_credentials
+            import os
+            
+            github_token = request.form.get('github_token', '').strip()
+            github_repo = request.form.get('github_repo', '').strip()
+            
+            # Only update token if a new one was provided (not the placeholder)
+            if github_token and github_token != '***CONFIGURED***':
+                if set_credential('github_token', github_token):
+                    flash('GitHub token saved securely!', 'success')
+                else:
+                    flash('Error saving GitHub token', 'danger')
+            
+            # Update repository in config.json
+            if github_repo:
+                config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+                try:
+                    if os.path.exists(config_path):
+                        with open(config_path, 'r') as f:
+                            config_data = json.load(f)
+                    else:
+                        config_data = {}
+                    
+                    config_data['github_repo'] = github_repo
+                    
+                    with open(config_path, 'w') as f:
+                        json.dump(config_data, f, indent=2)
+                    
+                    flash('GitHub repository updated!', 'success')
+                except Exception as e:
+                    current_app.logger.error(f"Error saving GitHub repo: {e}")
+                    flash(f'Error saving GitHub repository: {str(e)}', 'danger')
+            
+            return redirect(url_for('main.admin_settings'))
+        
         # Handle password policy updates
         elif 'action' in request.form and request.form['action'] == 'save_password_policy':
             # Update branding config with password policy settings
@@ -3646,8 +3799,10 @@ def admin_settings():
             return redirect(url_for('main.admin_settings'))
     
     return render_template('admin_settings.html', 
-                         config=config, 
-                         branding=branding, 
+                         config=main_config,  # Use main_config which includes debug setting
+                         ad_config=ad_config,  # Pass AD config separately
+                         branding=branding,
+                         github_token_configured=github_token_configured, 
                          admin_groups=admin_groups)
 
 @main.route('/test-form', methods=['GET', 'POST'])

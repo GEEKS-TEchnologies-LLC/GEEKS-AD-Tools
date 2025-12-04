@@ -399,13 +399,10 @@
                 <i class="fas fa-exchange-alt me-1"></i>
                 <span class="d-none d-md-inline">Switch to User View</span>
             </a>
-            <div class="form-check form-switch me-3" title="Debug Mode">
-                <input class="form-check-input" type="checkbox" id="debugToggle" style="cursor: pointer;">
-                <label class="form-check-label text-warning" for="debugToggle" style="cursor: pointer; font-size: 0.9rem;">
-                    <i class="fas fa-bug me-1"></i>
-                    <span class="d-none d-md-inline">Debug</span>
-                </label>
-            </div>
+            <a href="/bug-report" class="btn btn-sm btn-outline-warning me-3" title="Report Bug">
+                <i class="fas fa-bug me-1"></i>
+                <span class="d-none d-md-inline">Report Bug</span>
+            </a>
             <div class="user-dropdown" id="userDropdown">
                 <button class="user-dropdown-toggle" id="userDropdownToggle" type="button">
                     <i class="fas fa-user-circle me-2"></i> <span class="d-none d-md-inline">Admin</span> <i class="fas fa-caret-down ms-1"></i>
@@ -754,16 +751,8 @@
             }
         });
 
-        // Debug toggle functionality
-        document.getElementById('debugToggle').addEventListener('change', function() {
-            if (this.checked) {
-                console.log('Debug mode enabled');
-                // Add debug functionality here
-            } else {
-                console.log('Debug mode disabled');
-                // Remove debug functionality here
-            }
-        });
+        // Bug report button functionality is handled by the link itself
+        // Debug mode is now configured in Settings > Debug Settings
     </script>
     <!-- Add DataTables CSS/JS -->
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css">

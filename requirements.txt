@@ -11,4 +11,5 @@ ldap3
 Flask-Migrate
 requests
 Flask-Session
-cryptography 
+cryptography
+distro 

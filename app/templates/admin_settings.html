@@ -452,21 +452,21 @@
                                     <div class="col-md-6">
                                         <div class="mb-3">
                                             <label for="ad_server" class="form-label">AD Server</label>
-                                            <input type="text" class="form-control" id="ad_server" name="ad_server" value="{{ config.get('ad_server', '') }}" required>
+                                            <input type="text" class="form-control" id="ad_server" name="ad_server" value="{{ ad_config.get('ad_server', '') if ad_config else '' }}" required>
                                         </div>
                                         <div class="mb-3">
                                             <label for="ad_user" class="form-label">AD Username</label>
-                                            <input type="text" class="form-control" id="ad_user" name="ad_user" value="{{ config.get('ad_user', '') }}" required>
+                                            <input type="text" class="form-control" id="ad_user" name="ad_user" value="{{ ad_config.get('ad_user', '') if ad_config else '' }}" required>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="mb-3">
                                             <label for="ad_password" class="form-label">AD Password</label>
-                                            <input type="password" class="form-control" id="ad_password" name="ad_password" value="{{ config.get('ad_password', '') }}" required>
+                                            <input type="password" class="form-control" id="ad_password" name="ad_password" value="{{ ad_config.get('ad_password', '') if ad_config else '' }}" required>
                                         </div>
                                         <div class="mb-3">
                                             <label for="ad_base_dn" class="form-label">Base DN</label>
-                                            <input type="text" class="form-control" id="ad_base_dn" name="ad_base_dn" value="{{ config.get('ad_base_dn', '') }}" required>
+                                            <input type="text" class="form-control" id="ad_base_dn" name="ad_base_dn" value="{{ ad_config.get('ad_base_dn', '') if ad_config else '' }}" required>
                                         </div>
                                     </div>
                                 </div>
@@ -871,6 +871,83 @@
                         <div class="glass-card">
                             <h4><i class="fas fa-bug"></i> Debug & Development Settings</h4>
                             <p class="text-muted">Configure debug features and development options. These settings are for advanced users and debugging purposes.</p>
+                            
+                            <form method="POST" action="{{ url_for('main.admin_settings') }}">
+                                <div class="mb-3">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="debug_mode" name="debug_mode" 
+                                               {{ 'checked' if config.get('debug', False) else '' }}>
+                                        <label class="form-check-label" for="debug_mode">
+                                            <strong>Enable Debug Mode</strong>
+                                        </label>
+                                        <div class="form-text">
+                                            Enable debug mode to show detailed error messages and debug information. 
+                                            This should only be enabled for troubleshooting.
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <button type="submit" class="btn btn-custom" name="action" value="save_debug_settings">
+                                    <i class="fas fa-save"></i> Save Debug Settings
+                                </button>
+                            </form>
+                            
+                            <hr class="my-4" style="border-color: rgba(255,215,0,0.3);">
+                            
+                            <div class="mt-4">
+                                <h5><i class="fas fa-bug text-warning"></i> Bug Reporting Configuration</h5>
+                                <p class="text-muted">Configure GitHub integration for automatic bug report submission. This uses a system-level token (not per-user).</p>
+                                
+                                <form method="POST" action="{{ url_for('main.admin_settings') }}">
+                                    <input type="hidden" name="action" value="save_github_token">
+                                    
+                                    <div class="mb-3">
+                                        <label for="github_token" class="form-label">
+                                            <i class="fab fa-github"></i> GitHub Personal Access Token
+                                        </label>
+                                        <input type="password" class="form-control" id="github_token" name="github_token" 
+                                               placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" 
+                                               value="{{ '***CONFIGURED***' if github_token_configured else '' }}">
+                                        <div class="form-text">
+                                            <i class="fas fa-info-circle me-1"></i>
+                                            <strong>System Token (Admin Only):</strong> This is a system-level token used to create GitHub issues from bug reports. 
+                                            Users do not need their own tokens. 
+                                            <br><br>
+                                            <strong>How to create a token:</strong>
+                                            <ol class="mt-2">
+                                                <li>Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)</li>
+                                                <li>Click "Generate new token (classic)"</li>
+                                                <li>Give it a name like "GEEKS-AD-Tools Bug Reports"</li>
+                                                <li>Select scope: <code>repo</code> (full control of private repositories)</li>
+                                                <li>Click "Generate token" and copy it</li>
+                                                <li>Paste it here and save</li>
+                                            </ol>
+                                            <strong>Note:</strong> The token is stored securely and encrypted. If not configured, bug reports will only be saved locally.
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="github_repo" class="form-label">
+                                            <i class="fab fa-github"></i> GitHub Repository
+                                        </label>
+                                        <input type="text" class="form-control" id="github_repo" name="github_repo" 
+                                               placeholder="owner/repo" 
+                                               value="{{ config.get('github_repo', 'GEEKS-TEchnologies-LLC/GEEKS-AD-Tools') }}">
+                                        <div class="form-text">
+                                            <i class="fas fa-info-circle me-1"></i>
+                                            Repository where bug reports will be created as issues (format: owner/repo)
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-custom">
+                                        <i class="fas fa-save"></i> Save GitHub Configuration
+                                    </button>
+                                    
+                                    <a href="/bug-report" class="btn btn-secondary ms-2">
+                                        <i class="fas fa-bug"></i> Test Bug Report
+                                    </a>
+                                </form>
+                            </div>
                             
                             <form method="POST" action="{{ url_for('main.admin_settings') }}">
                                 <div class="row">
