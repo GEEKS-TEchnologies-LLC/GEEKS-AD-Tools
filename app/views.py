@@ -2635,9 +2635,20 @@ def manage_managers():
             else:
                 continue
             
-            if final_name and final_name.lower() not in seen_departments:
-                departments.append({'name': final_name, 'dn': ou_dn})
-                seen_departments.add(final_name.lower())
+            # Handle Simulcast-Racing split (if they're combined)
+            if final_name:
+                final_lower = final_name.lower()
+                if 'simulcast' in final_lower and 'racing' in final_lower:
+                    # Split into two departments
+                    if 'simulcast' not in seen_departments:
+                        departments.append({'name': 'Simulcast', 'dn': ou_dn})
+                        seen_departments.add('simulcast')
+                    if 'racing' not in seen_departments:
+                        departments.append({'name': 'Racing', 'dn': ou_dn})
+                        seen_departments.add('racing')
+                elif final_lower not in seen_departments:
+                    departments.append({'name': final_name, 'dn': ou_dn})
+                    seen_departments.add(final_lower)
     
     departments.sort(key=lambda x: x['name'].lower())
     
@@ -2646,36 +2657,154 @@ def manage_managers():
     for dept_mgr in DepartmentManager.query.all():
         dept_managers[dept_mgr.department] = dept_mgr
     
-    # Get all direct reports
+    # Get all direct reports first (needed for outside managers)
     direct_reports = UserDirectReport.query.all()
     
-    # Group direct reports by manager
-    reports_by_manager = {}
+    # Get all users from AD for dropdowns
+    all_ad_users = search_users('', status_filter='all', **ad_args)
+    
+    # Add outside managers to the list
+    outside_managers_list = []
     for report in direct_reports:
-        if report.manager_username not in reports_by_manager:
-            reports_by_manager[report.manager_username] = []
-        reports_by_manager[report.manager_username].append(report)
+        if report.is_outside_manager and report.manager_username:
+            # Check if already added
+            if not any(u.get('sAMAccountName') == report.manager_username for u in outside_managers_list):
+                outside_managers_list.append({
+                    'sAMAccountName': report.manager_username,
+                    'username': report.manager_username,
+                    'displayName': report.manager_display_name or report.manager_username,
+                    'cn': report.manager_display_name or report.manager_username,
+                    'title': '',
+                    'is_outside': True
+                })
+    
+    # Add Board of Directors if it exists or create it
+    board_exists = any('board' in (r.manager_display_name or r.manager_username or '').lower() or 'directors' in (r.manager_display_name or r.manager_username or '').lower() for r in direct_reports)
+    if not board_exists:
+        outside_managers_list.append({
+            'sAMAccountName': 'Board of Directors',
+            'username': 'Board of Directors',
+            'displayName': 'Board of Directors',
+            'cn': 'Board of Directors',
+            'title': '',
+            'is_outside': True
+        })
+    
+    # Combine AD users with outside managers
+    all_ad_users.extend(outside_managers_list)
+    
+    # Sort users by display name for dropdown
+    all_ad_users.sort(key=lambda u: (u.get('displayName') or u.get('cn') or u.get('sAMAccountName') or '').lower())
+    
+    # Group direct reports by manager and fetch manager display names from AD
+    reports_by_manager = {}
+    manager_display_names = {}  # Cache manager display names
+    
+    for report in direct_reports:
+        manager_username = report.manager_username
+        
+        # Fetch manager display name from AD if not already cached
+        if manager_username not in manager_display_names:
+            # Check if it's an outside manager first
+            if report.is_outside_manager and report.manager_display_name:
+                manager_display_names[manager_username] = report.manager_display_name
+            else:
+                # Try to get manager details from AD
+                managers = search_users(manager_username, **ad_args)
+                if managers:
+                    manager = managers[0]
+                    manager_display_names[manager_username] = manager.get('displayName') or manager.get('cn') or manager_username
+                else:
+                    manager_display_names[manager_username] = manager_username
+        
+        if manager_username not in reports_by_manager:
+            reports_by_manager[manager_username] = []
+        reports_by_manager[manager_username].append(report)
+    
+    # Get all managers (people who have direct reports, are department managers, or have manager/director titles)
+    all_managers = set()
+    
+    # Add managers who already have direct reports (including outside managers)
+    for report in direct_reports:
+        all_managers.add(report.manager_username)
+        # Also include employees who are managers (have their own reports)
+        if report.employee_username in [r.manager_username for r in direct_reports]:
+            all_managers.add(report.employee_username)
+    
+    # Add department managers
+    for dept_mgr in dept_managers.values():
+        all_managers.add(dept_mgr.manager_username)
+    
+    # Add outside managers to the managers set
+    for report in direct_reports:
+        if report.is_outside_manager:
+            all_managers.add(report.manager_username)
+    
+    # Add Board of Directors
+    all_managers.add('Board of Directors')
+    
+    # Identify managers by title patterns in AD
+    manager_title_keywords = ['manager', 'director', 'supervisor', 'lead', 'chief', 'vp', 'vice president', 'president', 'ceo', 'coo', 'cfo', 'cto', 'head', 'executive']
+    for user in all_ad_users:
+        if user.get('is_outside'):
+            continue  # Skip outside managers, already handled
+        username = user.get('sAMAccountName') or user.get('username')
+        title = (user.get('title') or '').lower()
+        
+        # Check if title contains manager keywords
+        if any(keyword in title for keyword in manager_title_keywords):
+            all_managers.add(username)
     
     if request.method == 'POST':
         action = request.form.get('action')
         
         if action == 'set_department_manager':
             department = request.form.get('department')
-            manager_username = request.form.get('manager_username')
+            manager_username = request.form.get('manager_username', '').strip()
+            manager_display_name = request.form.get('dept_manager_display_name', '').strip()
+            is_outside_manager = request.form.get('is_dept_outside_manager') == 'true'
             
-            if not department or not manager_username:
-                flash('Department and manager are required.', 'danger')
+            if not department:
+                flash('Department is required.', 'danger')
                 return redirect(url_for('main.manage_managers'))
             
-            # Get manager details from AD
-            users = search_users(manager_username, **ad_args)
-            if not users:
-                flash(f'Manager user "{manager_username}" not found.', 'danger')
+            if not manager_username:
+                flash('Manager is required.', 'danger')
                 return redirect(url_for('main.manage_managers'))
             
-            manager = users[0]
-            manager_dn = manager.get('distinguishedName') or manager.get('dn')
-            manager_display = manager.get('displayName') or manager.get('cn') or manager_username
+            # Check if this is an outside manager (from existing records or manually entered)
+            # First check if it's in our outside managers list
+            is_known_outside = False
+            for report in direct_reports:
+                if report.is_outside_manager and report.manager_username == manager_username:
+                    is_known_outside = True
+                    manager_display_name = report.manager_display_name or manager_username
+                    break
+            
+            # Also check if it's Board of Directors
+            if 'board' in manager_username.lower() or 'directors' in manager_username.lower():
+                is_known_outside = True
+                manager_display_name = manager_display_name or 'Board of Directors'
+            
+            # Handle outside manager
+            if is_outside_manager or is_known_outside:
+                if not manager_display_name:
+                    manager_display_name = manager_username
+                manager_dn = None
+                manager_display = manager_display_name
+            else:
+                # Get manager details from AD
+                users = search_users(manager_username, **ad_args)
+                if not users:
+                    # Not found in AD - treat as outside manager
+                    is_outside_manager = True
+                    manager_display_name = manager_display_name or manager_username
+                    manager_dn = None
+                    manager_display = manager_display_name
+                else:
+                    manager = users[0]
+                    manager_dn = manager.get('distinguishedName') or manager.get('dn')
+                    manager_display = manager.get('displayName') or manager.get('cn') or manager_username
             
             # Update or create department manager
             old_manager_dn = None
@@ -2698,8 +2827,8 @@ def manage_managers():
             db.session.commit()
             
             # Update AD manager attribute for all existing direct reports in this department
-            # (if manager changed, update all users in department)
-            if old_manager_dn and old_manager_dn != manager_dn:
+            # (only for non-outside managers, and if manager changed)
+            if not is_outside_manager and manager_dn and old_manager_dn and old_manager_dn != manager_dn:
                 # Manager changed - update all direct reports in this department
                 dept_direct_reports = UserDirectReport.query.filter_by(department=department).all()
                 updated_count = 0
@@ -2718,62 +2847,105 @@ def manage_managers():
                     flash(f'Manager for {department} set to {manager_display}. Updated AD manager attribute for {updated_count} existing users.', 'success')
                 else:
                     flash(f'Manager for {department} set to {manager_display}.', 'success')
+            elif is_outside_manager:
+                flash(f'Manager for {department} set to {manager_display} (Outside Manager).', 'success')
             else:
                 flash(f'Manager for {department} set to {manager_display}.', 'success')
             
             return redirect(url_for('main.manage_managers'))
         
         elif action == 'assign_direct_report':
-            manager_username = request.form.get('manager_username')
+            manager_username = request.form.get('manager_username', '').strip()
             employee_username = request.form.get('employee_username')
+            manager_display_name = request.form.get('manager_display_name', '').strip()
+            is_outside_manager = request.form.get('is_outside_manager') == 'true'
             
-            if not manager_username or not employee_username:
-                flash('Manager and employee are required.', 'danger')
+            if not employee_username:
+                flash('Employee is required.', 'danger')
                 return redirect(url_for('main.manage_managers'))
             
-            # Prevent managers from assigning themselves as direct reports
-            if manager_username.lower() == employee_username.lower():
-                flash('A manager cannot be assigned as their own direct report.', 'danger')
+            # For outside managers, display name is required
+            if is_outside_manager and not manager_display_name:
+                flash('Manager display name is required for outside managers.', 'danger')
                 return redirect(url_for('main.manage_managers'))
             
-            # Get manager and employee details from AD
-            managers = search_users(manager_username, **ad_args)
+            # For regular managers, username is required
+            if not is_outside_manager and not manager_username:
+                flash('Manager username is required.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+            
+            # Get employee details from AD
             employees = search_users(employee_username, **ad_args)
-            
-            if not managers:
-                flash(f'Manager user "{manager_username}" not found.', 'danger')
-                return redirect(url_for('main.manage_managers'))
             if not employees:
                 flash(f'Employee user "{employee_username}" not found.', 'danger')
                 return redirect(url_for('main.manage_managers'))
             
-            manager = managers[0]
             employee = employees[0]
-            manager_dn = manager.get('distinguishedName') or manager.get('dn')
             employee_dn = employee.get('distinguishedName') or employee.get('dn')
             employee_display = employee.get('displayName') or employee.get('cn') or employee_username
             employee_dept = employee.get('department') or ''
             
-            # Double-check: prevent self-assignment using DN comparison
-            if manager_dn and employee_dn and manager_dn.lower() == employee_dn.lower():
-                flash('A manager cannot be assigned as their own direct report.', 'danger')
-                return redirect(url_for('main.manage_managers'))
-            
-            # Check if same department
-            manager_dept = manager.get('department') or ''
-            is_same_dept = (employee_dept.lower() == manager_dept.lower())
+            # Handle outside manager
+            if is_outside_manager:
+                # Outside manager - not in AD
+                if not manager_username:
+                    manager_username = manager_display_name
+                manager_dn = None
+                manager_display = manager_display_name
+                manager_dept = ''  # Outside managers don't have departments
+                is_same_dept = False
+            else:
+                # Regular manager - get from AD
+                managers = search_users(manager_username, **ad_args)
+                if not managers:
+                    flash(f'Manager user "{manager_username}" not found.', 'danger')
+                    return redirect(url_for('main.manage_managers'))
+                
+                manager = managers[0]
+                manager_dn = manager.get('distinguishedName') or manager.get('dn')
+                manager_display = manager.get('displayName') or manager.get('cn') or manager_username
+                manager_dept = manager.get('department') or ''
+                is_same_dept = (employee_dept.lower() == manager_dept.lower())
+                
+                # Prevent managers from assigning themselves as direct reports
+                if manager_username.lower() == employee_username.lower():
+                    flash('A manager cannot be assigned as their own direct report.', 'danger')
+                    return redirect(url_for('main.manage_managers'))
+                
+                # Double-check: prevent self-assignment using DN comparison
+                if manager_dn and employee_dn and manager_dn.lower() == employee_dn.lower():
+                    flash('A manager cannot be assigned as their own direct report.', 'danger')
+                    return redirect(url_for('main.manage_managers'))
             
             # Check if this is a dotted-line relationship
             is_dotted_line = request.form.get('is_dotted_line') == 'true'
             
             # Check if this is an indirect report (through a supervisor)
             supervisor_username = request.form.get('supervisor_username', '').strip()
-            is_indirect = bool(supervisor_username)
+            supervisor_display_name = request.form.get('supervisor_display_name', '').strip()
+            is_outside_supervisor = request.form.get('is_outside_supervisor') == 'true'
+            is_indirect = bool(supervisor_username or supervisor_display_name)
             supervisor_dn = None
-            if supervisor_username:
+            
+            if is_outside_supervisor:
+                # Outside supervisor - not in AD, use display name
+                if supervisor_display_name:
+                    # Use display name as identifier if no username provided
+                    if not supervisor_username:
+                        supervisor_username = supervisor_display_name
+                else:
+                    # Fallback to username if display name not provided
+                    supervisor_display_name = supervisor_username
+            elif supervisor_username:
+                # Regular supervisor - try to find in AD
                 supervisors = search_users(supervisor_username, **ad_args)
                 if supervisors:
                     supervisor_dn = supervisors[0].get('distinguishedName') or supervisors[0].get('dn')
+                    supervisor_display_name = supervisors[0].get('displayName') or supervisors[0].get('cn') or supervisor_username
+                else:
+                    # Supervisor not found in AD - treat as outside
+                    is_outside_supervisor = True
+                    supervisor_display_name = supervisor_username
             
             # Update or create direct report
             old_manager_dn = None
@@ -2793,6 +2965,8 @@ def manage_managers():
                 old_manager_dn = direct_report.manager_dn
                 direct_report.manager_username = manager_username
                 direct_report.manager_dn = manager_dn
+                direct_report.manager_display_name = manager_display if is_outside_manager else None
+                direct_report.is_outside_manager = is_outside_manager
                 direct_report.employee_dn = employee_dn
                 direct_report.employee_display_name = employee_display
                 direct_report.department = employee_dept
@@ -2801,11 +2975,15 @@ def manage_managers():
                 direct_report.is_indirect_report = is_indirect
                 direct_report.supervisor_username = supervisor_username if is_indirect else None
                 direct_report.supervisor_dn = supervisor_dn if is_indirect else None
+                direct_report.supervisor_display_name = supervisor_display_name if is_indirect else None
+                direct_report.is_outside_supervisor = is_outside_supervisor if is_indirect else False
                 direct_report.updated_at = datetime.now(timezone.utc)
             else:
                 direct_report = UserDirectReport(
                     manager_username=manager_username,
                     manager_dn=manager_dn,
+                    manager_display_name=manager_display if is_outside_manager else None,
+                    is_outside_manager=is_outside_manager,
                     employee_username=employee_username,
                     employee_dn=employee_dn,
                     employee_display_name=employee_display,
@@ -2814,20 +2992,26 @@ def manage_managers():
                     is_dotted_line=is_dotted_line,
                     is_indirect_report=is_indirect,
                     supervisor_username=supervisor_username if is_indirect else None,
-                    supervisor_dn=supervisor_dn if is_indirect else None
+                    supervisor_dn=supervisor_dn if is_indirect else None,
+                    supervisor_display_name=supervisor_display_name if is_indirect else None,
+                    is_outside_supervisor=is_outside_supervisor if is_indirect else False
                 )
                 db.session.add(direct_report)
             
-            # Update AD manager attribute (always update, even if manager changed)
-            try:
-                ok, msg = set_user_manager(employee_dn, manager_dn, **ad_args)
-                if not ok:
-                    current_app.logger.warning(f"Failed to update AD manager for {employee_username}: {msg}")
-            except Exception as e:
-                current_app.logger.error(f"Exception updating AD manager for {employee_username}: {e}")
+            # Update AD manager attribute (only for non-outside managers)
+            if not is_outside_manager and manager_dn:
+                try:
+                    ok, msg = set_user_manager(employee_dn, manager_dn, **ad_args)
+                    if not ok:
+                        current_app.logger.warning(f"Failed to update AD manager for {employee_username}: {msg}")
+                    flash(f'Direct report assigned: {employee_display} -> {manager_display}. AD manager attribute updated.', 'success')
+                except Exception as e:
+                    current_app.logger.error(f"Exception updating AD manager for {employee_username}: {e}")
+                    flash(f'Direct report assigned: {employee_display} -> {manager_display}. Warning: Could not update AD manager attribute.', 'warning')
+            else:
+                flash(f'Direct report assigned: {employee_display} -> {manager_display} (Outside Manager).', 'success')
             
             db.session.commit()
-            flash(f'Direct report assigned: {employee_display} -> {manager.get("displayName", manager_username)}. AD manager attribute updated.', 'success')
             return redirect(url_for('main.manage_managers'))
         
         elif action == 'bulk_assign_department':
@@ -2867,13 +3051,39 @@ def manage_managers():
                 username = user.get('sAMAccountName') or user.get('username')
                 display_name = user.get('displayName') or user.get('cn') or username
                 
-                # Skip if already assigned
-                existing = UserDirectReport.query.filter_by(employee_username=username).first()
-                if existing:
+                # Prevent managers from assigning themselves as direct reports
+                if username.lower() == dept_mgr.manager_username.lower():
                     skipped_count += 1
                     continue
                 
-                # Create direct report record
+                # Double-check using DN comparison
+                if user_dn and manager_dn and user_dn.lower() == manager_dn.lower():
+                    skipped_count += 1
+                    continue
+                
+                # Check if this user is a manager (has direct reports or is a dept manager)
+                is_manager = username in all_managers
+                
+                # Skip managers - they should be assigned manually via cross-department assignment
+                if is_manager:
+                    skipped_count += 1
+                    continue
+                
+                # For non-managers: check if already assigned, if so update (manager replacement scenario)
+                existing = UserDirectReport.query.filter_by(employee_username=username, is_dotted_line=False).first()
+                if existing:
+                    # Manager replacement - update the assignment
+                    existing.manager_username = dept_mgr.manager_username
+                    existing.manager_dn = manager_dn
+                    existing.department = department
+                    existing.is_same_department = True
+                    existing.updated_at = datetime.now(timezone.utc)
+                    # Update AD manager attribute
+                    set_user_manager(user_dn, manager_dn, **ad_args)
+                    assigned_count += 1
+                    continue
+                
+                # Create direct report record for non-manager
                 direct_report = UserDirectReport(
                     manager_username=dept_mgr.manager_username,
                     manager_dn=manager_dn,
@@ -2890,7 +3100,7 @@ def manage_managers():
                 assigned_count += 1
             
             db.session.commit()
-            flash(f'Bulk assignment complete: {assigned_count} users assigned, {skipped_count} already assigned.', 'success')
+            flash(f'Bulk assignment complete: {assigned_count} non-managers assigned, {skipped_count} skipped (managers must be assigned manually via cross-department assignment).', 'success')
             return redirect(url_for('main.manage_managers'))
         
         elif action == 'remove_direct_report':
@@ -2908,7 +3118,10 @@ def manage_managers():
     return render_template('manage_managers.html',
                          departments=departments,
                          dept_managers=dept_managers,
-                         reports_by_manager=reports_by_manager)
+                         reports_by_manager=reports_by_manager,
+                         manager_display_names=manager_display_names,
+                         all_ad_users=all_ad_users,
+                         all_managers=all_managers)
 
 @main.route('/admin/org-chart')
 @login_required
@@ -2932,61 +3145,115 @@ def org_chart():
     all_reports = UserDirectReport.query.filter_by(is_dotted_line=False).all()  # Only primary relationships for main chart
     dotted_line_reports = UserDirectReport.query.filter_by(is_dotted_line=True).all()
     
-    # Build org chart data structure
-    org_data = {}
-    root_nodes = []
+    # Collect all unique usernames (both managers and employees)
+    all_usernames = set()
+    outside_managers = {}  # Track outside managers separately
+    for report in all_reports:
+        all_usernames.add(report.employee_username)
+        if report.is_outside_manager:
+            # Outside manager - store separately
+            outside_managers[report.manager_username] = {
+                'username': report.manager_username,
+                'display_name': report.manager_display_name or report.manager_username,
+                'dn': None
+            }
+        else:
+            all_usernames.add(report.manager_username)
+        if report.supervisor_username:
+            all_usernames.add(report.supervisor_username)
     
-    # Process all direct reports
+    # Also include department managers
+    dept_managers = DepartmentManager.query.all()
+    for dept_mgr in dept_managers:
+        all_usernames.add(dept_mgr.manager_username)
+    
+    # Build org chart data structure - initialize all nodes
+    org_data = {}
+    root_nodes = []  # Initialize root_nodes list
+    
+    # First, add outside managers to org_data
+    for username, manager_info in outside_managers.items():
+        org_data[username] = {
+            'username': username,
+            'name': manager_info['display_name'],
+            'display_name': manager_info['display_name'],
+            'title': '',
+            'department': '',
+            'dn': None,
+            'children': [],
+            'is_root': True,
+            'is_indirect': False,
+            'supervisor': None,
+            'is_outside': True
+        }
+    
+    # Then, add regular users from AD
+    for username in all_usernames:
+        if username in org_data:
+            continue  # Skip if already added as outside manager
+        
+        # Try to get user details from AD
+        users = search_users(username, **ad_args)
+        if users:
+            user = users[0]
+            # Find the report entry for this user to get DN if available
+            report_entry = next((r for r in all_reports if r.manager_username == username or r.employee_username == username), None)
+            dept_mgr_entry = next((dm for dm in dept_managers if dm.manager_username == username), None)
+            
+            # Determine DN from available sources
+            user_dn = ''
+            if report_entry:
+                if report_entry.manager_username == username:
+                    user_dn = report_entry.manager_dn or ''
+                elif report_entry.employee_username == username:
+                    user_dn = report_entry.employee_dn
+            elif dept_mgr_entry:
+                user_dn = dept_mgr_entry.manager_dn
+            
+            org_data[username] = {
+                'username': username,
+                'name': user.get('cn') or username,
+                'display_name': user.get('displayName') or user.get('cn') or username,
+                'title': user.get('title') or '',
+                'department': user.get('department') or '',
+                'dn': user_dn,
+                'children': [],
+                'is_root': True,  # Will be updated if they report to someone
+                'is_indirect': False,
+                'supervisor': None,
+                'is_outside': False
+            }
+    
+    # Build parent-child relationships
     for report in all_reports:
         manager_username = report.manager_username
         employee_username = report.employee_username
         
-        # Initialize manager node if not exists
-        if manager_username not in org_data:
-            # Try to get manager details from AD
-            managers = search_users(manager_username, **ad_args)
-            if managers:
-                manager = managers[0]
-                org_data[manager_username] = {
-                    'username': manager_username,
-                    'name': report.manager_dn.split(',')[0].replace('CN=', '') if report.manager_dn else manager_username,
-                    'display_name': manager.get('displayName') or manager.get('cn') or manager_username,
-                    'title': manager.get('title') or '',
-                    'department': manager.get('department') or '',
-                    'dn': report.manager_dn,
-                    'children': [],
-                    'is_root': True  # Will be updated if they report to someone
-                }
+        # Ensure both nodes exist
+        if manager_username not in org_data or employee_username not in org_data:
+            continue
         
-        # Initialize employee node if not exists
-        if employee_username not in org_data:
-            employees = search_users(employee_username, **ad_args)
-            if employees:
-                employee = employees[0]
-                org_data[employee_username] = {
-                    'username': employee_username,
-                    'name': report.employee_dn.split(',')[0].replace('CN=', '') if report.employee_dn else employee_username,
-                    'display_name': report.employee_display_name or employee.get('displayName') or employee.get('cn') or employee_username,
-                    'title': employee.get('title') or '',
-                    'department': report.department or employee.get('department') or '',
-                    'dn': report.employee_dn,
-                    'children': [],
-                    'is_root': False,
-                    'is_indirect': report.is_indirect_report,
-                    'supervisor': report.supervisor_username if report.is_indirect_report else None
-                }
+        # Update employee details from report if available
+        if report.employee_display_name:
+            org_data[employee_username]['display_name'] = report.employee_display_name
+        if report.department:
+            org_data[employee_username]['department'] = report.department
+        if report.is_indirect_report:
+            org_data[employee_username]['is_indirect'] = True
+            if report.is_outside_supervisor:
+                org_data[employee_username]['supervisor'] = report.supervisor_display_name or report.supervisor_username
+                org_data[employee_username]['supervisor_outside'] = True
+            elif report.supervisor_username:
+                org_data[employee_username]['supervisor'] = report.supervisor_username
+                org_data[employee_username]['supervisor_outside'] = False
         
-        # Add employee as child of manager
-        if employee_username not in [c['username'] for c in org_data[manager_username]['children']]:
+        # Add employee as child of manager (avoid duplicates)
+        child_usernames = [c['username'] for c in org_data[manager_username]['children']]
+        if employee_username not in child_usernames:
             org_data[manager_username]['children'].append(org_data[employee_username])
             org_data[employee_username]['is_root'] = False
-        
-        # If employee has indirect supervisor, mark relationship
-        if report.is_indirect_report and report.supervisor_username:
-            if report.supervisor_username in org_data:
-                org_data[employee_username]['supervisor'] = org_data[report.supervisor_username]
     
-    # Add dotted-line relationships
+    # Add dotted-line relationships (secondary reporting relationships)
     dotted_lines = []
     for report in dotted_line_reports:
         dotted_lines.append({
@@ -2995,22 +3262,77 @@ def org_chart():
             'type': 'dotted'
         })
     
-    # Find root nodes (those who don't report to anyone in our data)
-    for username, node in org_data.items():
-        # Check if this person is a manager but doesn't appear as an employee
-        is_manager = any(r.manager_username == username for r in all_reports)
-        is_employee = any(r.employee_username == username for r in all_reports)
-        
-        if is_manager and not is_employee:
-            root_nodes.append(node)
+    # Check for Board of Directors as root node
+    board_of_directors = None
+    board_username = 'Board of Directors'
     
-    # If no root nodes found, use department managers as roots
-    if not root_nodes:
-        dept_managers = DepartmentManager.query.all()
-        for dept_mgr in dept_managers:
-            if dept_mgr.manager_username in org_data:
-                org_data[dept_mgr.manager_username]['is_root'] = True
-                root_nodes.append(org_data[dept_mgr.manager_username])
+    # Look for Board of Directors in outside managers or create it
+    for username, node in org_data.items():
+        if 'board' in username.lower() or 'directors' in username.lower():
+            board_of_directors = node
+            board_username = username
+            break
+    
+    # If Board of Directors doesn't exist, create it as a root node
+    if not board_of_directors:
+        board_of_directors = {
+            'username': board_username,
+            'name': 'Board of Directors',
+            'display_name': 'Board of Directors',
+            'title': '',
+            'department': '',
+            'dn': None,
+            'children': [],
+            'is_root': True,
+            'is_indirect': False,
+            'supervisor': None,
+            'is_outside': True
+        }
+        org_data[board_username] = board_of_directors
+    
+    # Find root nodes (those who don't report to anyone in our data)
+    # A root node is someone who is a manager but never appears as an employee
+    employees_set = {r.employee_username for r in all_reports}
+    
+    # Check if anyone explicitly reports to Board of Directors
+    board_reports = [r for r in all_reports if 'board' in (r.manager_display_name or r.manager_username or '').lower() or 'directors' in (r.manager_display_name or r.manager_username or '').lower()]
+    
+    # Only show Board if there are explicit reports to it, otherwise find actual root nodes
+    if board_reports:
+        # Board has explicit reports - use it as root
+        root_nodes = [board_of_directors]
+    else:
+        # No one explicitly reports to Board - find actual root nodes (those who don't report to anyone)
+        root_nodes = []
+        for username, node in org_data.items():
+            if username == board_username:
+                continue  # Skip Board itself
+            # If this person is not an employee of anyone, they're a root
+            if username not in employees_set and node['children']:
+                root_nodes.append(node)
+            elif username not in employees_set and not node['children']:
+                # Even if they have no children, if they're not an employee, they might be a root
+                # Check if they're a department manager
+                if any(dm.manager_username == username for dm in dept_managers):
+                    root_nodes.append(node)
+        
+        # If still no root nodes, use all department managers
+        if not root_nodes:
+            for dept_mgr in dept_managers:
+                if dept_mgr.manager_username in org_data:
+                    org_data[dept_mgr.manager_username]['is_root'] = True
+                    if org_data[dept_mgr.manager_username] not in root_nodes:
+                        root_nodes.append(org_data[dept_mgr.manager_username])
+        
+        # If we still have no roots but have data, find all top-level managers
+        if not root_nodes and org_data:
+            for username, node in org_data.items():
+                if node['children'] and username not in employees_set and username != board_username:
+                    root_nodes.append(node)
+        
+        # If still no roots, just show all nodes as roots (flat structure)
+        if not root_nodes:
+            root_nodes = [node for username, node in org_data.items() if username != board_username]
     
     return render_template('org_chart.html',
                          org_data=org_data,

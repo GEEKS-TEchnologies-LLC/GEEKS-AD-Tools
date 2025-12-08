@@ -62,8 +62,9 @@
         
         #org-chart-svg {
             width: 100%;
-            height: 100%;
-            min-height: 600px;
+            height: 100vh;
+            min-height: 800px;
+            background: rgba(0, 0, 0, 0.2);
         }
         
         .node {
@@ -177,14 +178,15 @@
         const dottedLines = {{ dotted_lines | tojson }};
         let showDottedLines = true;
         
-        const margin = { top: 20, right: 120, bottom: 20, left: 120 };
-        const nodeWidth = 180;
-        const nodeHeight = 80;
-        const nodePadding = 20;
+        const margin = { top: 50, right: 200, bottom: 50, left: 200 };
+        const nodeWidth = 200;
+        const nodeHeight = 100;
+        const horizontalSpacing = 300;  // Horizontal spacing between levels
+        const verticalSpacing = 150;    // Vertical spacing between siblings
         
         const svg = d3.select("#org-chart-svg");
-        const width = window.innerWidth - 100;
-        const height = Math.max(600, orgData.length * 200);
+        const width = window.innerWidth - 40;
+        const height = Math.max(800, window.innerHeight - 100);
         
         svg.attr("width", width).attr("height", height);
         
@@ -201,60 +203,85 @@
         
         const tooltip = d3.select("#tooltip");
         
-        // Create tree layout
+        // Create tree layout with better spacing
         const tree = d3.tree()
-            .nodeSize([nodeWidth + nodePadding, nodeHeight + nodePadding])
-            .separation((a, b) => (a.parent == b.parent ? 1 : 2) / a.depth);
+            .nodeSize([verticalSpacing, horizontalSpacing])
+            .separation((a, b) => {
+                // Better separation: siblings get more space
+                if (a.parent === b.parent) {
+                    return 1.2;  // Siblings
+                }
+                return 1.5;  // Different parents
+            });
         
-        // Convert data to hierarchy
-        function buildHierarchy(nodes) {
+        // Convert data to hierarchy - handle multiple root nodes
+        function buildHierarchy(rootNodes) {
             const nodeMap = new Map();
             const roots = [];
             
-            // Create all nodes
-            nodes.forEach(node => {
-                const hierarchyNode = {
-                    data: node,
-                    children: []
+            // First, collect all nodes from all root nodes and their descendants
+            function collectNodes(node) {
+                if (!nodeMap.has(node.username)) {
+                    const hierarchyNode = {
+                        data: node,
+                        children: []
+                    };
+                    nodeMap.set(node.username, hierarchyNode);
+                    
+                    // Recursively collect children
+                    if (node.children && node.children.length > 0) {
+                        node.children.forEach(child => {
+                            collectNodes(child);
+                            hierarchyNode.children.push(nodeMap.get(child.username));
+                        });
+                    }
+                }
+            }
+            
+            // Collect all nodes starting from root nodes
+            rootNodes.forEach(rootNode => {
+                collectNodes(rootNode);
+                roots.push(nodeMap.get(rootNode.username));
+            });
+            
+            // If we have multiple roots, create a virtual root to contain them all
+            if (roots.length > 1) {
+                return {
+                    data: { username: 'virtual_root', display_name: 'Organization', title: '', department: '' },
+                    children: roots
                 };
-                nodeMap.set(node.username, hierarchyNode);
-            });
-            
-            // Build parent-child relationships
-            nodes.forEach(node => {
-                const hierarchyNode = nodeMap.get(node.username);
-                if (node.children && node.children.length > 0) {
-                    node.children.forEach(child => {
-                        const childNode = nodeMap.get(child.username);
-                        if (childNode) {
-                            hierarchyNode.children.push(childNode);
-                        }
-                    });
-                }
-                if (!hierarchyNode.children.length && !node.children) {
-                    roots.push(hierarchyNode);
-                }
-            });
-            
-            // Find actual roots (nodes without parents)
-            const allChildren = new Set();
-            nodeMap.forEach(node => {
-                node.children.forEach(child => {
-                    allChildren.add(child.data.username);
-                });
-            });
-            
-            nodeMap.forEach(node => {
-                if (!allChildren.has(node.data.username)) {
-                    roots.push(node);
-                }
-            });
-            
-            return roots.length > 0 ? roots[0] : roots[0] || { data: { username: 'root', display_name: 'Organization', children: [] }, children: [] };
+            } else if (roots.length === 1) {
+                return roots[0];
+            } else {
+                return { data: { username: 'root', display_name: 'No Data', children: [] }, children: [] };
+            }
         }
         
         const root = d3.hierarchy(buildHierarchy(orgData), d => d.children);
         tree(root);
+        
+        // Calculate bounds and adjust view
+        const bounds = root.descendants().reduce((acc, d) => {
+            return {
+                left: Math.min(acc.left, d.y),
+                right: Math.max(acc.right, d.y),
+                top: Math.min(acc.top, d.x),
+                bottom: Math.max(acc.bottom, d.x)
+            };
+        }, { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity });
+        
+        const treeWidth = bounds.right - bounds.left;
+        const treeHeight = bounds.bottom - bounds.top;
+        
+        // Center the tree
+        let initialX = (width - margin.left - margin.right - treeWidth) / 2 - bounds.left;
+        let initialY = (height - margin.top - margin.bottom - treeHeight) / 2 - bounds.top;
+        
+        // Apply initial transform to center the tree
+        g.attr("transform", `translate(${initialX + margin.left},${initialY + margin.top})`);
+        
+        // Store initial transform for reset
+        window.orgChartInitialTransform = { x: initialX + margin.left, y: initialY + margin.top };
         
         // Draw links
         const links = g.selectAll(".link")
@@ -263,8 +290,8 @@
             .append("path")
             .attr("class", "link")
             .attr("d", d3.linkHorizontal()
-                .x(d => d.y + nodeWidth / 2)
-                .y(d => d.x + nodeHeight / 2));
+                .x(d => d.y)
+                .y(d => d.x));
         
         // Draw nodes
         const node = g.selectAll(".node")
@@ -299,14 +326,14 @@
         node.append("rect")
             .attr("width", nodeWidth)
             .attr("height", nodeHeight)
-            .attr("x", 0)
-            .attr("y", 0);
+            .attr("x", -nodeWidth / 2)
+            .attr("y", -nodeHeight / 2);
         
         // Draw node text
         node.append("text")
             .attr("class", "name")
-            .attr("x", nodeWidth / 2)
-            .attr("y", 25)
+            .attr("x", 0)
+            .attr("y", -20)
             .attr("text-anchor", "middle")
             .text(d => {
                 const data = d.data.data || d.data;
@@ -315,8 +342,8 @@
         
         node.append("text")
             .attr("class", "title")
-            .attr("x", nodeWidth / 2)
-            .attr("y", 45)
+            .attr("x", 0)
+            .attr("y", 0)
             .attr("text-anchor", "middle")
             .text(d => {
                 const data = d.data.data || d.data;
@@ -325,8 +352,8 @@
         
         node.append("text")
             .attr("class", "title")
-            .attr("x", nodeWidth / 2)
-            .attr("y", 60)
+            .attr("x", 0)
+            .attr("y", 15)
             .attr("text-anchor", "middle")
             .text(d => {
                 const data = d.data.data || d.data;
@@ -343,9 +370,10 @@
         }
         
         function resetZoom() {
+            const transform = window.orgChartInitialTransform || { x: margin.left, y: margin.top };
             svg.transition().duration(750).call(
                 zoom.transform,
-                d3.zoomIdentity.translate(margin.left, margin.top)
+                d3.zoomIdentity.translate(transform.x, transform.y)
             );
         }
         

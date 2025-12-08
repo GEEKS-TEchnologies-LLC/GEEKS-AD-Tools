@@ -161,6 +161,14 @@
         .form-control::placeholder {
             color: rgba(255, 215, 0, 0.5);
         }
+        .form-select option {
+            background: #1a1a1a;
+            color: #ffd700;
+            padding: 8px;
+        }
+        .form-select option:hover {
+            background: rgba(255, 215, 0, 0.2);
+        }
         .table-dark {
             background: rgba(0,0,0,0.3);
         }
@@ -246,8 +254,26 @@
                                 </select>
                             </div>
                             <div class="mb-3">
-                                <label class="form-label text-white">Manager Username (sAMAccountName)</label>
-                                <input type="text" name="manager_username" class="form-control" placeholder="e.g., jsmith" required>
+                                <label class="form-label text-white">Manager</label>
+                                <select name="manager_username" class="form-select" id="dept_manager_select" onchange="toggleDeptOutsideManager()">
+                                    <option value="">Select Manager...</option>
+                                    {% for user in all_ad_users %}
+                                    {% set username = user.get('sAMAccountName') or user.get('username') %}
+                                    {% set is_manager = username in all_managers or user.get('is_outside') %}
+                                    {% set is_outside = user.get('is_outside') %}
+                                    <option value="{{ username }}" {% if is_outside %}data-outside="true"{% endif %}>
+                                        {{ user.get('displayName') or user.get('cn') or username }}{% if user.get('title') %} - {{ user.get('title') }}{% endif %}{% if is_outside %} (Outside){% elif is_manager %} (Manager){% endif %}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-check mt-2">
+                                    <input class="form-check-input" type="checkbox" name="is_dept_outside_manager" value="true" id="is_dept_outside_manager" onchange="toggleDeptOutsideManager()">
+                                    <label class="form-check-label text-white" for="is_dept_outside_manager">
+                                        Outside Manager (Not in AD)
+                                    </label>
+                                </div>
+                                <input type="text" name="dept_manager_display_name" class="form-control mt-2" placeholder="Manager Display Name" id="dept_manager_display_name" style="display: none;">
+                                <small class="text-muted" id="dept_outside_manager_help" style="display: none;">Enter manager's full name if they're not in AD (e.g., Don Cook)</small>
                             </div>
                             <button type="submit" class="btn btn-custom">
                                 <i class="fas fa-save"></i> Set Department Manager
@@ -317,23 +343,60 @@
                 <h3 class="mb-4">
                     <i class="fas fa-sitemap"></i> Direct Reports (Cross-Department)
                 </h3>
-                <p class="text-white-50 mb-4">Assign individual users as direct reports to managers, even if they're in different departments.</p>
+                <p class="text-white-50 mb-4"><strong>For Managers Only:</strong> Assign managers as direct reports to other managers (cross-department relationships). Non-managers are automatically assigned to their department manager via bulk assignment.</p>
                 
                 <form method="POST" action="/admin/managers">
                     <input type="hidden" name="action" value="assign_direct_report">
                     <div class="row">
                         <div class="col-md-3">
-                            <label class="form-label text-white">Manager Username</label>
-                            <input type="text" name="manager_username" class="form-control" placeholder="e.g., jsmith" required>
+                            <label class="form-label text-white">Manager <small class="text-muted">(For managers only - cross-department)</small></label>
+                            <select name="manager_username" class="form-select" id="manager_username" required>
+                                <option value="">Select Manager...</option>
+                                {% for user in all_ad_users %}
+                                {% set username = user.get('sAMAccountName') or user.get('username') %}
+                                {% set is_manager = username in all_managers or user.get('is_outside') %}
+                                {% set is_outside = user.get('is_outside') %}
+                                <option value="{{ username }}" {% if is_manager %}style="font-weight: bold;"{% endif %}>
+                                    {{ user.get('displayName') or user.get('cn') or username }}{% if user.get('title') %} - {{ user.get('title') }}{% endif %}{% if is_outside %} (Outside){% elif is_manager %} (Manager){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" name="is_outside_manager" value="true" id="is_outside_manager" onchange="toggleOutsideManager()">
+                                <label class="form-check-label text-white" for="is_outside_manager">
+                                    Outside Manager (Not in AD)
+                                </label>
+                            </div>
+                            <input type="text" name="manager_display_name" class="form-control mt-2" placeholder="Manager Display Name" id="manager_display_name" style="display: none;">
+                            <small class="text-muted" id="outside_manager_help" style="display: none;">Enter manager's full name if they're not in AD (e.g., from sister casino)</small>
                         </div>
                         <div class="col-md-3">
-                            <label class="form-label text-white">Employee Username</label>
-                            <input type="text" name="employee_username" class="form-control" placeholder="e.g., bdoe" required>
+                            <label class="form-label text-white">Employee <small class="text-muted">(Manager who reports to above)</small></label>
+                            <select name="employee_username" class="form-select" id="employee_username" required>
+                                <option value="">Select Employee (Manager)...</option>
+                                {% for user in all_ad_users %}
+                                {% set username = user.get('sAMAccountName') or user.get('username') %}
+                                {% set is_manager = username in all_managers or user.get('is_outside') %}
+                                {% set is_outside = user.get('is_outside') %}
+                                <option value="{{ username }}" {% if is_manager %}style="font-weight: bold;"{% endif %}>
+                                    {{ user.get('displayName') or user.get('cn') or username }}{% if user.get('title') %} - {{ user.get('title') }}{% endif %}{% if is_outside %} (Outside){% elif is_manager %} (Manager){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <small class="text-muted">Only managers can be manually assigned. Non-managers are auto-assigned to their department manager.</small>
                         </div>
                         <div class="col-md-3">
                             <label class="form-label text-white">Supervisor Username <small class="text-muted">(Optional - for indirect reports)</small></label>
                             <input type="text" name="supervisor_username" class="form-control" placeholder="e.g., supervisor" id="supervisor_username">
                             <small class="text-muted">If provided, employee reports to manager through this supervisor</small>
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" name="is_outside_supervisor" value="true" id="is_outside_supervisor" onchange="toggleOutsideSupervisor()">
+                                <label class="form-check-label text-white" for="is_outside_supervisor">
+                                    Outside Supervisor (Not in AD)
+                                </label>
+                            </div>
+                            <input type="text" name="supervisor_display_name" class="form-control mt-2" placeholder="Supervisor Display Name" id="supervisor_display_name" style="display: none;">
+                            <small class="text-muted" id="outside_supervisor_help" style="display: none;">Enter supervisor's full name if they're not in AD (e.g., from sister casino)</small>
                         </div>
                         <div class="col-md-3 d-flex flex-column justify-content-end">
                             <div class="form-check mb-2">
@@ -360,7 +423,7 @@
                 {% for manager_username, reports in reports_by_manager.items() %}
                 <div class="mb-4">
                     <h5 class="text-white">
-                        <i class="fas fa-user-tie"></i> {{ reports[0].manager_display_name or manager_username }}
+                        <i class="fas fa-user-tie"></i> {{ reports[0].manager_display_name or manager_display_names.get(manager_username, manager_username) }}{% if reports[0].is_outside_manager %} <span class="badge bg-warning">Outside</span>{% endif %}
                         <small class="text-muted">({{ reports|length }} direct report{{ 's' if reports|length != 1 else '' }})</small>
                     </h5>
                     <div class="table-responsive">
@@ -394,8 +457,10 @@
                                         {% else %}
                                         <span class="badge bg-primary">Direct</span>
                                         {% endif %}
-                                        {% if report.supervisor_username %}
-                                        <br><small class="text-muted">via {{ report.supervisor_username }}</small>
+                                        {% if report.supervisor_username or report.supervisor_display_name %}
+                                        <br><small class="text-muted">
+                                            via {% if report.is_outside_supervisor %}{{ report.supervisor_display_name or report.supervisor_username }} (Outside){% else %}{{ report.supervisor_username }}{% endif %}
+                                        </small>
                                         {% endif %}
                                     </td>
                                     <td>
@@ -430,6 +495,74 @@
             document.getElementById('topbar').classList.toggle('collapsed');
             document.getElementById('mainContent').classList.toggle('collapsed');
         };
+        
+        // Toggle outside manager fields
+        function toggleOutsideManager() {
+            const isOutside = document.getElementById('is_outside_manager').checked;
+            const displayNameField = document.getElementById('manager_display_name');
+            const helpText = document.getElementById('outside_manager_help');
+            const usernameField = document.getElementById('manager_username');
+            
+            if (isOutside) {
+                displayNameField.style.display = 'block';
+                helpText.style.display = 'block';
+                usernameField.placeholder = 'Optional: External ID or leave blank';
+                displayNameField.required = true;
+                usernameField.required = false;
+            } else {
+                displayNameField.style.display = 'none';
+                helpText.style.display = 'none';
+                usernameField.placeholder = 'e.g., jsmith';
+                displayNameField.required = false;
+                usernameField.required = true;
+                displayNameField.value = '';
+            }
+        }
+        
+        // Toggle department outside manager fields
+        function toggleDeptOutsideManager() {
+            const selectField = document.getElementById('dept_manager_select');
+            const isOutside = document.getElementById('is_dept_outside_manager').checked;
+            const displayNameField = document.getElementById('dept_manager_display_name');
+            const helpText = document.getElementById('dept_outside_manager_help');
+            const selectedOption = selectField.options[selectField.selectedIndex];
+            const isSelectedOutside = selectedOption && selectedOption.getAttribute('data-outside') === 'true';
+            
+            if (isOutside || isSelectedOutside) {
+                displayNameField.style.display = 'block';
+                helpText.style.display = 'block';
+                displayNameField.required = true;
+                if (isSelectedOutside && selectedOption.value) {
+                    displayNameField.value = selectedOption.text.split(' (')[0]; // Get name without (Outside) tag
+                }
+            } else {
+                displayNameField.style.display = 'none';
+                helpText.style.display = 'none';
+                displayNameField.required = false;
+                displayNameField.value = '';
+            }
+        }
+        
+        // Toggle outside supervisor fields
+        function toggleOutsideSupervisor() {
+            const isOutside = document.getElementById('is_outside_supervisor').checked;
+            const displayNameField = document.getElementById('supervisor_display_name');
+            const helpText = document.getElementById('outside_supervisor_help');
+            const usernameField = document.getElementById('supervisor_username');
+            
+            if (isOutside) {
+                displayNameField.style.display = 'block';
+                helpText.style.display = 'block';
+                usernameField.placeholder = 'Optional: External ID or leave blank';
+                displayNameField.required = true;
+            } else {
+                displayNameField.style.display = 'none';
+                helpText.style.display = 'none';
+                usernameField.placeholder = 'e.g., supervisor';
+                displayNameField.required = false;
+                displayNameField.value = '';
+            }
+        }
     </script>
 </body>
 </html>

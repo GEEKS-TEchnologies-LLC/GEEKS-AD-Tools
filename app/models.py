@@ -86,7 +86,7 @@ class DepartmentManager(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     department = db.Column(db.String(128), nullable=False, index=True)
     manager_username = db.Column(db.String(64), nullable=False, index=True)  # sAMAccountName
-    manager_dn = db.Column(db.String(512), nullable=False)  # Full DN
+    manager_dn = db.Column(db.String(512), nullable=True)  # Full DN (nullable for outside managers)
     manager_display_name = db.Column(db.String(256), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
@@ -101,7 +101,9 @@ class UserDirectReport(db.Model):
     """Stores direct report assignments (can be within or outside department)"""
     id = db.Column(db.Integer, primary_key=True)
     manager_username = db.Column(db.String(64), nullable=False, index=True)  # Manager's sAMAccountName
-    manager_dn = db.Column(db.String(512), nullable=False)  # Manager's full DN
+    manager_dn = db.Column(db.String(512), nullable=True)  # Manager's full DN (nullable for outside managers)
+    manager_display_name = db.Column(db.String(256), nullable=True)  # Manager's display name (for outside managers)
+    is_outside_manager = db.Column(db.Boolean, default=False, nullable=False)  # True if manager is outside the organization/AD
     employee_username = db.Column(db.String(64), nullable=False, index=True)  # Employee's sAMAccountName
     employee_dn = db.Column(db.String(512), nullable=False)  # Employee's full DN
     employee_display_name = db.Column(db.String(256), nullable=True)
@@ -109,7 +111,9 @@ class UserDirectReport(db.Model):
     is_same_department = db.Column(db.Boolean, default=True, nullable=False)
     supervisor_username = db.Column(db.String(64), nullable=True, index=True)  # Supervisor's sAMAccountName (for indirect reports)
     supervisor_dn = db.Column(db.String(512), nullable=True)  # Supervisor's full DN
+    supervisor_display_name = db.Column(db.String(256), nullable=True)  # Supervisor's display name (for outside supervisors)
     is_indirect_report = db.Column(db.Boolean, default=False, nullable=False)  # True if employee reports through a supervisor
+    is_outside_supervisor = db.Column(db.Boolean, default=False, nullable=False)  # True if supervisor is outside the organization/AD
     is_dotted_line = db.Column(db.Boolean, default=False, nullable=False)  # True for dotted-line/secondary reporting relationships
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
