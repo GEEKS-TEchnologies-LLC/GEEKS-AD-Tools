@@ -178,6 +178,39 @@
             padding: 0.35rem 0.75rem;
             border-radius: 6px;
         }
+        .direct-report-table {
+            width: 100%;
+            table-layout: fixed;
+        }
+        .direct-report-table th,
+        .direct-report-table td {
+            vertical-align: middle;
+            word-wrap: break-word;
+        }
+        .direct-report-table th:nth-child(1),
+        .direct-report-table td:nth-child(1) {
+            width: 28%;
+        }
+        .direct-report-table th:nth-child(2),
+        .direct-report-table td:nth-child(2) {
+            width: 26%;
+        }
+        .direct-report-table th:nth-child(3),
+        .direct-report-table td:nth-child(3) {
+            width: 16%;
+            text-align: center;
+        }
+        .direct-report-table th:nth-child(4),
+        .direct-report-table td:nth-child(4) {
+            width: 16%;
+            text-align: center;
+        }
+        .direct-report-table th:nth-child(5),
+        .direct-report-table td:nth-child(5) {
+            width: 14%;
+            text-align: center;
+            white-space: nowrap;
+        }
     </style>
 </head>
 <body>
@@ -249,14 +282,16 @@
                                 <select name="department" class="form-select" required>
                                     <option value="">Select Department...</option>
                                     {% for dept in departments %}
-                                    <option value="{{ dept.name }}">{{ dept.name }}</option>
+                                    <option value="{{ dept.key }}">
+                                        {% if dept.is_sub %}&nbsp;&nbsp;&nbsp;↳ {% endif %}{{ dept.name }}{% if dept.is_sub %} <small>(Sub-OU)</small>{% endif %}
+                                    </option>
                                     {% endfor %}
                                 </select>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label text-white">Manager</label>
                                 <select name="manager_username" class="form-select" id="dept_manager_select" onchange="toggleDeptOutsideManager()">
-                                    <option value="">Select Manager...</option>
+                                    <option value="">None (Unassigned)</option>
                                     {% for user in all_ad_users %}
                                     {% set username = user.get('sAMAccountName') or user.get('username') %}
                                     {% set is_manager = username in all_managers or user.get('is_outside') %}
@@ -293,11 +328,17 @@
                                 <tbody>
                                     {% for dept in departments %}
                                     <tr>
-                                        <td>{{ dept.name }}</td>
                                         <td>
-                                            {% if dept.name in dept_managers %}
+                                            {% if dept.is_sub %}&nbsp;&nbsp;&nbsp;↳ {% endif %}
+                                            {{ dept.name }}
+                                            {% if dept.is_sub %}
+                                            <small class="text-muted">(Sub-OU)</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if dept.key in dept_managers %}
                                             <span class="badge badge-custom">
-                                                {{ dept_managers[dept.name].manager_display_name or dept_managers[dept.name].manager_username }}
+                                                {{ dept_managers[dept.key].manager_display_name or dept_managers[dept.key].manager_username }}
                                             </span>
                                             {% else %}
                                             <span class="text-muted">Not assigned</span>
@@ -323,10 +364,18 @@
                             <div class="col-md-4">
                                 <select name="department" class="form-select" required>
                                     <option value="">Select Department...</option>
-                                    {% for dept in departments %}
-                                    <option value="{{ dept.name }}">{{ dept.name }}</option>
+                                    {% for dept in top_departments %}
+                                    <option value="{{ dept.key }}">{{ dept.name }}</option>
                                     {% endfor %}
                                 </select>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check mt-2">
+                                    <input class="form-check-input" type="checkbox" name="fallback_to_department_manager" value="1" id="fallback_to_department_manager" checked>
+                                    <label class="form-check-label text-white" for="fallback_to_department_manager">
+                                        Use overall department manager if no sub-OU coordinator
+                                    </label>
+                                </div>
                             </div>
                             <div class="col-md-4">
                                 <button type="submit" class="btn btn-custom">
@@ -427,7 +476,7 @@
                         <small class="text-muted">({{ reports|length }} direct report{{ 's' if reports|length != 1 else '' }})</small>
                     </h5>
                     <div class="table-responsive">
-                        <table class="table table-dark table-sm">
+                        <table class="table table-dark table-sm direct-report-table">
                             <thead>
                                 <tr>
                                     <th>Employee</th>

@@ -480,7 +480,12 @@
     </div>
     <div class="main-content" id="mainContent">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1><i class="fas fa-users text-warning"></i> User Management</h1>
+            <h1><i class="fas fa-users text-warning"></i> User Management{% if view_mode == 'disabled' %} - Disabled Users{% elif view_mode == 'archived' %} - Archived Users{% endif %}</h1>
+            <div>
+                <a href="/admin/users" class="btn btn-secondary btn-sm {% if view_mode == 'active' %}active{% endif %}">Active View</a>
+                <a href="/admin/users/disabled" class="btn btn-warning btn-sm {% if view_mode == 'disabled' %}active{% endif %}">Disabled Users</a>
+                <a href="/admin/users/archived" class="btn btn-info btn-sm {% if view_mode == 'archived' %}active{% endif %}">Archived Users</a>
+            </div>
         </div>
         
         <div class="glass-card">
@@ -489,6 +494,7 @@
             </div>
             <div class="card-body">
                 <form method="post" class="row g-3" action="/admin/users">
+                    <input type="hidden" name="view_mode" value="{{ view_mode or 'active' }}">
                     <div class="col-md-4">
                         <input type="text" class="form-control" name="query" value="{{ query }}" 
                                placeholder="Search by username, name, or email">
@@ -508,7 +514,7 @@
                         <button type="submit" class="btn btn-custom me-2">
                             <i class="fas fa-search"></i> Search
                         </button>
-                        <a href="/admin/users" class="btn btn-secondary me-2" style="display: {{ 'inline-block' if query else 'none' }}; min-width: 120px;">
+                        <a href="/admin/users{% if view_mode and view_mode != 'active' %}?view_mode={{ view_mode }}{% endif %}" class="btn btn-secondary me-2" style="display: {{ 'inline-block' if query else 'none' }}; min-width: 120px;">
                             <i class="fas fa-times-circle"></i> Clear Search
                         </a>
                         <a href="/admin/create_user" class="btn btn-custom">
@@ -732,13 +738,13 @@
                 <nav aria-label="User pagination" class="mb-3">
                   <ul class="pagination justify-content-center">
                     <li class="page-item {% if page == 1 %}disabled{% endif %}">
-                      <a class="page-link" href="?page={{ page-1 }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}" tabindex="-1">Previous</a>
+                      <a class="page-link" href="?page={{ page-1 }}{% if view_mode and view_mode != 'active' %}&view_mode={{ view_mode }}{% endif %}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}" tabindex="-1">Previous</a>
                     </li>
                     {% for p in range(1, total_pages+1) %}
-                      <li class="page-item {% if p == page %}active{% endif %}"><a class="page-link" href="?page={{ p }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">{{ p }}</a></li>
+                      <li class="page-item {% if p == page %}active{% endif %}"><a class="page-link" href="?page={{ p }}{% if view_mode and view_mode != 'active' %}&view_mode={{ view_mode }}{% endif %}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">{{ p }}</a></li>
                     {% endfor %}
                     <li class="page-item {% if page == total_pages %}disabled{% endif %}">
-                      <a class="page-link" href="?page={{ page+1 }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">Next</a>
+                      <a class="page-link" href="?page={{ page+1 }}{% if view_mode and view_mode != 'active' %}&view_mode={{ view_mode }}{% endif %}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">Next</a>
                     </li>
                   </ul>
                   <div class="text-center text-muted small">Page {{ page }} of {{ total_pages }} | Showing {{ users|length }} of {{ total_users }} users</div>
@@ -770,7 +776,7 @@
                                     <label for="selectAll" class="ms-1"><i class="fas fa-check-square"></i></label>
                                 </th>
                                 <th>
-                                    <a href="?{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=username&sort_order={% if sort_by == 'username' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                    <a href="?{% if view_mode and view_mode != 'active' %}view_mode={{ view_mode }}&{% endif %}{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=username&sort_order={% if sort_by == 'username' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
                                         <i class="fas fa-user"></i> Username
                                         {% if sort_by == 'username' %}
                                             <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
@@ -780,7 +786,7 @@
                                     </a>
                                 </th>
                                 <th>
-                                    <a href="?{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=displayName&sort_order={% if sort_by == 'displayName' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                    <a href="?{% if view_mode and view_mode != 'active' %}view_mode={{ view_mode }}&{% endif %}{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=displayName&sort_order={% if sort_by == 'displayName' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
                                         <i class="fas fa-id-card"></i> Name
                                         {% if sort_by == 'displayName' %}
                                             <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
@@ -790,7 +796,7 @@
                                     </a>
                                 </th>
                                 <th>
-                                    <a href="?{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=mail&sort_order={% if sort_by == 'mail' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark email-col">
+                                    <a href="?{% if view_mode and view_mode != 'active' %}view_mode={{ view_mode }}&{% endif %}{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=mail&sort_order={% if sort_by == 'mail' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark email-col">
                                         <i class="fas fa-envelope"></i> Email
                                         {% if sort_by == 'mail' %}
                                             <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
@@ -800,7 +806,7 @@
                                     </a>
                                 </th>
                                 <th>
-                                    <a href="?{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=ou&sort_order={% if sort_by == 'ou' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
+                                    <a href="?{% if view_mode and view_mode != 'active' %}view_mode={{ view_mode }}&{% endif %}{% if query %}query={{ query }}&{% endif %}{% if status_filter != 'all' %}status_filter={{ status_filter }}&{% endif %}{% if exclude_ous_str %}exclude_ous={{ exclude_ous_str }}&{% endif %}sort_by=ou&sort_order={% if sort_by == 'ou' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if page > 1 %}&page={{ page }}{% endif %}" class="text-decoration-none text-dark">
                                         <i class="fas fa-sitemap"></i> OU Location
                                         {% if sort_by == 'ou' %}
                                             <i class="fas fa-sort-{% if sort_order == 'asc' %}up{% else %}down{% endif %}"></i>
@@ -810,6 +816,10 @@
                                     </a>
                                 </th>
                                 <th><i class="fas fa-toggle-on"></i> Status</th>
+                                {% if view_mode in ['disabled', 'archived'] %}
+                                <th><i class="fas fa-calendar-alt"></i> Disabled Since</th>
+                                <th><i class="fas fa-hourglass-half"></i> Days Disabled</th>
+                                {% endif %}
                                 <th><i class="fas fa-chart-pie"></i> Mailbox Size</th>
                                 <th><i class="fas fa-cogs"></i> Actions</th>
                             </tr>
@@ -837,19 +847,39 @@
                                 <td>{{ user.ou or 'N/A' }}</td>
                                 <td>
                                     {% if user.accountStatus == 'enabled' %}
-                                        <span class="badge bg-success clickable-status" 
-                                              onclick="disableUser('{{ user.dn }}', '{{ user.displayName or user.username }}')"
-                                              title="Click to disable user">
-                                            <i class="fas fa-check-circle"></i> Enabled
-                                        </span>
+                                        <form method="POST" action="/admin/disable_user" class="d-inline m-0 p-0">
+                                            <input type="hidden" name="user_dn" value="{{ user.dn }}">
+                                            <button type="submit" class="badge bg-success clickable-status border-0"
+                                                    title="Click to disable user">
+                                                <i class="fas fa-check-circle"></i> Enabled
+                                            </button>
+                                        </form>
                                     {% else %}
-                                        <span class="badge bg-danger clickable-status" 
-                                              onclick="enableUser('{{ user.dn }}', '{{ user.displayName or user.username }}')"
-                                              title="Click to enable user">
-                                            <i class="fas fa-times-circle"></i> Disabled
-                                        </span>
+                                        <form method="POST" action="/admin/enable_user" class="d-inline m-0 p-0">
+                                            <input type="hidden" name="user_dn" value="{{ user.dn }}">
+                                            <button type="submit" class="badge bg-danger clickable-status border-0"
+                                                    title="Click to enable user">
+                                                <i class="fas fa-times-circle"></i> Disabled
+                                            </button>
+                                        </form>
                                     {% endif %}
                                 </td>
+                                {% if view_mode in ['disabled', 'archived'] %}
+                                <td>
+                                    {% if user.disabled_since %}
+                                        {{ user.disabled_since.strftime('%Y-%m-%d %H:%M') }} UTC
+                                    {% else %}
+                                        <span class="text-muted">Unknown</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if user.disabled_days is not none %}
+                                        <span class="badge bg-secondary">{{ user.disabled_days }} day{{ '' if user.disabled_days == 1 else 's' }}</span>
+                                    {% else %}
+                                        <span class="text-muted">Unknown</span>
+                                    {% endif %}
+                                </td>
+                                {% endif %}
                                 <td class="mailbox-size-cell" data-email="{{ user.mail or '' }}">
                                     <span class="mailbox-size-text">
                                         <span class="text-muted">Not loaded</span>
@@ -874,13 +904,13 @@
                 <nav aria-label="User pagination" class="mt-4">
                   <ul class="pagination justify-content-center">
                     <li class="page-item {% if page == 1 %}disabled{% endif %}">
-                      <a class="page-link" href="?page={{ page-1 }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}" tabindex="-1">Previous</a>
+                      <a class="page-link" href="?page={{ page-1 }}{% if view_mode and view_mode != 'active' %}&view_mode={{ view_mode }}{% endif %}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}" tabindex="-1">Previous</a>
                     </li>
                     {% for p in range(1, total_pages+1) %}
-                      <li class="page-item {% if p == page %}active{% endif %}"><a class="page-link" href="?page={{ p }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">{{ p }}</a></li>
+                      <li class="page-item {% if p == page %}active{% endif %}"><a class="page-link" href="?page={{ p }}{% if view_mode and view_mode != 'active' %}&view_mode={{ view_mode }}{% endif %}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">{{ p }}</a></li>
                     {% endfor %}
                     <li class="page-item {% if page == total_pages %}disabled{% endif %}">
-                      <a class="page-link" href="?page={{ page+1 }}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">Next</a>
+                      <a class="page-link" href="?page={{ page+1 }}{% if view_mode and view_mode != 'active' %}&view_mode={{ view_mode }}{% endif %}{% if query %}&query={{ query }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}{% if sort_order %}&sort_order={{ sort_order }}{% endif %}">Next</a>
                     </li>
                   </ul>
                   <div class="text-center text-muted small">Page {{ page }} of {{ total_pages }} | Showing {{ users|length }} of {{ total_users }} users</div>
@@ -1205,10 +1235,9 @@
         });
 
         // Disable user function with AJAX
-        function disableUser(userDn, userName) {
+        function disableUser(statusElement, userDn, userName) {
             if (confirm('Are you sure you want to disable user "' + userName + '"? This will prevent them from logging in.')) {
                 // Show loading state
-                const statusElement = event.target.closest('.clickable-status');
                 const originalContent = statusElement.innerHTML;
                 statusElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
                 statusElement.style.pointerEvents = 'none';
@@ -1218,6 +1247,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
                     },
                     body: 'user_dn=' + encodeURIComponent(userDn)
                 })
@@ -1227,7 +1257,7 @@
                         // Update the status badge to disabled
                         statusElement.className = 'badge bg-danger clickable-status';
                         statusElement.innerHTML = '<i class="fas fa-times-circle"></i> Disabled';
-                        statusElement.onclick = function() { enableUser(userDn, userName); };
+                        statusElement.onclick = function() { enableUser(statusElement, userDn, userName); };
                         statusElement.title = 'Click to enable user';
                         statusElement.style.pointerEvents = 'auto';
                         
@@ -1250,10 +1280,9 @@
         }
 
         // Enable user function with AJAX
-        function enableUser(userDn, userName) {
+        function enableUser(statusElement, userDn, userName) {
             if (confirm('Are you sure you want to enable user "' + userName + '"? This will allow them to log in again.')) {
                 // Show loading state
-                const statusElement = event.target.closest('.clickable-status');
                 const originalContent = statusElement.innerHTML;
                 statusElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
                 statusElement.style.pointerEvents = 'none';
@@ -1263,6 +1292,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
                     },
                     body: 'user_dn=' + encodeURIComponent(userDn)
                 })
@@ -1272,7 +1302,7 @@
                         // Update the status badge to enabled
                         statusElement.className = 'badge bg-success clickable-status';
                         statusElement.innerHTML = '<i class="fas fa-check-circle"></i> Enabled';
-                        statusElement.onclick = function() { disableUser(userDn, userName); };
+                        statusElement.onclick = function() { disableUser(statusElement, userDn, userName); };
                         statusElement.title = 'Click to disable user';
                         statusElement.style.pointerEvents = 'auto';
                         
@@ -1370,6 +1400,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/x-www-form-urlencoded',
+                            'X-Requested-With': 'XMLHttpRequest'
                         },
                         body: 'user_dn=' + encodeURIComponent(checkbox.value)
                     }).then(response => response.json());
@@ -1388,7 +1419,7 @@
                                 statusBadge.className = 'badge bg-danger clickable-status';
                                 statusBadge.innerHTML = '<i class="fas fa-times-circle"></i> Disabled';
                                 statusBadge.title = 'Click to enable user';
-                                statusBadge.onclick = function() { enableUser(checkbox.value, checkbox.dataset.userName); };
+                                statusBadge.onclick = function() { enableUser(statusBadge, checkbox.value, checkbox.dataset.userName); };
                             }
                         });
                         showFlashMessage(`Successfully disabled ${successCount} user(s)`, 'success');
@@ -1417,6 +1448,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/x-www-form-urlencoded',
+                            'X-Requested-With': 'XMLHttpRequest'
                         },
                         body: 'user_dn=' + encodeURIComponent(checkbox.value)
                     }).then(response => response.json());
@@ -1435,7 +1467,7 @@
                                 statusBadge.className = 'badge bg-success clickable-status';
                                 statusBadge.innerHTML = '<i class="fas fa-check-circle"></i> Enabled';
                                 statusBadge.title = 'Click to disable user';
-                                statusBadge.onclick = function() { disableUser(checkbox.value, checkbox.dataset.userName); };
+                                statusBadge.onclick = function() { disableUser(statusBadge, checkbox.value, checkbox.dataset.userName); };
                             }
                         });
                         showFlashMessage(`Successfully enabled ${successCount} user(s)`, 'success');
@@ -1558,7 +1590,7 @@
         });
         
         // Helper function to update mailbox size cells
-        function updateMailboxSizeCells(mailboxSizes) {
+        function updateMailboxSizeCells(mailboxSizes, markMissingAsNoMailbox = true) {
             const cells = document.querySelectorAll('.mailbox-size-cell');
             console.log('Found', cells.length, 'mailbox size cells');
             
@@ -1597,7 +1629,7 @@
                     }
                     
                     const itemCount = mbData.TotalItemCount || 0;
-                    const lastLogon = mbData.LastLogonTime ? new Date(mbData.LastLogonTime).toLocaleDateString() : 'Never';
+                    const lastLogon = formatLastLogonDate(mbData.LastLogonTime);
                     
                     textSpan.innerHTML = `
                         <div class="small text-white">
@@ -1607,8 +1639,12 @@
                         </div>
                     `;
                 } else if (email) {
-                    noMailboxCount++;
-                    textSpan.innerHTML = '<span class="text-muted">No mailbox</span>';
+                    if (markMissingAsNoMailbox) {
+                        noMailboxCount++;
+                        textSpan.innerHTML = '<span class="text-muted">No mailbox</span>';
+                    } else {
+                        textSpan.innerHTML = '<span class="text-muted">Not loaded</span>';
+                    }
                 } else {
                     noEmailCount++;
                     textSpan.innerHTML = '<span class="text-muted">No email</span>';
@@ -1618,6 +1654,21 @@
             console.log(`Updated ${updatedCount} mailboxes, ${noMailboxCount} had no mailbox, ${noEmailCount} had no email`);
             return { updatedCount, noMailboxCount, noEmailCount };
         }
+
+        function formatLastLogonDate(rawValue) {
+            if (!rawValue) return 'Never';
+            // Exchange/PowerShell deserialized format: /Date(1778514726530)/
+            if (typeof rawValue === 'string') {
+                const m = rawValue.match(/\/Date\((\d+)\)\//);
+                if (m) {
+                    const ms = parseInt(m[1], 10);
+                    if (!Number.isNaN(ms)) return new Date(ms).toLocaleDateString();
+                }
+            }
+            const d = new Date(rawValue);
+            if (Number.isNaN(d.getTime())) return 'Never';
+            return d.toLocaleDateString();
+        }
         
         // Restore mailbox sizes from server-side cache on page load
         function restoreMailboxSizes() {
@@ -1626,14 +1677,14 @@
             const excludeOus = new URLSearchParams(window.location.search).get('exclude_ous') || '';
             
             // Fetch cached mailbox sizes from server
-            const url = `/admin/exchange/mailbox_sizes/cached?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}`;
+            const url = `/admin/exchange/mailbox_sizes/cached?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}&all_active=1`;
             
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
                     if (data.success && data.mailbox_sizes && Object.keys(data.mailbox_sizes).length > 0) {
                         console.log('Restoring mailbox sizes from server cache:', data.updated_at || 'no timestamp');
-                        updateMailboxSizeCells(data.mailbox_sizes);
+                        updateMailboxSizeCells(data.mailbox_sizes, false);
                     } else {
                         console.log('No cached mailbox sizes found on server');
                     }
@@ -1656,14 +1707,21 @@
         
         // Exchange integration
         // Function to fetch mailbox sizes (used by both manual and automatic fetching)
-        function fetchMailboxSizes(showLoadingState = true, showNotifications = true) {
+        function fetchMailboxSizes(showLoadingState = true, showNotifications = true, allActive = false) {
             // Get current filters
             const query = new URLSearchParams(window.location.search).get('query') || '';
             const statusFilter = new URLSearchParams(window.location.search).get('status_filter') || 'all';
             const excludeOus = new URLSearchParams(window.location.search).get('exclude_ous') || '';
             
             // Build URL with current filters
-            const url = `/admin/exchange/mailbox_sizes?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}`;
+            const forceRefresh = showLoadingState ? '1' : '0';
+            const visibleEmails = Array.from(document.querySelectorAll('.mailbox-size-cell'))
+                .map(cell => (cell.getAttribute('data-email') || '').trim().toLowerCase())
+                .filter(email => email && email.includes('@'));
+            const uniqueVisibleEmails = Array.from(new Set(visibleEmails));
+            const emailsParam = encodeURIComponent(uniqueVisibleEmails.join(','));
+            const allActiveParam = allActive ? '1' : '0';
+            const url = `/admin/exchange/mailbox_sizes?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}&force_refresh=${forceRefresh}&all_active=${allActiveParam}&emails=${emailsParam}`;
             
             // Update all cells to show loading state (only if manual fetch)
             if (showLoadingState) {
@@ -1739,7 +1797,7 @@
             button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
             button.disabled = true;
             
-            fetchMailboxSizes(true, true)
+            fetchMailboxSizes(true, true, true)
                 .finally(() => {
                     button.innerHTML = originalText;
                     button.disabled = false;
@@ -1762,7 +1820,7 @@
                 const excludeOus = new URLSearchParams(window.location.search).get('exclude_ous') || '';
                 
                 // Check cached data first
-                const cacheUrl = `/admin/exchange/mailbox_sizes/cached?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}`;
+                const cacheUrl = `/admin/exchange/mailbox_sizes/cached?query=${encodeURIComponent(query)}&status_filter=${encodeURIComponent(statusFilter)}&exclude_ous=${encodeURIComponent(excludeOus)}&all_active=1`;
                 
                 fetch(cacheUrl)
                     .then(response => response.json())
@@ -1782,7 +1840,7 @@
                         // Only auto-fetch if Exchange is configured (check by trying to get mailbox sizes)
                         // If it fails immediately with "Exchange not configured", we'll skip it
                         console.log('Auto-fetching mailbox sizes on page load...');
-                        fetchMailboxSizes(false, false).catch(err => {
+                        fetchMailboxSizes(false, false, true).catch(err => {
                             // Silently handle errors during auto-fetch
                             if (err.message && err.message.includes('Exchange not configured')) {
                                 console.log('Skipping auto-fetch: Exchange not configured');
@@ -1800,7 +1858,7 @@
             // Set up interval for every 27.5 minutes (1650000 milliseconds)
             mailboxSizeInterval = setInterval(() => {
                 console.log('Auto-fetching mailbox sizes (scheduled update)...');
-                fetchMailboxSizes(false, false).catch(err => {
+                fetchMailboxSizes(false, false, true).catch(err => {
                     // Silently handle errors during scheduled updates
                     console.error('Scheduled auto-fetch error (non-blocking):', err);
                 });
@@ -1985,7 +2043,12 @@
         });
         
         // Helper function to parse size strings like "10 GB" or "500 MB" to bytes
+        function parseSizeString(sizeStr) {
             if (!sizeStr || typeof sizeStr !== 'string') return 0;
+            const bytesMatch = sizeStr.match(/\(([\d,]+)\s+bytes\)/i);
+            if (bytesMatch) {
+                return parseInt(bytesMatch[1].replace(/,/g, ''), 10) || 0;
+            }
             const match = sizeStr.match(/([\d.]+)\s*(\w+)/i);
             if (!match) return 0;
             const value = parseFloat(match[1]);

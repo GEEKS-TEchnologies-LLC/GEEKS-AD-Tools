@@ -8,6 +8,10 @@ A comprehensive Linux-based web application for Active Directory password manage
   - **Removed Hardcoded Secrets**: `restore_credentials.py` no longer contains embedded AD/Exchange passwords.
   - **Interactive Restore Flow**: Credential restore now uses secure prompts (`getpass`) and never prints password values.
   - **Encrypted Local Storage**: Credentials are written to `.credentials.enc` via `app/credentials.py` (with local key material), not committed in source files.
+- **Manager Policy Externalized:**
+  - **No Org-Specific Chain Rules in Source**: Manager-chain exceptions now load from local policy file instead of hardcoded identities.
+  - **Gitignored Local Policy**: Put private org rules in `instance/manager_policy.json` (ignored by git).
+  - **Portable Defaults**: Repo ships a generic `manager_policy.example.json` template for clean installs and non-Sunray environments.
 
 ## Recent Updates (2025-10-30)
 

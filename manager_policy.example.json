@@ -1,0 +1,43 @@
+{
+  "default_manager_candidates": [],
+  "top_manager_candidates": [],
+  "manager_exclusions": [],
+  "manager_aliases": {},
+  "forced_manager_candidates": [],
+  "explicit_assignments": [
+    {
+      "employee_candidates": ["employee.username"],
+      "manager_candidates": ["manager.username"],
+      "outside_manager_name": "",
+      "department": "Management",
+      "is_same_department": false,
+      "supervisor_candidates": [],
+      "outside_supervisor_name": "",
+      "exclude_from_default_route": true
+    }
+  ],
+  "dual_reports": [
+    {
+      "target_candidates": [
+        ["employee1.username"],
+        ["employee2.username", "Employee Two"]
+      ],
+      "target_ou_contains": [],
+      "include_department_manager_like": "",
+      "primary_manager_candidates": ["primary.manager.username"],
+      "secondary_manager_candidates": ["secondary.manager.username"],
+      "department": "Management",
+      "is_same_department": false,
+      "exclude_from_default_route": true
+    }
+  ],
+  "department_sync": {
+    "exclude_employee_candidates": [],
+    "department_overrides": [
+      {
+        "employee_candidate": "employee.username",
+        "department": "Custom Department Label"
+      }
+    ]
+  }
+}

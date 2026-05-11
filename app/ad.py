@@ -1,7 +1,14 @@
 import os
 import json
 import ldap3
-from ldap3.core.exceptions import LDAPException, LDAPBindError, LDAPNoSuchObjectResult
+import ssl
+import winrm
+from ldap3.core.exceptions import (
+    LDAPException,
+    LDAPBindError,
+    LDAPNoSuchObjectResult,
+    LDAPUnwillingToPerformResult
+)
 from collections import namedtuple, Counter
 from contextlib import contextmanager
 import datetime
@@ -22,9 +29,64 @@ _pool_lock = threading.Lock()
 _pool_max_age = 300  # 5 minutes - connections older than this are closed
 _pool_cleanup_interval = 60  # Cleanup every 60 seconds
 
-def _get_connection_key(server, bind_user, bind_password):
+def _domain_from_base_dn(base_dn):
+    if not base_dn:
+        return None
+    dc_parts = []
+    for part in str(base_dn).split(','):
+        part = part.strip()
+        if part.upper().startswith('DC='):
+            dc_parts.append(part[3:])
+    return '.'.join(dc_parts) if dc_parts else None
+
+def _resolve_bind_upn(bind_identity, base_dn_hint, **ad_args):
+    """Resolve bind identity to UPN for WinRM NTLM authentication."""
+    if not bind_identity:
+        return None
+    if '@' in bind_identity:
+        return bind_identity
+
+    # DOMAIN\\user also works; keep as-is.
+    if '\\' in bind_identity:
+        return bind_identity
+
+    sam = None
+    upn = None
+    try:
+        with ad_connection(**ad_args) as conn:
+            conn.search(
+                bind_identity,
+                '(objectClass=user)',
+                search_scope=ldap3.BASE,
+                attributes=['sAMAccountName', 'userPrincipalName']
+            )
+            if conn.entries:
+                entry = conn.entries[0]
+                if hasattr(entry, 'userPrincipalName') and entry.userPrincipalName:
+                    upn = entry.userPrincipalName.value
+                if hasattr(entry, 'sAMAccountName') and entry.sAMAccountName:
+                    sam = entry.sAMAccountName.value
+    except Exception:
+        pass
+
+    if upn:
+        return upn
+
+    if sam:
+        domain = _domain_from_base_dn(base_dn_hint)
+        if domain:
+            return f"{sam}@{domain}"
+        return sam
+
+    return bind_identity
+
+def _ps_quote(value):
+    """Safe single-quoted PowerShell literal."""
+    return str(value).replace("'", "''")
+
+def _get_connection_key(server, port, use_ssl, bind_user, bind_password):
     """Generate a unique key for connection pooling"""
-    return f"{server}:{bind_user}:{hash(bind_password)}"
+    return f"{server}:{port}:{use_ssl}:{bind_user}:{hash(bind_password)}"
 
 def _cleanup_old_connections():
     """Remove old connections from the pool"""
@@ -48,9 +110,33 @@ def ad_connection(**kwargs):
     """Context manager for handling ldap3 connections with connection pooling."""
     # Map configuration keys to expected parameter names
     server = kwargs.get('server') or kwargs.get('ad_server')
+    port = kwargs.get('port') or kwargs.get('ad_port')
+    use_ssl_kw = kwargs.get('use_ssl')
     bind_user = kwargs.get('bind_user') or kwargs.get('ad_bind_dn')
     bind_password = kwargs.get('bind_password') or kwargs.get('ad_password')
     base_dn = kwargs.get('base_dn') or kwargs.get('ad_base_dn')
+
+    raw_server = str(server or '').strip()
+    if raw_server.startswith('ldaps://'):
+        raw_server = raw_server[len('ldaps://'):]
+        if use_ssl_kw is None:
+            use_ssl_kw = True
+    elif raw_server.startswith('ldap://'):
+        raw_server = raw_server[len('ldap://'):]
+    raw_server = raw_server.split('/')[0].strip()
+
+    # Support host:port notation in server field.
+    if ':' in raw_server and raw_server.count(':') == 1 and not port:
+        raw_server, embedded_port = raw_server.split(':', 1)
+        if embedded_port.isdigit():
+            port = embedded_port
+
+    try:
+        port_int = int(port) if port else 389
+    except (TypeError, ValueError):
+        port_int = 389
+
+    use_ssl = bool(use_ssl_kw) if use_ssl_kw is not None else (port_int == 636)
     
     # Cleanup old connections periodically
     if not hasattr(ad_connection, '_last_cleanup'):
@@ -62,73 +148,80 @@ def ad_connection(**kwargs):
         ad_connection._last_cleanup = current_time
     
     # Try to reuse connection from pool
-    pool_key = _get_connection_key(server, bind_user, bind_password)
-    use_pool = True  # Enable pooling by default
-    pooled = False
-    
+    pool_key = _get_connection_key(raw_server, port_int, use_ssl, bind_user, bind_password)
+    use_pool = True
+    conn = None
+    reused_from_pool = False
+    had_error = False
+
+    # Fetch candidate connection without holding the lock across caller code.
     if use_pool:
         with _pool_lock:
-            if pool_key in _connection_pool:
-                conn, created_time = _connection_pool[pool_key]
-                # Check if connection is still valid
-                try:
-                    if conn.bound:
-                        # Connection is still good, use it
-                        pooled = True
-                        try:
-                            yield conn
-                        finally:
-                            # Return connection to pool (already there)
-                            pass
-                        return
-                    else:
-                        # Connection is not bound, remove from pool
-                        try:
-                            conn.unbind()
-                        except:
-                            pass
-                        del _connection_pool[pool_key]
-                except:
-                    # Connection is invalid, remove from pool
-                    try:
-                        conn.unbind()
-                    except:
-                        pass
-                    if pool_key in _connection_pool:
-                        del _connection_pool[pool_key]
-    
-    # Create new connection
-    server_uri = f"ldap://{server}"
-    server_obj = ldap3.Server(server_uri, get_info=ldap3.ALL)
-    conn = ldap3.Connection(server_obj, user=bind_user, password=bind_password, auto_bind=True, raise_exceptions=True)
-    
+            pooled_entry = _connection_pool.get(pool_key)
+            if pooled_entry:
+                conn, _created_time = pooled_entry
+                reused_from_pool = True
+
+    # Validate pooled connection; if invalid, discard and create a new one.
+    if conn is not None:
+        try:
+            if not conn.bound:
+                raise RuntimeError("Pooled LDAP connection is not bound.")
+        except Exception:
+            try:
+                conn.unbind()
+            except Exception:
+                pass
+            with _pool_lock:
+                if pool_key in _connection_pool:
+                    del _connection_pool[pool_key]
+            conn = None
+            reused_from_pool = False
+
+    if conn is None:
+        tls_config = ldap3.Tls(validate=ssl.CERT_NONE) if use_ssl else None
+        server_obj = ldap3.Server(
+            raw_server,
+            port=port_int,
+            use_ssl=use_ssl,
+            tls=tls_config,
+            get_info=ldap3.ALL
+        )
+        conn = ldap3.Connection(
+            server_obj,
+            user=bind_user,
+            password=bind_password,
+            auto_bind=True,
+            raise_exceptions=True
+        )
+
     try:
         yield conn
-    except:
-        # On error, don't pool the connection
+    except Exception:
+        had_error = True
         try:
             conn.unbind()
-        except:
+        except Exception:
             pass
+        with _pool_lock:
+            if pool_key in _connection_pool and _connection_pool[pool_key][0] is conn:
+                del _connection_pool[pool_key]
         raise
     finally:
-        # Add to pool if pooling is enabled and no error occurred
-        if use_pool and not pooled:
+        pooled_for_reuse = False
+        if use_pool:
             try:
-                # Check if connection is still valid before pooling
                 if conn.bound:
                     with _pool_lock:
                         _connection_pool[pool_key] = (conn, time.time())
-                        # Don't unbind, keep connection alive
-                        return
-            except:
+                    pooled_for_reuse = True
+            except Exception:
                 pass
-        
-        # Only unbind if not pooled
-        if not pooled:
+
+        if not pooled_for_reuse:
             try:
                 conn.unbind()
-            except:
+            except Exception:
                 pass
 
 # --- Configuration ---
@@ -204,6 +297,7 @@ def get_organization_ous(base_dn=None):
         return {
             'primary_users_ou': base_dn,
             'disabled_users_ou': f'OU=Disabled Users,{base_dn}',
+            'archive_users_ou': f'OU=Archived Users,{base_dn}',
             'service_accounts_ou': f'OU=Service Accounts,{base_dn}',
             'internal_tools_ou': f'OU=Internal Tools,{base_dn}',
             'primary_users_label': 'Users'
@@ -223,6 +317,7 @@ def get_organization_ous(base_dn=None):
     return {
         'primary_users_ou': ensure_base_dn(org_ous.get('primary_users_ou', base_dn)),
         'disabled_users_ou': ensure_base_dn(org_ous.get('disabled_users_ou', f'OU=Disabled Users')),
+        'archive_users_ou': ensure_base_dn(org_ous.get('archive_users_ou', f'OU=Archived Users')),
         'service_accounts_ou': ensure_base_dn(org_ous.get('service_accounts_ou', f'OU=Service Accounts')),
         'internal_tools_ou': ensure_base_dn(org_ous.get('internal_tools_ou', f'OU=Internal Tools')),
         'primary_users_label': org_ous.get('primary_users_label', 'Users')
@@ -237,6 +332,11 @@ def get_disabled_users_ou(base_dn=None):
     """Get the disabled users OU DN"""
     org_ous = get_organization_ous(base_dn)
     return org_ous['disabled_users_ou']
+
+def get_archive_users_ou(base_dn=None):
+    """Get the archived users OU DN"""
+    org_ous = get_organization_ous(base_dn)
+    return org_ous['archive_users_ou']
 
 def get_service_accounts_ou(base_dn=None):
     """Get the service accounts OU DN"""
@@ -277,6 +377,8 @@ def search_users(query, **ad_args):
     # Get filter parameters
     status_filter = ad_args.get('status_filter', 'all')  # 'all', 'enabled', 'disabled'
     exclude_ous = ad_args.get('exclude_ous', [])  # List of OUs to exclude
+    include_disabled_ou = ad_args.get('include_disabled_ou', False)
+    include_archive_ou = ad_args.get('include_archive_ou', False)
     
     # Escape LDAP special characters in the query, but preserve wildcards
     def escape_ldap_filter(value):
@@ -311,13 +413,29 @@ def search_users(query, **ad_args):
     org_ous = get_organization_ous(base_dn)
     primary_users_base = org_ous['primary_users_ou']
     disabled_users_ou = org_ous['disabled_users_ou']
+    archive_users_ou = org_ous.get('archive_users_ou', '')
+    search_base = base_dn if (include_disabled_ou or include_archive_ou) else primary_users_base
     
-    print(f"DEBUG: search_users - escaped_query: '{escaped_query}', status_filter: '{status_filter}', exclude_ous: {exclude_ous}, filter_str: '{filter_str}', primary_users_base: '{primary_users_base}'")
+    print(f"DEBUG: search_users - escaped_query: '{escaped_query}', status_filter: '{status_filter}', exclude_ous: {exclude_ous}, include_disabled_ou: {include_disabled_ou}, include_archive_ou: {include_archive_ou}, filter_str: '{filter_str}', search_base: '{search_base}'")
     
     with ad_connection(**ad_args) as conn:
         try:
-            print(f"DEBUG: search_users - executing search with filter: '{filter_str}' in base: '{primary_users_base}'")
-            conn.search(primary_users_base, filter_str, search_scope=ldap3.SUBTREE, attributes=['sAMAccountName', 'displayName', 'mail', 'distinguishedName', 'objectClass', 'employeeID', 'userAccountControl'])
+            print(f"DEBUG: search_users - executing search with filter: '{filter_str}' in base: '{search_base}'")
+            conn.search(
+                search_base,
+                filter_str,
+                search_scope=ldap3.SUBTREE,
+                attributes=[
+                    'sAMAccountName',
+                    'displayName',
+                    'mail',
+                    'distinguishedName',
+                    'objectClass',
+                    'employeeID',
+                    'userAccountControl',
+                    'whenChanged'
+                ]
+            )
             print(f"DEBUG: search_users - search completed, found {len(conn.entries)} entries")
             
             for entry in conn.entries:
@@ -335,10 +453,15 @@ def search_users(query, **ad_args):
                     user_dn = entry.distinguishedName.value
                     should_exclude = False
                     
-                    # Always exclude users in Disabled Users OU
-                    if disabled_users_ou in user_dn or 'OU=Disabled Users' in user_dn:
+                    # Exclude users in Disabled Users OU unless explicitly requested.
+                    if (not include_disabled_ou) and (disabled_users_ou in user_dn or 'OU=Disabled Users' in user_dn):
                         should_exclude = True
                         print(f"DEBUG: search_users - excluding user in Disabled Users OU: {user_dn}")
+
+                    # Exclude users in Archived Users OU unless explicitly requested.
+                    if (not include_archive_ou) and (archive_users_ou in user_dn or 'OU=Archived Users' in user_dn):
+                        should_exclude = True
+                        print(f"DEBUG: search_users - excluding user in Archived Users OU: {user_dn}")
                     
                     # Check additional excluded OUs
                     if exclude_ous and not should_exclude:
@@ -376,7 +499,8 @@ def search_users(query, **ad_args):
                             'mail': entry.mail.value if entry.mail else '',
                             'employeeID': entry.employeeID.value if hasattr(entry, 'employeeID') and entry.employeeID else '',
                             'ou': ou_display,
-                            'accountStatus': account_status
+                            'accountStatus': account_status,
+                            'whenChanged': entry.whenChanged.value if hasattr(entry, 'whenChanged') and entry.whenChanged else None
                         }
                         users.append(user_data)
                         print(f"DEBUG: search_users - added user: {user_data.get('displayName', 'N/A')} ({user_data.get('sAMAccountName', 'N/A')})")
@@ -412,6 +536,37 @@ def get_user_details(user_dn, **ad_args):
     except LDAPException as e:
         print(f"LDAP error getting user details for {user_dn}: {e}")
         return None
+
+def get_user_dn_by_username(username, **ad_args):
+    """Find a user's DN by sAMAccountName anywhere in the domain."""
+    if not username:
+        return None
+
+    escaped_username = re.sub(r'([\\()\x00/+\x00<>,;"= ])', r'\\\1', username)
+    search_filter = f'(&(objectClass=user)(sAMAccountName={escaped_username}))'
+
+    try:
+        with ad_connection(**ad_args) as conn:
+            conn.search(
+                ad_args['base_dn'],
+                search_filter,
+                search_scope=ldap3.SUBTREE,
+                attributes=['distinguishedName', 'objectClass']
+            )
+            for entry in conn.entries:
+                if hasattr(entry, 'objectClass') and entry.objectClass.value:
+                    object_classes = entry.objectClass.value
+                    if isinstance(object_classes, list):
+                        is_user = 'user' in object_classes and 'computer' not in object_classes
+                    else:
+                        obj = str(object_classes).lower()
+                        is_user = 'user' in obj and 'computer' not in obj
+                    if is_user and hasattr(entry, 'distinguishedName') and entry.distinguishedName:
+                        return entry.distinguishedName.value
+    except Exception as e:
+        print(f"Error finding DN for username {username}: {e}")
+
+    return None
 
 def create_user(username, password, display_name, mail=None, target_ou=None, 
                 given_name=None, surname=None, title=None, department=None, 
@@ -619,11 +774,114 @@ def update_user_attributes(user_dn, changes, **ad_args):
 # --- User Account Control ---
 
 def set_password(user_dn, new_password, **ad_args):
-    with ad_connection(**ad_args) as conn:
-        result = conn.modify(user_dn, {'unicodePwd': [(ldap3.MODIFY_REPLACE, [f'"{new_password}"'.encode('utf-16-le')])]})
-        if not result:
-            return False, f"Failed to set password: {conn.result['description']}"
-        return True, "Password has been reset successfully."
+    server_value = ad_args.get('server') or ad_args.get('ad_server')
+    port_value = ad_args.get('port') or ad_args.get('ad_port')
+    use_ssl_value = ad_args.get('use_ssl')
+
+    raw_server = str(server_value or '').strip()
+    if raw_server.startswith('ldaps://'):
+        raw_server = raw_server[len('ldaps://'):]
+        if use_ssl_value is None:
+            use_ssl_value = True
+    elif raw_server.startswith('ldap://'):
+        raw_server = raw_server[len('ldap://'):]
+    raw_server = raw_server.split('/')[0].strip()
+    if ':' in raw_server and raw_server.count(':') == 1 and not port_value:
+        host_part, port_part = raw_server.split(':', 1)
+        raw_server = host_part
+        if port_part.isdigit():
+            port_value = port_part
+
+    try:
+        port_int = int(port_value) if port_value else 389
+    except (TypeError, ValueError):
+        port_int = 389
+    use_ssl = bool(use_ssl_value) if use_ssl_value is not None else (port_int == 636)
+
+    if not new_password:
+        return False, "New password cannot be empty."
+
+    try:
+        encoded_password = f'"{new_password}"'.encode('utf-16-le')
+
+        with ad_connection(**ad_args) as conn:
+            result = conn.modify(
+                user_dn,
+                {'unicodePwd': [(ldap3.MODIFY_REPLACE, [encoded_password])]}
+            )
+            if not result:
+                return False, f"Failed to set password: {conn.result['description']}"
+            return True, "Password has been reset successfully."
+    except LDAPUnwillingToPerformResult as e:
+        # Password updates often require LDAPS. If current connection is not SSL,
+        # attempt one secure fallback on 636 before returning failure.
+        if not use_ssl:
+            try:
+                tls_config = ldap3.Tls(validate=ssl.CERT_NONE)
+                secure_server = ldap3.Server(raw_server, port=636, use_ssl=True, tls=tls_config, get_info=ldap3.ALL)
+                secure_conn = ldap3.Connection(
+                    secure_server,
+                    user=ad_args.get('bind_user') or ad_args.get('ad_bind_dn'),
+                    password=ad_args.get('bind_password') or ad_args.get('ad_password'),
+                    auto_bind=True,
+                    raise_exceptions=True
+                )
+                try:
+                    secure_result = secure_conn.modify(
+                        user_dn,
+                        {'unicodePwd': [(ldap3.MODIFY_REPLACE, [encoded_password])]}
+                    )
+                    if secure_result:
+                        return True, "Password has been reset successfully."
+                finally:
+                    try:
+                        secure_conn.unbind()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # Fallback to native AD PowerShell reset over WinRM (matches ADAC behavior).
+        try:
+            bind_user = ad_args.get('bind_user') or ad_args.get('ad_bind_dn')
+            bind_password = ad_args.get('bind_password') or ad_args.get('ad_password')
+            base_dn = ad_args.get('base_dn') or ad_args.get('ad_base_dn')
+            winrm_user = _resolve_bind_upn(bind_user, base_dn, **ad_args)
+            winrm_host = raw_server
+            winrm_session = winrm.Session(
+                f'http://{winrm_host}:5985/wsman',
+                auth=(winrm_user, bind_password),
+                transport='ntlm'
+            )
+            user_dn_ps = _ps_quote(user_dn)
+            new_pw_ps = _ps_quote(new_password)
+            ps = (
+                f"$sec=ConvertTo-SecureString '{new_pw_ps}' -AsPlainText -Force;"
+                f"Set-ADAccountPassword -Identity '{user_dn_ps}' -Reset -NewPassword $sec -ErrorAction Stop;"
+                "Write-Output 'OK'"
+            )
+            r = winrm_session.run_ps(ps)
+            out = r.std_out.decode('utf-8', errors='ignore') if r.std_out else ''
+            if r.status_code == 0 and 'OK' in out:
+                return True, "Password has been reset successfully."
+        except Exception:
+            pass
+
+        details = str(e)
+        hint = ""
+        if "WILL_NOT_PERFORM" in details or "data 0" in details:
+            hint = (
+                " Active Directory rejected the password change. "
+                "Common causes: password complexity/history policy, or insecure LDAP bind."
+            )
+            if port_int != 636:
+                hint += " Configure AD to use LDAPS (port 636) for password reset operations."
+        return False, f"Password change not accepted by AD: {details}.{hint}"
+    except LDAPException as e:
+        return False, parse_ldap_error(e)
+    except Exception as e:
+        return False, f"Unexpected error setting password: {str(e)}"
+    return False, "Password reset did not complete."
 
 def _get_uac(conn, user_dn):
     if conn.search(user_dn, '(objectclass=user)', search_scope=ldap3.BASE, attributes=['userAccountControl']):
@@ -921,15 +1179,31 @@ def create_ad_group(group_name, server, port, bind_dn, password, base_dn):
     except LDAPException as e:
         return False, parse_ldap_error(e)
 
-def reset_user_password(user_dn, new_password, server, port, bind_dn, password):
-    ldap_url = f'ldap://{server}:{port}'
+def reset_user_password(user_identifier, new_password, **ad_args):
+    """
+    Reset a user's password in AD.
+
+    Args:
+        user_identifier: User DN or sAMAccountName
+        new_password: New password value
+        **ad_args: AD connection parameters
+    """
+    if not user_identifier:
+        return False, 'No user specified.'
+
+    user_dn = user_identifier
+    if '=' not in str(user_identifier):
+        user_dn = get_user_dn_by_username(user_identifier, **ad_args)
+        if not user_dn:
+            return False, f'User not found: {user_identifier}'
+
     try:
-        with ad_connection(server=ldap_url, bind_user=bind_dn, bind_password=password):
-            mod = [(ldap3.MODIFY_REPLACE, 'unicodePwd', [f'"{new_password}"'.encode('utf-16-le')])]
-            conn.modify(user_dn, mod)
-            return True, 'Password reset.'
+        # Reuse the existing working password setter.
+        return set_password(user_dn, new_password, **ad_args)
     except LDAPException as e:
         return False, parse_ldap_error(e)
+    except Exception as e:
+        return False, f'Error resetting password: {str(e)}'
 
 # --- OU Management ---
 
@@ -1009,17 +1283,63 @@ def get_ou_tree(**ad_args):
     
     return tree
 
+def move_computer_to_ou(computer_dn, new_ou_dn, **ad_args):
+    """Move a computer object to a new OU"""
+    try:
+        with ad_connection(**ad_args) as conn:
+            # Extract the CN from the computer DN
+            cn = computer_dn.split(',')[0]
+            if not cn.startswith('CN='):
+                return False, "Invalid computer DN format"
+            
+            # Construct new DN
+            new_dn = f"{cn},{new_ou_dn}"
+            
+            # Move the computer
+            result = conn.modify_dn(computer_dn, cn, new_superior=new_ou_dn)
+            
+            if result:
+                return True, f"Computer moved to {new_ou_dn}"
+            else:
+                return False, f"Failed to move computer: {conn.result.get('description', 'Unknown error')}"
+    except Exception as e:
+        return False, f"Error moving computer: {str(e)}"
+
 def move_user_to_ou(user_dn, new_ou_dn, **ad_args):
     """Move a user to a different OU"""
-    # Extract the CN from the user DN
-    cn_part = user_dn.split(',')[0]
-    new_user_dn = f'{cn_part},{new_ou_dn}'
-    
     with ad_connection(**ad_args) as conn:
         try:
-            result = conn.modify_dn(user_dn, cn_part, new_superior=new_ou_dn)
+            # Validate destination OU exists and is readable.
+            if not conn.search(
+                new_ou_dn,
+                '(objectClass=organizationalUnit)',
+                search_scope=ldap3.BASE,
+                attributes=['distinguishedName']
+            ):
+                return False, f"Destination OU not found or inaccessible: {new_ou_dn}"
+
+            # If user already under this OU, treat as success.
+            user_dn_l = user_dn.lower()
+            new_ou_dn_l = new_ou_dn.lower()
+            if user_dn_l.endswith(',' + new_ou_dn_l) or user_dn_l == new_ou_dn_l:
+                return True, f"User already in {new_ou_dn}"
+
+            # Parse first RDN safely (handles escaped commas/special chars).
+            try:
+                parsed_dn = ldap3.utils.dn.parse_dn(user_dn)
+                if not parsed_dn:
+                    return False, f"Invalid user DN: {user_dn}"
+                first_rdn_attr, first_rdn_value, _ = parsed_dn[0]
+                rdn = f"{first_rdn_attr}={first_rdn_value}"
+            except Exception:
+                # Fallback for unusual DNs.
+                rdn = user_dn.split(',', 1)[0]
+
+            result = conn.modify_dn(user_dn, rdn, new_superior=new_ou_dn)
             if not result:
-                return False, f"Failed to move user: {conn.result['description']}"
+                description = conn.result.get('description', 'unknown')
+                message = conn.result.get('message', '')
+                return False, f"Failed to move user: {description} {message}".strip()
             return True, f'User moved to {new_ou_dn} successfully.'
         except Exception as e:
             return False, f"Exception moving user: {str(e)}"
@@ -1198,4 +1518,241 @@ def update_user_employee_id(user_dn, employee_id, **ad_args):
             else:
                 return False, f"Failed to update employee ID: {conn.result['description']}"
         except Exception as e:
-            return False, f"Error updating employee ID: {str(e)}" 
+            return False, f"Error updating employee ID: {str(e)}"
+
+def search_computers(query, **ad_args):
+    """Search for computers in Active Directory"""
+    computers = []
+    
+    print(f"DEBUG: search_computers called with query: '{query}'")
+    
+    # Get filter parameters
+    status_filter = ad_args.get('status_filter', 'all')  # 'all', 'enabled', 'disabled'
+    exclude_ous = ad_args.get('exclude_ous', [])  # List of OUs to exclude
+    computer_type = ad_args.get('computer_type', 'all')  # 'all', 'workstation', 'server'
+    
+    # Escape LDAP special characters in the query, but preserve wildcards
+    def escape_ldap_filter(value):
+        """Escape special characters in LDAP filter, but preserve wildcards"""
+        if not value:
+            return value
+        # Don't escape wildcards (*) - they should remain as wildcards
+        # Escape: \ ( ) \0 / + < > , ; " = and space
+        escaped = re.sub(r'([\\()\x00/+\x00<>,;"= ])', r'\\\1', value)
+        return escaped
+    
+    escaped_query = escape_ldap_filter(query) if query else ''
+    
+    # Build the filter string
+    filters = ['(objectClass=computer)']
+    
+    # Add search query filter
+    if escaped_query and escaped_query != '*':
+        filters.append(f'(|(name=*{escaped_query}*)(sAMAccountName=*{escaped_query}*)(dNSHostName=*{escaped_query}*)(operatingSystem=*{escaped_query}*))')
+    
+    # Add status filter
+    if status_filter == 'enabled':
+        filters.append('(!(userAccountControl:1.2.840.113556.1.4.803:=2))')  # Not disabled
+    elif status_filter == 'disabled':
+        filters.append('(userAccountControl:1.2.840.113556.1.4.803:=2)')  # Disabled
+    
+    # Add computer type filter (workstation vs server)
+    if computer_type == 'server':
+        # Servers typically have "Windows Server" in operatingSystem
+        filters.append('(operatingSystem=*Windows Server*)')
+    elif computer_type == 'workstation':
+        # Workstations typically don't have "Windows Server" in operatingSystem
+        filters.append('(!(operatingSystem=*Windows Server*))')
+    
+    # Combine filters
+    filter_str = '(&' + ''.join(filters) + ')'
+    
+    # Search in base DN
+    base_dn = _get_base_dn(ad_args)
+    config = get_ad_config() or {}
+    org_ous = config.get('organization_ous', {})
+
+    # Always exclude disabled/decommissioned computer containers from search results.
+    disabled_ou_markers = []
+    configured_disabled_ou = org_ous.get('disabled_computers_ou')
+    if configured_disabled_ou:
+        if base_dn and base_dn.lower() not in configured_disabled_ou.lower():
+            configured_disabled_ou = f"{configured_disabled_ou},{base_dn}"
+        disabled_ou_markers.append(configured_disabled_ou.lower())
+
+    # Fallback and known OU labels (including observed typo variants).
+    disabled_ou_markers.extend([
+        'ou=disabled computers',
+        'ou=decomissioned workstations',
+        'ou=decommissioned workstations',
+        'ou=deconmissioned servers',
+        'ou=decommissioned servers',
+    ])
+    
+    print(f"DEBUG: search_computers - escaped_query: '{escaped_query}', status_filter: '{status_filter}', computer_type: '{computer_type}', exclude_ous: {exclude_ous}, filter_str: '{filter_str}'")
+    
+    with ad_connection(**ad_args) as conn:
+        try:
+            print(f"DEBUG: search_computers - executing search with filter: '{filter_str}' in base: '{base_dn}'")
+            conn.search(
+                base_dn, 
+                filter_str, 
+                search_scope=ldap3.SUBTREE, 
+                attributes=[
+                    'sAMAccountName', 
+                    'name', 
+                    'dNSHostName', 
+                    'operatingSystem', 
+                    'operatingSystemVersion',
+                    'distinguishedName', 
+                    'objectClass', 
+                    'userAccountControl',
+                    'lastLogon',
+                    'lastLogonTimestamp',
+                    'whenCreated',
+                    'description'
+                ]
+            )
+            print(f"DEBUG: search_computers - search completed, found {len(conn.entries)} entries")
+            
+            for entry in conn.entries:
+                # Check if this is a computer object
+                is_computer = False
+                if hasattr(entry, 'objectClass') and entry.objectClass.value:
+                    object_classes = entry.objectClass.value
+                    if isinstance(object_classes, list):
+                        is_computer = 'computer' in object_classes
+                    else:
+                        is_computer = 'computer' in str(object_classes)
+                
+                if is_computer:
+                    # Check if computer is in excluded OUs
+                    computer_dn = entry.distinguishedName.value
+                    should_exclude = False
+                    dn_lower = computer_dn.lower()
+
+                    # Always exclude disabled/decommissioned OUs from this view.
+                    if any(marker in dn_lower for marker in disabled_ou_markers):
+                        should_exclude = True
+                        print(f"DEBUG: search_computers - excluding computer in disabled/decommissioned OU: {computer_dn}")
+                    
+                    # Check additional excluded OUs
+                    if exclude_ous and not should_exclude:
+                        for excluded_ou in exclude_ous:
+                            excluded_ou_clean = excluded_ou.strip().lower()
+                            if excluded_ou_clean and excluded_ou_clean in dn_lower:
+                                should_exclude = True
+                                print(f"DEBUG: search_computers - excluding computer in {excluded_ou.strip()}: {computer_dn}")
+                                break
+                    
+                    if not should_exclude:
+                        dn_parts = entry.distinguishedName.value.split(',')
+                        ou_parts = [part[3:] for part in dn_parts if part.startswith('OU=')]
+                        ou_display = ' → '.join(reversed(ou_parts)) if ou_parts else 'Domain Root'
+                        
+                        # Determine account status
+                        account_status = 'enabled'
+                        if hasattr(entry, 'userAccountControl') and entry.userAccountControl:
+                            uac = int(entry.userAccountControl.value)
+                            if uac & 2:  # ADS_UF_ACCOUNTDISABLE
+                                account_status = 'disabled'
+                        
+                        # Determine computer type
+                        comp_type = 'workstation'
+                        os_name = entry.operatingSystem.value if hasattr(entry, 'operatingSystem') and entry.operatingSystem else ''
+                        if 'Windows Server' in os_name:
+                            comp_type = 'server'
+                        
+                        # Parse last logon
+                        last_logon = None
+                        if hasattr(entry, 'lastLogonTimestamp') and entry.lastLogonTimestamp:
+                            try:
+                                last_logon = entry.lastLogonTimestamp.value
+                            except:
+                                pass
+                        
+                        computer_data = {
+                            'dn': entry.distinguishedName.value,
+                            'distinguishedName': entry.distinguishedName.value,
+                            'name': entry.name.value if hasattr(entry, 'name') and entry.name else '',
+                            'sAMAccountName': entry.sAMAccountName.value if hasattr(entry, 'sAMAccountName') and entry.sAMAccountName else '',
+                            'dNSHostName': entry.dNSHostName.value if hasattr(entry, 'dNSHostName') and entry.dNSHostName else '',
+                            'operatingSystem': os_name,
+                            'operatingSystemVersion': entry.operatingSystemVersion.value if hasattr(entry, 'operatingSystemVersion') and entry.operatingSystemVersion else '',
+                            'description': entry.description.value if hasattr(entry, 'description') and entry.description else '',
+                            'ou': ou_display,
+                            'accountStatus': account_status,
+                            'computerType': comp_type,
+                            'lastLogon': last_logon,
+                            'whenCreated': entry.whenCreated.value if hasattr(entry, 'whenCreated') and entry.whenCreated else None
+                        }
+                        computers.append(computer_data)
+                        print(f"DEBUG: search_computers - added computer: {computer_data.get('name', 'N/A')} ({computer_data.get('sAMAccountName', 'N/A')})")
+        except LDAPException as e:
+            print(f"Error searching computers: {e}")
+            return []
+        except Exception as e:
+            print(f"Unexpected error in search_computers: {e}")
+            return []
+    
+    return computers
+
+def get_computer_details(computer_dn, **ad_args):
+    """Get detailed information about a specific computer"""
+    try:
+        with ad_connection(**ad_args) as conn:
+            conn.search(
+                computer_dn,
+                '(objectClass=computer)',
+                attributes=ldap3.ALL_ATTRIBUTES
+            )
+            
+            if not conn.entries:
+                return None
+            
+            entry = conn.entries[0]
+            
+            # Determine account status
+            account_status = 'enabled'
+            if hasattr(entry, 'userAccountControl') and entry.userAccountControl:
+                uac = int(entry.userAccountControl.value)
+                if uac & 2:  # ADS_UF_ACCOUNTDISABLE
+                    account_status = 'disabled'
+            
+            # Determine computer type
+            comp_type = 'workstation'
+            os_name = entry.operatingSystem.value if hasattr(entry, 'operatingSystem') and entry.operatingSystem else ''
+            if 'Windows Server' in os_name:
+                comp_type = 'server'
+            
+            # Parse timestamps
+            last_logon = None
+            if hasattr(entry, 'lastLogonTimestamp') and entry.lastLogonTimestamp:
+                try:
+                    last_logon = entry.lastLogonTimestamp.value
+                except:
+                    pass
+            
+            computer_details = {
+                'dn': entry.distinguishedName.value,
+                'distinguishedName': entry.distinguishedName.value,
+                'name': entry.name.value if hasattr(entry, 'name') and entry.name else '',
+                'sAMAccountName': entry.sAMAccountName.value if hasattr(entry, 'sAMAccountName') and entry.sAMAccountName else '',
+                'dNSHostName': entry.dNSHostName.value if hasattr(entry, 'dNSHostName') and entry.dNSHostName else '',
+                'operatingSystem': os_name,
+                'operatingSystemVersion': entry.operatingSystemVersion.value if hasattr(entry, 'operatingSystemVersion') and entry.operatingSystemVersion else '',
+                'description': entry.description.value if hasattr(entry, 'description') and entry.description else '',
+                'accountStatus': account_status,
+                'computerType': comp_type,
+                'lastLogon': last_logon,
+                'whenCreated': entry.whenCreated.value if hasattr(entry, 'whenCreated') and entry.whenCreated else None,
+                'whenChanged': entry.whenChanged.value if hasattr(entry, 'whenChanged') and entry.whenChanged else None,
+                'managedBy': entry.managedBy.value if hasattr(entry, 'managedBy') and entry.managedBy else None,
+                'memberOf': entry.memberOf.value if hasattr(entry, 'memberOf') and entry.memberOf else [],
+                'servicePrincipalName': entry.servicePrincipalName.value if hasattr(entry, 'servicePrincipalName') and entry.servicePrincipalName else []
+            }
+            
+            return computer_details
+    except Exception as e:
+        print(f"Error getting computer details: {e}")
+        return None 

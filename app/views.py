@@ -16,11 +16,13 @@ from .ad import (
     unlock_user as ad_unlock_user, force_password_change as ad_force_password_change,
     update_user_attributes, list_ous, create_ou, move_user_to_ou, get_ou_tree,
     get_group_types_for_user, get_os_breakdown, get_organization_ous,
-    set_user_manager, remove_user_manager, get_user_manager
+    set_user_manager, remove_user_manager, get_user_manager, ad_connection,
+    search_computers, get_computer_details, move_computer_to_ou,
+    get_user_dn_by_username
 )
 from flask import current_app
 from flask_login import login_user, logout_user, login_required, current_user
-from .models import Admin, DepartmentManager, UserDirectReport
+from .models import Admin, DepartmentManager, UserDirectReport, DisabledUserLifecycle
 from . import db
 from werkzeug.security import generate_password_hash
 from functools import wraps
@@ -36,16 +38,24 @@ from .version_checker import get_version_info, check_github_version
 from .updater import Updater
 import ldap3
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import session
 # License validation removed - no license server available
 import csv
 import io
+import threading
 from werkzeug.utils import secure_filename
 import tempfile
 from flask import Response
 
 main = Blueprint('main', __name__)
+DISABLED_USER_RETENTION_DAYS = 180
+DISABLED_USER_ARCHIVE_RUN_INTERVAL_SECONDS = 300
+_last_disabled_user_archive_run_at = None
+MAILBOX_REFRESH_INTERVAL_SECONDS = 1800
+_last_mailbox_refresh_run_at = None
+_mailbox_refresh_in_progress = False
+_mailbox_refresh_lock = threading.Lock()
 
 def get_branding_config():
     """Get branding configuration from file or return defaults"""
@@ -74,8 +84,1457 @@ def save_branding_config(branding_data):
         print(f"Error saving branding config: {e}")
         return False
 
+def _extract_parent_ou_from_dn(user_dn):
+    if not user_dn or ',' not in user_dn:
+        return None
+    return user_dn.split(',', 1)[1]
+
+def _calculate_moved_dn(user_dn, target_ou_dn):
+    if not user_dn or ',' not in user_dn:
+        return user_dn
+    cn_part = user_dn.split(',', 1)[0]
+    return f"{cn_part},{target_ou_dn}"
+
+def _ad_attr_scalar(value, default=''):
+    """Normalize LDAP/AD attribute values to a single scalar string."""
+    if value is None:
+        return default
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return default
+        return _ad_attr_scalar(value[0], default=default)
+    return str(value)
+
+def _to_utc_datetime(value):
+    """Normalize datetime values to timezone-aware UTC."""
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+def _resolve_existing_disabled_ou(config, ad_args):
+    """
+    Resolve the best existing Disabled Users OU.
+    Prefers configured DN, but falls back to discovered OUs that contain
+    'disabled users' / 'disabled user' / 'disabled' markers.
+    """
+    org_ous = get_organization_ous(config['ad_base_dn'])
+    preferred_dn = org_ous.get('disabled_users_ou')
+
+    ous = list_ous(**ad_args) or []
+    ou_dns = [ou.get('dn') for ou in ous if ou.get('dn')]
+
+    # Exact/normalized match for configured OU first.
+    if preferred_dn:
+        for dn in ou_dns:
+            if dn.lower() == preferred_dn.lower():
+                return dn
+
+    # Keyword-based fallback.
+    scored = []
+    for dn in ou_dns:
+        dn_l = dn.lower()
+        score = 0
+        if 'ou=disabled users' in dn_l:
+            score += 100
+        if 'ou=disabled user' in dn_l:
+            score += 90
+        if 'disabled users' in dn_l:
+            score += 80
+        if 'disabled user' in dn_l:
+            score += 70
+        if 'ou=disabled' in dn_l:
+            score += 60
+        if 'disabled' in dn_l:
+            score += 40
+        if score:
+            # Prefer more specific (deeper) DN in ties.
+            scored.append((score, dn.count(','), dn))
+
+    if scored:
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return scored[0][2]
+
+    return preferred_dn
+
+def _resolve_existing_archive_ou(config, ad_args):
+    """
+    Resolve the best existing Archived Users OU.
+    Prefers configured DN, then discovered OUs containing archive markers.
+    """
+    org_ous = get_organization_ous(config['ad_base_dn'])
+    preferred_dn = org_ous.get('archive_users_ou')
+
+    ous = list_ous(**ad_args) or []
+    ou_dns = [ou.get('dn') for ou in ous if ou.get('dn')]
+
+    if preferred_dn:
+        for dn in ou_dns:
+            if dn.lower() == preferred_dn.lower():
+                return dn
+
+    scored = []
+    for dn in ou_dns:
+        dn_l = dn.lower()
+        score = 0
+        if 'ou=archived users' in dn_l:
+            score += 100
+        if 'ou=archived user' in dn_l:
+            score += 90
+        if 'archived users' in dn_l:
+            score += 80
+        if 'archived user' in dn_l:
+            score += 70
+        if 'ou=archive' in dn_l:
+            score += 60
+        if 'archived' in dn_l or 'archive' in dn_l:
+            score += 40
+        if score:
+            scored.append((score, dn.count(','), dn))
+
+    if scored:
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return scored[0][2]
+
+    return preferred_dn
+
+def _disable_user_with_lifecycle(user_dn, ad_args, config):
+    """Disable user and run offboarding lifecycle (OU move + Exchange)."""
+    user_details = get_user_details(user_dn, **ad_args) or {}
+    username = _ad_attr_scalar(
+        user_details.get('sAMAccountName')
+        or user_details.get('samAccountName')
+        or user_details.get('cn')
+        or user_dn.split(',')[0].replace('CN=', '')
+    )
+    display_name = _ad_attr_scalar(user_details.get('displayName'), default=username) or username
+    email = _ad_attr_scalar(user_details.get('mail'), default='')
+    original_groups = get_user_groups(user_dn, **ad_args)
+    original_ou_dn = _extract_parent_ou_from_dn(user_dn)
+
+    org_ous = get_organization_ous(config['ad_base_dn'])
+    disabled_ou_dn = _resolve_existing_disabled_ou(config, ad_args)
+    archive_ou_dn = _resolve_existing_archive_ou(config, ad_args)
+
+    disable_ok, disable_msg = ad_disable_user(user_dn, **ad_args)
+    if not disable_ok:
+        return {'success': False, 'partial': False, 'message': disable_msg}
+
+    current_dn = user_dn
+    move_ok = True
+    move_msg = ''
+    if disabled_ou_dn and disabled_ou_dn.lower() not in user_dn.lower():
+        move_ok, move_msg = move_user_to_ou(user_dn, disabled_ou_dn, **ad_args)
+        if move_ok:
+            current_dn = _calculate_moved_dn(user_dn, disabled_ou_dn)
+
+    now = datetime.now(timezone.utc)
+    record = DisabledUserLifecycle.query.filter_by(username=username).first()
+    if not record:
+        record = DisabledUserLifecycle(username=username, original_dn=user_dn, current_dn=current_dn)
+        db.session.add(record)
+
+    record.display_name = display_name
+    record.email = email
+    record.original_dn = user_dn
+    record.current_dn = current_dn
+    record.original_ou_dn = original_ou_dn
+    record.disabled_ou_dn = disabled_ou_dn
+    record.archive_ou_dn = archive_ou_dn
+    record.disabled_at = now
+    record.archive_after = now + timedelta(days=DISABLED_USER_RETENTION_DAYS)
+    record.archived_at = None
+    record.restored_at = None
+    record.status = 'disabled'
+    record.set_original_groups(original_groups)
+    record.last_archive_error = None
+    db.session.commit()
+
+    exchange_result = _offboard_exchange_mailbox(email, username)
+    partial = not move_ok
+    if exchange_result.get('attempted') and not exchange_result.get('mailbox_disabled'):
+        partial = True
+
+    message_parts = [
+        "User disabled.",
+        f"Auto-archive scheduled after {DISABLED_USER_RETENTION_DAYS} days."
+    ]
+    if move_ok:
+        message_parts.insert(1, "Moved to Disabled OU.")
+    else:
+        message_parts.insert(1, f"Could not move to Disabled OU: {move_msg}.")
+    if exchange_result.get('attempted'):
+        message_parts.append(f"Exchange: {exchange_result.get('message', '')}")
+
+    result_state = 'partial' if partial else 'success'
+    log_user_action(
+        'disable_user',
+        username,
+        result_state,
+        {
+            'user_dn': user_dn,
+            'moved_to': disabled_ou_dn if move_ok else None,
+            'move_error': None if move_ok else move_msg,
+            'exchange': exchange_result
+        }
+    )
+
+    return {
+        'success': True,
+        'partial': partial,
+        'message': ' '.join(message_parts),
+        'archive_after': record.archive_after.isoformat(),
+        'exchange': exchange_result
+    }
+
+def run_disabled_user_archive_maintenance(force=False):
+    """Move users to archive OU when their retention period has elapsed."""
+    global _last_disabled_user_archive_run_at
+
+    now = datetime.now(timezone.utc)
+    if (
+        not force
+        and _last_disabled_user_archive_run_at
+        and (now - _last_disabled_user_archive_run_at).total_seconds() < DISABLED_USER_ARCHIVE_RUN_INTERVAL_SECONDS
+    ):
+        return
+
+    _last_disabled_user_archive_run_at = now
+
+    config = get_ad_config()
+    if not config:
+        return
+
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+
+    disabled_ou_dn = _resolve_existing_disabled_ou(config, ad_args)
+    archive_ou_dn = _resolve_existing_archive_ou(config, ad_args)
+
+    # Backfill lifecycle rows for disabled users that predate lifecycle tracking.
+    # This guarantees "disabled >= 6 months -> archived" for existing disabled users too.
+    try:
+        disabled_users = search_users(
+            '',
+            status_filter='disabled',
+            include_disabled_ou=True,
+            include_archive_ou=False,
+            exclude_ous=[],
+            **ad_args
+        )
+        for user in disabled_users:
+            username = _ad_attr_scalar(user.get('username'))
+            if not username:
+                continue
+            existing = DisabledUserLifecycle.query.filter_by(username=username).first()
+            if existing:
+                # Keep archive OU aligned with resolved OU if missing.
+                if not existing.archive_ou_dn and archive_ou_dn:
+                    existing.archive_ou_dn = archive_ou_dn
+                continue
+
+            dn = _ad_attr_scalar(user.get('dn') or user.get('distinguishedName'))
+            if not dn:
+                continue
+
+            disabled_since = _to_utc_datetime(user.get('whenChanged')) or now
+            row = DisabledUserLifecycle(
+                username=username,
+                display_name=_ad_attr_scalar(user.get('displayName'), default=username),
+                email=_ad_attr_scalar(user.get('mail'), default=''),
+                original_dn=dn,
+                current_dn=dn,
+                original_ou_dn=_extract_parent_ou_from_dn(dn),
+                disabled_ou_dn=disabled_ou_dn,
+                archive_ou_dn=archive_ou_dn,
+                disabled_at=disabled_since,
+                archive_after=disabled_since + timedelta(days=DISABLED_USER_RETENTION_DAYS),
+                status='disabled'
+            )
+            row.set_original_groups([])
+            db.session.add(row)
+        db.session.commit()
+    except Exception as e:
+        current_app.logger.warning(f"Disabled-user lifecycle backfill failed: {e}")
+        db.session.rollback()
+
+    due_records = DisabledUserLifecycle.query.filter(
+        DisabledUserLifecycle.status == 'disabled',
+        DisabledUserLifecycle.archive_after <= now
+    ).all()
+
+    for record in due_records:
+        archive_dn = record.archive_ou_dn or archive_ou_dn
+        if archive_dn:
+            record.archive_ou_dn = archive_dn
+
+        current_dn = record.current_dn
+        if not current_dn:
+            current_dn = get_user_dn_by_username(record.username, **ad_args)
+            if not current_dn:
+                record.last_archive_error = 'Could not resolve current DN for archive move.'
+                continue
+            record.current_dn = current_dn
+
+        # Already archived; reconcile DB state.
+        if archive_dn and archive_dn.lower() in current_dn.lower():
+            record.status = 'archived'
+            record.archived_at = record.archived_at or now
+            record.last_archive_error = None
+            continue
+
+        details = get_user_details(current_dn, **ad_args)
+        if details and details.get('userAccountControl'):
+            try:
+                uac = int(details.get('userAccountControl'))
+                if not (uac & 2):
+                    record.status = 'restored'
+                    record.restored_at = now
+                    record.last_archive_error = 'Skipped archive because account is enabled.'
+                    continue
+            except Exception:
+                pass
+
+        if not archive_dn:
+            record.last_archive_error = 'Archived Users OU could not be resolved.'
+            log_admin_action('user_archive_auto_move', 'failure', f"{record.username}: missing archive OU")
+            continue
+
+        ok, msg = move_user_to_ou(current_dn, archive_dn, **ad_args)
+        if ok:
+            record.current_dn = _calculate_moved_dn(current_dn, archive_dn)
+            record.status = 'archived'
+            record.archived_at = now
+            record.last_archive_error = None
+            log_admin_action('user_archive_auto_move', 'success', f"{record.username} moved to archive OU")
+        else:
+            record.last_archive_error = msg
+            log_admin_action('user_archive_auto_move', 'failure', f"{record.username}: {msg}")
+
+    if due_records:
+        db.session.commit()
+
+def _sanitize_ou_name(raw_name):
+    """Allow common OU-safe characters and collapse whitespace."""
+    if not raw_name:
+        return ''
+    cleaned = ''.join(ch for ch in str(raw_name).strip() if ch.isalnum() or ch in (' ', '-', '_', '&', '.'))
+    return ' '.join(cleaned.split())
+
+def _sanitize_group_sam(raw_name):
+    """sAMAccountName-safe group token."""
+    if not raw_name:
+        return ''
+    return ''.join(ch for ch in str(raw_name).strip() if ch.isalnum() or ch in ('-', '_', '.'))[:64]
+
+def _parse_department_hierarchy_text(raw_text):
+    """
+    Parse department hierarchy text.
+    Format examples:
+      IT: Helpdesk, Network, Security
+      Facilities: Maint | Housekeeping
+      HR
+    """
+    hierarchy = {}
+    if not raw_text:
+        return hierarchy, None
+
+    lines = [line.strip() for line in str(raw_text).splitlines()]
+    for line in lines:
+        if not line or line.startswith('#'):
+            continue
+        if ':' in line:
+            dept_raw, subs_raw = line.split(':', 1)
+            dept = _sanitize_ou_name(dept_raw)
+            if not dept:
+                continue
+            sub_tokens = []
+            for token in subs_raw.replace('|', ',').split(','):
+                sub = _sanitize_ou_name(token)
+                if sub and sub.lower() not in [s.lower() for s in sub_tokens]:
+                    sub_tokens.append(sub)
+            hierarchy[dept] = sub_tokens
+        else:
+            dept = _sanitize_ou_name(line)
+            if dept:
+                hierarchy[dept] = hierarchy.get(dept, [])
+    return hierarchy, None
+
+def _parse_department_hierarchy_file(uploaded_file):
+    """Parse department hierarchy from uploaded .csv/.json/.txt file."""
+    if not uploaded_file or not getattr(uploaded_file, 'filename', ''):
+        return {}, "No hierarchy file uploaded."
+
+    filename = uploaded_file.filename.lower()
+    raw = uploaded_file.read()
+    try:
+        text = raw.decode('utf-8-sig')
+    except Exception:
+        return {}, "Unable to decode hierarchy file as UTF-8."
+
+    if filename.endswith('.json'):
+        try:
+            payload = json.loads(text)
+        except Exception as e:
+            return {}, f"Invalid JSON hierarchy file: {e}"
+        hierarchy = {}
+        if isinstance(payload, dict):
+            for dept_raw, subs in payload.items():
+                dept = _sanitize_ou_name(dept_raw)
+                if not dept:
+                    continue
+                clean_subs = []
+                if isinstance(subs, list):
+                    for sub_raw in subs:
+                        sub = _sanitize_ou_name(sub_raw)
+                        if sub and sub.lower() not in [s.lower() for s in clean_subs]:
+                            clean_subs.append(sub)
+                hierarchy[dept] = clean_subs
+            return hierarchy, None
+        if isinstance(payload, list):
+            for row in payload:
+                if not isinstance(row, dict):
+                    continue
+                dept = _sanitize_ou_name(row.get('department') or row.get('dept') or '')
+                sub = _sanitize_ou_name(row.get('sub_ou') or row.get('sub') or row.get('child_ou') or '')
+                if not dept:
+                    continue
+                hierarchy.setdefault(dept, [])
+                if sub and sub.lower() not in [s.lower() for s in hierarchy[dept]]:
+                    hierarchy[dept].append(sub)
+            return hierarchy, None
+        return {}, "JSON hierarchy must be an object or array."
+
+    if filename.endswith('.csv'):
+        try:
+            reader = csv.DictReader(io.StringIO(text))
+            hierarchy = {}
+            for row in reader:
+                if not isinstance(row, dict):
+                    continue
+                dept = _sanitize_ou_name(
+                    row.get('department') or row.get('dept') or row.get('Department') or row.get('Dept') or ''
+                )
+                sub = _sanitize_ou_name(
+                    row.get('sub_ou') or row.get('sub') or row.get('SubOU') or row.get('Sub OU') or row.get('child_ou') or ''
+                )
+                if not dept:
+                    continue
+                hierarchy.setdefault(dept, [])
+                if sub and sub.lower() not in [s.lower() for s in hierarchy[dept]]:
+                    hierarchy[dept].append(sub)
+            return hierarchy, None
+        except Exception as e:
+            return {}, f"Invalid CSV hierarchy file: {e}"
+
+    # Fallback: plain text parser
+    return _parse_department_hierarchy_text(text)
+
+def _is_default_ad_administrator(bind_dn):
+    """Detect classic built-in Administrator bind DN."""
+    if not bind_dn:
+        return False
+    first_rdn = str(bind_dn).split(',', 1)[0].strip().lower()
+    return first_rdn in ('cn=administrator', 'cn=admin')
+
+def _provision_delegated_admin_from_bind(
+    source_admin_dn,
+    new_username,
+    new_password,
+    new_display_name,
+    new_email,
+    target_users_ou,
+    ad_args
+):
+    """
+    Create delegated AD admin and copy source admin group memberships.
+    Also create local Admin record for app admin role continuity.
+    """
+    normalized_username = _ad_attr_scalar(new_username, default='').strip()
+    normalized_display = _ad_attr_scalar(new_display_name, default=normalized_username).strip() or normalized_username
+    if not normalized_username or not new_password:
+        return False, "New delegated admin username and password are required."
+
+    existing_dn = get_user_dn_by_username(normalized_username, **ad_args)
+    if existing_dn:
+        return False, f"Delegated admin already exists: {normalized_username}"
+
+    ok, msg, new_user_dn = ad_create_user(
+        username=normalized_username,
+        password=new_password,
+        display_name=normalized_display,
+        mail=new_email or None,
+        target_ou=target_users_ou or ad_args.get('base_dn'),
+        **ad_args
+    )
+    if not ok or not new_user_dn:
+        return False, f"Failed to create delegated admin user: {msg}"
+
+    source_groups = get_user_groups(source_admin_dn, **ad_args) or []
+    copied_groups = 0
+    group_errors = []
+    for group_dn in source_groups:
+        g_ok, g_msg = add_user_to_group(new_user_dn, group_dn, **ad_args)
+        if g_ok:
+            copied_groups += 1
+        else:
+            group_errors.append(f"{group_dn}: {g_msg}")
+
+    admin_record = Admin.query.filter_by(username=normalized_username).first()
+    if not admin_record:
+        admin_record = Admin(username=normalized_username)
+        admin_record.password_hash = ''  # AD-authenticated admin
+        db.session.add(admin_record)
+        db.session.commit()
+
+    result_msg = f"Delegated admin {normalized_username} created. Copied {copied_groups} AD groups."
+    if group_errors:
+        result_msg += f" Group copy had {len(group_errors)} warnings."
+    return True, result_msg
+
+def _ensure_department_security_groups(departments, groups_ou_dn, ad_args):
+    """
+    Ensure one security group exists for each department.
+    Group naming convention: SG-<DepartmentToken>
+    """
+    created = []
+    skipped = []
+    errors = []
+
+    for dept in departments:
+        dept_display = _sanitize_ou_name(dept)
+        if not dept_display:
+            continue
+        sam_token = _sanitize_group_sam(dept_display.replace(' ', ''))
+        if not sam_token:
+            continue
+        group_name = f"SG-{sam_token}"
+        group_dn = f"CN={group_name},{groups_ou_dn}"
+        ldap_filter = f"(|(cn={group_name})(sAMAccountName={group_name}))"
+
+        try:
+            with ad_connection(**ad_args) as conn:
+                conn.search(groups_ou_dn, ldap_filter, search_scope=ldap3.SUBTREE, attributes=['distinguishedName'])
+                if conn.entries:
+                    skipped.append(group_name)
+                    continue
+
+                attrs = {
+                    'objectClass': ['top', 'group'],
+                    'sAMAccountName': group_name,
+                    'groupType': -2147483646,  # Global Security Group
+                    'description': f"Department security group for {dept_display}"
+                }
+                ok = conn.add(group_dn, attributes=attrs)
+                if ok:
+                    created.append(group_name)
+                else:
+                    errors.append(f"{group_name}: {conn.result.get('description', 'unknown LDAP error')}")
+        except Exception as e:
+            errors.append(f"{group_name}: {e}")
+
+    return {
+        'created': created,
+        'skipped': skipped,
+        'errors': errors
+    }
+
+def _ensure_lifecycle_ous_under_users(users_ou_dn, ad_args):
+    """
+    Ensure lifecycle OUs exist under the configured Users OU:
+    - OU=Disabled Users,<Users OU>
+    - OU=Archived Users,<Users OU>
+    """
+    if not users_ou_dn:
+        return False, "Users OU is required to create lifecycle OUs.", {}
+
+    desired = [
+        ('Disabled Users', users_ou_dn),
+        ('Archived Users', users_ou_dn)
+    ]
+    existing_dns = {ou.get('dn', '').lower() for ou in (list_ous(**ad_args) or []) if ou.get('dn')}
+    created = []
+    skipped = []
+    errors = []
+
+    for ou_name, parent_dn in desired:
+        ou_dn = f"OU={ou_name},{parent_dn}"
+        if ou_dn.lower() in existing_dns:
+            skipped.append(ou_dn)
+            continue
+        ok, msg = create_ou(ou_name, parent_dn, **ad_args)
+        if ok:
+            created.append(ou_dn)
+            existing_dns.add(ou_dn.lower())
+        else:
+            errors.append(f"{ou_dn}: {msg}")
+
+    return len(errors) == 0, (
+        f"Lifecycle OUs ready. Created {len(created)}, existing {len(skipped)}."
+        if not errors else
+        f"Lifecycle OU setup had {len(errors)} errors."
+    ), {
+        'created': created,
+        'skipped': skipped,
+        'errors': errors,
+        'disabled_users_ou': f"OU=Disabled Users,{users_ou_dn}",
+        'archive_users_ou': f"OU=Archived Users,{users_ou_dn}"
+    }
+
+def _build_department_entries_from_ous(ous, primary_users_ou):
+    """
+    Build top-level department + sub-OU entries from OUs under primary users OU.
+    Returns list of dicts suitable for manager UI.
+    """
+    if not primary_users_ou:
+        return []
+
+    skip_names = {
+        'sunray users', 'users', 'disabled users', 'disabled user',
+        'archived users', 'archived user', 'archive users',
+        'service accounts', 'internal tools', 'sunray',
+        'owners', 'owner', 'administrators', 'admins',
+        'managers', 'management', 'western gaming', 'racing security',
+        'vendor logins', 'vendor login', 'vendors'
+    }
+
+    normalized_primary = primary_users_ou.lower()
+    top_map = {}
+
+    for ou in ous:
+        ou_dn = ou.get('dn', '') if isinstance(ou, dict) else (ou.dn if hasattr(ou, 'dn') else str(ou))
+        if not ou_dn:
+            continue
+        dn_l = ou_dn.lower()
+        suffix = ',' + normalized_primary
+        if not dn_l.endswith(suffix):
+            continue
+
+        relative_dn = ou_dn[:len(ou_dn) - len(suffix)]
+        dn_parts = [p.strip() for p in relative_dn.split(',') if p.strip().startswith('OU=')]
+        if not dn_parts:
+            continue
+
+        # DN order is leaf -> parent; reverse to get top -> leaf.
+        hierarchy = [p[3:] for p in reversed(dn_parts) if len(p) > 3]
+        if not hierarchy:
+            continue
+        top_name = hierarchy[0]
+        if top_name.lower() in skip_names:
+            continue
+
+        if top_name not in top_map:
+            top_map[top_name] = {
+                'name': top_name,
+                'dn': f"OU={top_name},{primary_users_ou}",
+                'key': top_name,
+                'is_sub': False,
+                'parent_name': None,
+                'sub_entries': {}
+            }
+
+        if len(hierarchy) > 1:
+            sub_chain = hierarchy[1:]
+            sub_display = ' / '.join(sub_chain)
+            sub_key = f"{top_name}::{sub_display}"
+            top_map[top_name]['sub_entries'][sub_key] = {
+                'name': sub_display,
+                'dn': ou_dn,
+                'key': sub_key,
+                'is_sub': True,
+                'parent_name': top_name
+            }
+
+    entries = []
+    for top_name in sorted(top_map.keys(), key=lambda x: x.lower()):
+        top = top_map[top_name]
+        entries.append({
+            'name': top['name'],
+            'dn': top['dn'],
+            'key': top['key'],
+            'is_sub': False,
+            'parent_name': None
+        })
+        for sub_key in sorted(top['sub_entries'].keys(), key=lambda x: x.lower()):
+            entries.append(top['sub_entries'][sub_key])
+    return entries
+
+def _extract_sub_department_label(user_dn, top_department_dn):
+    """Extract sub-OU chain under a top-level department OU from user DN."""
+    if not user_dn or not top_department_dn:
+        return None
+    dn_l = user_dn.lower()
+    top_l = ',' + top_department_dn.lower()
+    if top_l not in dn_l:
+        return None
+    idx = dn_l.find(top_l)
+    prefix = user_dn[:idx]
+    ou_parts = [p.strip() for p in prefix.split(',') if p.strip().startswith('OU=')]
+    if not ou_parts:
+        return None
+    # Closest OU to user first; reverse for top->leaf under department.
+    labels = [p[3:] for p in reversed(ou_parts)]
+    return ' / '.join(labels) if labels else None
+
+def _resolve_default_manager(ad_args):
+    """
+    Resolve the fallback manager from policy candidates.
+    Returns dict with username/dn/display or None.
+    """
+    policy = _load_manager_policy()
+    candidates = policy.get('default_manager_candidates') or []
+    for candidate in candidates:
+        identity = _resolve_ad_user_identity(candidate, ad_args)
+        if identity:
+            return identity
+    return None
+
+
+def _load_manager_policy():
+    """
+    Load manager policy from local, gitignored file:
+    instance/manager_policy.json
+
+    Repository default is generic and does not include org-specific rules.
+    """
+    policy = {
+        'default_manager_candidates': [],
+        'top_manager_candidates': [],
+        'manager_exclusions': [],
+        'manager_aliases': {},
+        'forced_manager_candidates': [],
+        'explicit_assignments': [],
+        'dual_reports': [],
+        'department_sync': {
+            'exclude_employee_candidates': [],
+            'department_overrides': []
+        }
+    }
+
+    policy_path = os.path.join('instance', 'manager_policy.json')
+    if not os.path.exists(policy_path):
+        return policy
+    try:
+        with open(policy_path, 'r') as f:
+            loaded = json.load(f) or {}
+    except Exception as exc:
+        current_app.logger.warning(f"Unable to load manager policy: {exc}")
+        return policy
+
+    if not isinstance(loaded, dict):
+        return policy
+
+    for key in [
+        'default_manager_candidates',
+        'top_manager_candidates',
+        'manager_exclusions',
+        'forced_manager_candidates',
+        'explicit_assignments',
+        'dual_reports'
+    ]:
+        if isinstance(loaded.get(key), list):
+            policy[key] = loaded.get(key)
+
+    if isinstance(loaded.get('manager_aliases'), dict):
+        policy['manager_aliases'] = loaded.get('manager_aliases')
+
+    if isinstance(loaded.get('department_sync'), dict):
+        dept_sync = loaded.get('department_sync')
+        if isinstance(dept_sync.get('exclude_employee_candidates'), list):
+            policy['department_sync']['exclude_employee_candidates'] = dept_sync.get('exclude_employee_candidates')
+        if isinstance(dept_sync.get('department_overrides'), list):
+            policy['department_sync']['department_overrides'] = dept_sync.get('department_overrides')
+
+    return policy
+
+def _resolve_ad_user_identity(query_value, ad_args):
+    """Resolve AD user identity by username/display string."""
+    if not query_value:
+        return None
+    users = search_users(query_value, **ad_args) or []
+    for user in users:
+        username = _ad_attr_scalar(user.get('sAMAccountName') or user.get('username')).strip()
+        dn = _ad_attr_scalar(user.get('distinguishedName') or user.get('dn')).strip()
+        display = _ad_attr_scalar(user.get('displayName') or user.get('cn') or username).strip()
+        if username and dn:
+            return {'username': username, 'dn': dn, 'display': display}
+    return None
+
+def _auto_sync_manager_chain(ad_args, all_managers):
+    """
+    Policy-driven manager chain sync.
+    Uses local policy from instance/manager_policy.json.
+    """
+    policy = _load_manager_policy()
+
+    def _resolve_from_candidates(candidates):
+        if isinstance(candidates, str):
+            candidates = [candidates]
+        for candidate in candidates or []:
+            identity = _resolve_ad_user_identity(candidate, ad_args)
+            if identity:
+                return identity
+        return None
+
+    default_mgr = _resolve_default_manager(ad_args)
+    if not default_mgr:
+        return {'updated': 0, 'assigned': 0, 'skipped': 0, 'missing': 'default_manager'}
+
+    top_mgr = None
+    top_candidates = policy.get('top_manager_candidates') or []
+    if top_candidates:
+        top_mgr = _resolve_from_candidates(top_candidates)
+        if not top_mgr:
+            return {'updated': 0, 'assigned': 0, 'skipped': 0, 'missing': 'top_manager'}
+
+    excluded_manager_names = {name.strip().lower() for name in (policy.get('manager_exclusions') or []) if isinstance(name, str)}
+    updated = 0
+    assigned = 0
+    skipped = 0
+    special_exception_usernames = set()
+
+    def _get_employee_report(employee_username):
+        # SQLite in some deployed DBs enforces a unique constraint on employee_username
+        # regardless of dotted-line flag. Always resolve by employee_username first.
+        return (
+            UserDirectReport.query
+            .filter_by(employee_username=employee_username)
+            .order_by(UserDirectReport.is_dotted_line.asc(), UserDirectReport.updated_at.desc())
+            .first()
+        )
+
+    def _upsert_employee_chain(
+        employee_identity,
+        manager_identity=None,
+        outside_manager_name=None,
+        department='Management',
+        is_same_department=False,
+        supervisor_identity=None,
+        outside_supervisor_name=None
+    ):
+        nonlocal updated, assigned
+        existing = _get_employee_report(employee_identity['username'])
+        if existing:
+            changed = False
+            if existing.is_dotted_line:
+                existing.is_dotted_line = False
+                changed = True
+
+            if manager_identity:
+                if existing.manager_username != manager_identity['username']:
+                    existing.manager_username = manager_identity['username']
+                    changed = True
+                if existing.manager_dn != manager_identity['dn']:
+                    existing.manager_dn = manager_identity['dn']
+                    changed = True
+                if existing.is_outside_manager:
+                    existing.is_outside_manager = False
+                    existing.manager_display_name = None
+                    changed = True
+            elif outside_manager_name:
+                if existing.manager_username != outside_manager_name:
+                    existing.manager_username = outside_manager_name
+                    changed = True
+                if existing.manager_dn is not None:
+                    existing.manager_dn = None
+                    changed = True
+                if existing.manager_display_name != outside_manager_name:
+                    existing.manager_display_name = outside_manager_name
+                    changed = True
+                if not existing.is_outside_manager:
+                    existing.is_outside_manager = True
+                    changed = True
+
+            if existing.employee_dn != employee_identity['dn']:
+                existing.employee_dn = employee_identity['dn']
+                changed = True
+            if existing.employee_display_name != employee_identity['display']:
+                existing.employee_display_name = employee_identity['display']
+                changed = True
+            if existing.department != department:
+                existing.department = department
+                changed = True
+            if existing.is_same_department != is_same_department:
+                existing.is_same_department = is_same_department
+                changed = True
+
+            if supervisor_identity or outside_supervisor_name:
+                if not existing.is_indirect_report:
+                    existing.is_indirect_report = True
+                    changed = True
+                if supervisor_identity:
+                    if existing.supervisor_username != supervisor_identity['username']:
+                        existing.supervisor_username = supervisor_identity['username']
+                        changed = True
+                    if existing.supervisor_dn != supervisor_identity['dn']:
+                        existing.supervisor_dn = supervisor_identity['dn']
+                        changed = True
+                    if existing.supervisor_display_name != supervisor_identity['display']:
+                        existing.supervisor_display_name = supervisor_identity['display']
+                        changed = True
+                    if existing.is_outside_supervisor:
+                        existing.is_outside_supervisor = False
+                        changed = True
+                else:
+                    if existing.supervisor_username != outside_supervisor_name:
+                        existing.supervisor_username = outside_supervisor_name
+                        changed = True
+                    if existing.supervisor_dn is not None:
+                        existing.supervisor_dn = None
+                        changed = True
+                    if existing.supervisor_display_name != outside_supervisor_name:
+                        existing.supervisor_display_name = outside_supervisor_name
+                        changed = True
+                    if not existing.is_outside_supervisor:
+                        existing.is_outside_supervisor = True
+                        changed = True
+            else:
+                if existing.is_indirect_report:
+                    existing.is_indirect_report = False
+                    existing.supervisor_username = None
+                    existing.supervisor_dn = None
+                    existing.supervisor_display_name = None
+                    existing.is_outside_supervisor = False
+                    changed = True
+
+            if changed:
+                existing.updated_at = datetime.now(timezone.utc)
+                updated += 1
+            return
+
+        db.session.add(UserDirectReport(
+            manager_username=manager_identity['username'] if manager_identity else outside_manager_name,
+            manager_dn=manager_identity['dn'] if manager_identity else None,
+            manager_display_name=None if manager_identity else outside_manager_name,
+            is_outside_manager=False if manager_identity else True,
+            employee_username=employee_identity['username'],
+            employee_dn=employee_identity['dn'],
+            employee_display_name=employee_identity['display'],
+            department=department,
+            is_same_department=is_same_department,
+            is_indirect_report=bool(supervisor_identity or outside_supervisor_name),
+            supervisor_username=(
+                supervisor_identity['username'] if supervisor_identity
+                else (outside_supervisor_name if outside_supervisor_name else None)
+            ),
+            supervisor_dn=(supervisor_identity['dn'] if supervisor_identity else None),
+            supervisor_display_name=(
+                supervisor_identity['display'] if supervisor_identity
+                else (outside_supervisor_name if outside_supervisor_name else None)
+            ),
+            is_outside_supervisor=False if supervisor_identity else bool(outside_supervisor_name),
+            is_dotted_line=False
+        ))
+        assigned += 1
+
+    # Explicit single assignments
+    for rule in policy.get('explicit_assignments') or []:
+        if not isinstance(rule, dict):
+            continue
+        employee_identity = _resolve_from_candidates(rule.get('employee_candidates'))
+        if not employee_identity:
+            continue
+        manager_identity = _resolve_from_candidates(rule.get('manager_candidates'))
+        outside_manager_name = (rule.get('outside_manager_name') or '').strip() or None
+        if not manager_identity and not outside_manager_name:
+            continue
+        _upsert_employee_chain(
+            employee_identity=employee_identity,
+            manager_identity=manager_identity,
+            outside_manager_name=outside_manager_name,
+            department=(rule.get('department') or 'Management').strip() or 'Management',
+            is_same_department=bool(rule.get('is_same_department', False)),
+            supervisor_identity=_resolve_from_candidates(rule.get('supervisor_candidates')),
+            outside_supervisor_name=(rule.get('outside_supervisor_name') or '').strip() or None
+        )
+        if rule.get('exclude_from_default_route', True):
+            special_exception_usernames.add(employee_identity['username'].lower())
+
+    # Dual reports (primary manager + supervisor manager)
+    for rule in policy.get('dual_reports') or []:
+        if not isinstance(rule, dict):
+            continue
+        primary_identity = _resolve_from_candidates(rule.get('primary_manager_candidates'))
+        secondary_identity = _resolve_from_candidates(rule.get('secondary_manager_candidates'))
+        if not primary_identity:
+            continue
+
+        targets = {}
+        for target in rule.get('target_candidates') or []:
+            target_identity = _resolve_from_candidates(target if isinstance(target, list) else [target])
+            if target_identity:
+                targets[target_identity['username'].lower()] = target_identity
+
+        ou_contains_filters = [f.lower() for f in (rule.get('target_ou_contains') or []) if isinstance(f, str) and f.strip()]
+        if ou_contains_filters:
+            scoped_users = search_users('', status_filter='all', **ad_args) or []
+            for user in scoped_users:
+                user_dn = _ad_attr_scalar(user.get('distinguishedName') or user.get('dn')).strip()
+                dn_l = user_dn.lower()
+                if not any(token in dn_l for token in ou_contains_filters):
+                    continue
+                username = _ad_attr_scalar(user.get('sAMAccountName') or user.get('username')).strip()
+                if not username:
+                    continue
+                targets[username.lower()] = {
+                    'username': username,
+                    'dn': user_dn,
+                    'display': _ad_attr_scalar(user.get('displayName') or user.get('cn') or username)
+                }
+
+        dept_like = (rule.get('include_department_manager_like') or '').strip()
+        if dept_like:
+            dept_mgr = DepartmentManager.query.filter(DepartmentManager.department.ilike(f"%{dept_like}%")).first()
+            if dept_mgr and dept_mgr.manager_username:
+                dept_mgr_identity = _resolve_ad_user_identity(dept_mgr.manager_username, ad_args)
+                if dept_mgr_identity:
+                    targets[dept_mgr_identity['username'].lower()] = dept_mgr_identity
+
+        for target_identity in targets.values():
+            if target_identity['username'].lower() in {primary_identity['username'].lower(), (secondary_identity['username'].lower() if secondary_identity else '')}:
+                continue
+            _upsert_employee_chain(
+                employee_identity=target_identity,
+                manager_identity=primary_identity,
+                department=(rule.get('department') or 'Management').strip() or 'Management',
+                is_same_department=bool(rule.get('is_same_department', False)),
+                supervisor_identity=secondary_identity
+            )
+            if rule.get('exclude_from_default_route', True):
+                special_exception_usernames.add(target_identity['username'].lower())
+
+    for manager_username in sorted(all_managers):
+        if not manager_username:
+            continue
+        lower_name = manager_username.strip().lower()
+        if lower_name in excluded_manager_names or lower_name in special_exception_usernames:
+            skipped += 1
+            continue
+        if lower_name == default_mgr['username'].lower():
+            skipped += 1
+            continue
+        if top_mgr and lower_name == top_mgr['username'].lower():
+            skipped += 1
+            continue
+
+        manager_identity = _resolve_ad_user_identity(manager_username, ad_args)
+        if not manager_identity:
+            skipped += 1
+            continue
+
+        # Keep self-assignment impossible.
+        if manager_identity['username'].lower() == default_mgr['username'].lower():
+            skipped += 1
+            continue
+
+        _upsert_employee_chain(
+            employee_identity=manager_identity,
+            manager_identity=default_mgr,
+            department='Management',
+            is_same_department=False
+        )
+
+    # Optional top-manager chain (e.g., default manager reports to top manager).
+    if top_mgr:
+        _upsert_employee_chain(
+            employee_identity=default_mgr,
+            manager_identity=top_mgr,
+            department='Management',
+            is_same_department=False
+        )
+
+    if assigned or updated:
+        db.session.commit()
+    return {'updated': updated, 'assigned': assigned, 'skipped': skipped, 'missing': None}
+
+def _auto_sync_department_direct_reports(ad_args, top_departments, dept_managers, primary_users_ou=None):
+    """
+    Keep primary direct reports in sync with current AD users:
+    - missing department manager -> fallback to default manager from local policy
+    - new users get assigned
+    - removed users are cleaned up
+    """
+    policy = _load_manager_policy()
+    default_manager = _resolve_default_manager(ad_args)
+    default_missing = False
+
+    excluded_username_tokens = {'services', 'service', 'vendor', 'vendors'}
+    excluded_dn_tokens = (
+        'ou=vendor',
+        'ou=vendors',
+        'ou=vendor logins',
+        'ou=service accounts',
+        'ou=internal tools'
+    )
+    dept_sync = policy.get('department_sync') or {}
+    dept_excluded_usernames = set()
+    for candidate in dept_sync.get('exclude_employee_candidates') or []:
+        identity = _resolve_ad_user_identity(candidate, ad_args)
+        if identity and identity.get('username'):
+            dept_excluded_usernames.add(identity['username'].lower())
+    dept_overrides = {}
+    for override in dept_sync.get('department_overrides') or []:
+        if not isinstance(override, dict):
+            continue
+        dept_label = (override.get('department') or '').strip()
+        if not dept_label:
+            continue
+        identity = _resolve_ad_user_identity(override.get('employee_candidate'), ad_args)
+        if identity and identity.get('username'):
+            dept_overrides[identity['username'].lower()] = dept_label
+
+    def _is_excluded_user(username, dn, display):
+        dn_l = (dn or '').strip().lower()
+        username_l = (username or '').strip().lower()
+        display_l = (display or '').strip().lower()
+
+        if primary_users_ou and primary_users_ou.strip().lower() not in dn_l:
+            return True
+        if any(token in dn_l for token in excluded_dn_tokens):
+            return True
+        if username_l in excluded_username_tokens or display_l in excluded_username_tokens:
+            return True
+        if username_l in dept_excluded_usernames:
+            return True
+        return False
+
+    ad_users = search_users('', status_filter='all', **ad_args) or []
+    ad_usernames = set()
+    for u in ad_users:
+        uname = _ad_attr_scalar(u.get('sAMAccountName') or u.get('username')).strip()
+        dn = _ad_attr_scalar(u.get('distinguishedName') or u.get('dn')).strip()
+        display = _ad_attr_scalar(u.get('displayName') or u.get('cn') or uname)
+        if _is_excluded_user(uname, dn, display):
+            continue
+        if uname:
+            ad_usernames.add(uname.lower())
+
+    removed = 0
+    # Remove stale primary reports for users no longer in AD.
+    stale_reports = UserDirectReport.query.filter_by(is_dotted_line=False).all()
+    for report in stale_reports:
+        if _is_excluded_user(report.employee_username, report.employee_dn, report.employee_display_name):
+            db.session.delete(report)
+            removed += 1
+            continue
+        if (report.employee_username or '').strip().lower() not in ad_usernames:
+            db.session.delete(report)
+            removed += 1
+
+    assigned = 0
+    updated = 0
+    for dept in top_departments:
+        dept_key = dept.get('key')
+        dept_name = dept.get('name') or dept_key
+        dept_dn = dept.get('dn')
+        if not dept_key or not dept_dn:
+            continue
+
+        dept_mgr = dept_managers.get(dept_key)
+        if dept_mgr and dept_mgr.manager_username:
+            manager_username = dept_mgr.manager_username
+            manager_dn = dept_mgr.manager_dn
+            manager_display = dept_mgr.manager_display_name
+        elif default_manager:
+            manager_username = default_manager['username']
+            manager_dn = default_manager['dn']
+            manager_display = default_manager['display']
+        else:
+            default_missing = True
+            continue
+
+        is_outside_manager = False if manager_dn else True
+        if not is_outside_manager and manager_username:
+            manager_identity = _resolve_ad_user_identity(manager_username, ad_args)
+            if manager_identity:
+                manager_username = manager_identity['username']
+                manager_dn = manager_identity['dn']
+                manager_display = manager_identity.get('display') or manager_display
+
+        dept_users = [u for u in ad_users if dept_dn.lower() in _ad_attr_scalar(u.get('distinguishedName') or u.get('dn')).lower()]
+        for user in dept_users:
+            employee_username = _ad_attr_scalar(user.get('sAMAccountName') or user.get('username')).strip()
+            employee_dn = _ad_attr_scalar(user.get('distinguishedName') or user.get('dn')).strip()
+            employee_display = _ad_attr_scalar(user.get('displayName') or user.get('cn') or employee_username)
+            if not employee_username or not employee_dn:
+                continue
+            if _is_excluded_user(employee_username, employee_dn, employee_display):
+                existing_excluded = UserDirectReport.query.filter_by(employee_username=employee_username, is_dotted_line=False).first()
+                if existing_excluded:
+                    db.session.delete(existing_excluded)
+                    removed += 1
+                continue
+            effective_department = dept_overrides.get(employee_username.lower(), dept_name)
+
+            # Never self-assign.
+            if employee_username.lower() == manager_username.lower():
+                continue
+            if manager_dn and employee_dn.lower() == manager_dn.lower():
+                continue
+
+            existing = UserDirectReport.query.filter_by(employee_username=employee_username, is_dotted_line=False).first()
+            if existing:
+                changed = False
+                if existing.manager_username != manager_username:
+                    existing.manager_username = manager_username
+                    changed = True
+                if existing.manager_dn != manager_dn:
+                    existing.manager_dn = manager_dn
+                    changed = True
+                if existing.manager_display_name != (manager_display if is_outside_manager else None):
+                    existing.manager_display_name = manager_display if is_outside_manager else None
+                    changed = True
+                if existing.is_outside_manager != is_outside_manager:
+                    existing.is_outside_manager = is_outside_manager
+                    changed = True
+                if existing.department != effective_department:
+                    existing.department = effective_department
+                    changed = True
+                if not existing.is_same_department:
+                    existing.is_same_department = True
+                    changed = True
+                if existing.is_indirect_report:
+                    existing.is_indirect_report = False
+                    existing.supervisor_username = None
+                    existing.supervisor_dn = None
+                    existing.supervisor_display_name = None
+                    existing.is_outside_supervisor = False
+                    changed = True
+                if changed:
+                    existing.updated_at = datetime.now(timezone.utc)
+                    updated += 1
+            else:
+                db.session.add(UserDirectReport(
+                    manager_username=manager_username,
+                    manager_dn=manager_dn,
+                    manager_display_name=manager_display if is_outside_manager else None,
+                    is_outside_manager=is_outside_manager,
+                    employee_username=employee_username,
+                    employee_dn=employee_dn,
+                    employee_display_name=employee_display,
+                    department=effective_department,
+                    is_same_department=True,
+                    is_dotted_line=False
+                ))
+                assigned += 1
+
+    if assigned or updated or removed:
+        db.session.commit()
+    return {'assigned': assigned, 'updated': updated, 'removed': removed, 'default_missing': default_missing}
+
+def _ensure_default_ou_mapping(company_name, base_dn, ad_args, user_placement_mode='single_users_ou', department_structure=None):
+    """
+    Create a default OU hierarchy for greenfield environments.
+    Safe to run repeatedly: existing OUs are skipped.
+    """
+    company_ou = _sanitize_ou_name(company_name)
+    if not company_ou:
+        return False, "Company name is required for default OU mapping.", {}
+
+    root_dn = f"OU={company_ou},{base_dn}"
+    desired_ous = [
+        (company_ou, base_dn),
+        ('Users', root_dn),
+        ('Computers', root_dn),
+        ('Servers', root_dn),
+        ('Groups', root_dn),
+        ('Disabled Users', root_dn),
+        ('Archived Users', root_dn),
+        ('Service Accounts', root_dn),
+        ('Internal Tools', root_dn)
+    ]
+    users_root_dn = f"OU=Users,{root_dn}"
+    cleaned_departments = []
+    cleaned_department_structure = {}
+    if user_placement_mode == 'department_ous':
+        for dept, subs in (department_structure or {}).items():
+            dept_name = _sanitize_ou_name(dept)
+            if not dept_name:
+                continue
+            if dept_name.lower() not in [d.lower() for d in cleaned_departments]:
+                cleaned_departments.append(dept_name)
+            cleaned_department_structure[dept_name] = []
+            for sub in (subs or []):
+                sub_name = _sanitize_ou_name(sub)
+                if sub_name and sub_name.lower() not in [s.lower() for s in cleaned_department_structure[dept_name]]:
+                    cleaned_department_structure[dept_name].append(sub_name)
+
+        for dept_name in cleaned_departments:
+            desired_ous.append((dept_name, users_root_dn))
+            dept_dn = f"OU={dept_name},{users_root_dn}"
+            for sub_name in cleaned_department_structure.get(dept_name, []):
+                desired_ous.append((sub_name, dept_dn))
+
+    existing_dns = {ou.get('dn', '').lower() for ou in (list_ous(**ad_args) or []) if ou.get('dn')}
+    created = []
+    skipped = []
+    errors = []
+
+    for ou_name, parent_dn in desired_ous:
+        ou_dn = f"OU={ou_name},{parent_dn}"
+        if ou_dn.lower() in existing_dns:
+            skipped.append(ou_dn)
+            continue
+        ok, msg = create_ou(ou_name, parent_dn, **ad_args)
+        if ok:
+            created.append(ou_dn)
+            existing_dns.add(ou_dn.lower())
+        else:
+            errors.append(f"{ou_dn}: {msg}")
+
+    groups_ou_dn = f"OU=Groups,{root_dn}"
+    group_results = {'created': [], 'skipped': [], 'errors': []}
+    if cleaned_departments:
+        group_results = _ensure_department_security_groups(cleaned_departments, groups_ou_dn, ad_args)
+        errors.extend(group_results['errors'])
+
+    mapping = {
+        'primary_users_ou': users_root_dn,
+        'disabled_users_ou': f"OU=Disabled Users,{root_dn}",
+        'archive_users_ou': f"OU=Archived Users,{root_dn}",
+        'service_accounts_ou': f"OU=Service Accounts,{root_dn}",
+        'internal_tools_ou': f"OU=Internal Tools,{root_dn}",
+        'primary_users_label': company_ou,
+        'user_placement_mode': user_placement_mode
+    }
+    if cleaned_departments:
+        mapping['department_user_ous'] = [f"OU={dept},{users_root_dn}" for dept in cleaned_departments]
+        mapping['department_sub_ous'] = {
+            dept: [f"OU={sub},OU={dept},{users_root_dn}" for sub in cleaned_department_structure.get(dept, [])]
+            for dept in cleaned_departments
+        }
+
+    if errors:
+        return False, f"Default OU mapping completed with errors ({len(errors)}).", {
+            'created': created,
+            'skipped': skipped,
+            'errors': errors,
+            'mapping': mapping,
+            'departments': cleaned_departments,
+            'department_groups': group_results,
+            'department_structure': cleaned_department_structure
+        }
+    return True, f"Default OU mapping ready. Created {len(created)} OUs, skipped {len(skipped)} existing.", {
+        'created': created,
+        'skipped': skipped,
+        'errors': [],
+        'mapping': mapping,
+        'departments': cleaned_departments,
+        'department_groups': group_results,
+        'department_structure': cleaned_department_structure
+    }
+
+def trigger_all_active_mailbox_refresh(force=False):
+    """Refresh and persist mailbox sizes for all active users on a timed interval."""
+    global _last_mailbox_refresh_run_at, _mailbox_refresh_in_progress
+
+    now = datetime.now(timezone.utc)
+    with _mailbox_refresh_lock:
+        if _mailbox_refresh_in_progress:
+            return
+        if (
+            not force
+            and _last_mailbox_refresh_run_at
+            and (now - _last_mailbox_refresh_run_at).total_seconds() < MAILBOX_REFRESH_INTERVAL_SECONDS
+        ):
+            return
+        _mailbox_refresh_in_progress = True
+        _last_mailbox_refresh_run_at = now
+
+    app_obj = current_app._get_current_object()
+
+    def _refresh_job():
+        global _mailbox_refresh_in_progress
+        try:
+            with app_obj.app_context():
+                config = get_exchange_config()
+                if not config or not config.get('enabled'):
+                    return
+
+                ad_config = get_ad_config()
+                if not ad_config:
+                    return
+
+                ad_args = {
+                    'server': ad_config['ad_server'],
+                    'port': ad_config['ad_port'],
+                    'bind_user': ad_config['ad_bind_dn'],
+                    'bind_password': ad_config['ad_password'],
+                    'base_dn': ad_config['ad_base_dn']
+                }
+                users = search_users(
+                    '',
+                    status_filter='enabled',
+                    exclude_ous=[],
+                    include_disabled_ou=True,
+                    include_archive_ou=True,
+                    **ad_args
+                )
+                user_emails = list({
+                    (u.get('mail') or '').strip().lower()
+                    for u in users
+                    if (u.get('mail') or '').strip()
+                })
+
+                mailbox_sizes = {}
+                if user_emails:
+                    exchange = ExchangeManager(
+                        exchange_server=config['exchange_server'],
+                        username=config['username'],
+                        password=config['password'],
+                        domain=config['domain']
+                    )
+                    mailbox_sizes = exchange.get_mailbox_sizes(user_emails)
+
+                from .models import MailboxSizeCache
+                cache_entry = db.session.query(MailboxSizeCache).filter_by(
+                    username='__system__',
+                    query='',
+                    status_filter='enabled',
+                    exclude_ous='__all_active__'
+                ).first()
+                if cache_entry:
+                    cache_entry.mailbox_sizes = json.dumps(mailbox_sizes)
+                    cache_entry.updated_at = datetime.now(timezone.utc)
+                else:
+                    cache_entry = MailboxSizeCache(
+                        username='__system__',
+                        query='',
+                        status_filter='enabled',
+                        exclude_ous='__all_active__',
+                        mailbox_sizes=json.dumps(mailbox_sizes)
+                    )
+                    db.session.add(cache_entry)
+                db.session.commit()
+                current_app.logger.info(
+                    f"All-active mailbox refresh complete: {len(mailbox_sizes)} cached of {len(user_emails)} users"
+                )
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.warning(f"All-active mailbox refresh failed: {e}")
+        finally:
+            with _mailbox_refresh_lock:
+                _mailbox_refresh_in_progress = False
+
+    threading.Thread(target=_refresh_job, daemon=True).start()
+
 @main.before_app_request
 def enforce_setup():
+    try:
+        run_disabled_user_archive_maintenance()
+    except Exception as e:
+        current_app.logger.warning(f"Disabled-user archive maintenance error: {e}")
+    try:
+        trigger_all_active_mailbox_refresh()
+    except Exception as e:
+        current_app.logger.warning(f"Mailbox refresh maintenance error: {e}")
+
     # Allow access to setup, admin_register, admin_login, welcome, home, and static without AD config
     allowed_endpoints = (
         'main.setup', 'main.admin_register', 'main.admin_login', 'main.welcome', 'main.home', 'static'
@@ -109,9 +1568,48 @@ def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not current_user.is_authenticated:
-            return redirect(url_for('main.admin_login'))
-        # Add more admin checks if needed
-        return f(*args, **kwargs)
+            return redirect(url_for('main.unified_login'))
+        
+        # Check if user is admin via session role
+        role = session.get('role', 'user')
+        view_mode = session.get('view_mode', role)
+        
+        # If session says admin, allow access
+        if role == 'admin' or view_mode == 'admin':
+            return f(*args, **kwargs)
+        
+        # Check if user exists in Admin table (local admin)
+        admin_record = Admin.query.filter_by(username=current_user.username).first()
+        if admin_record:
+            # User is in Admin table - grant admin access
+            session['role'] = 'admin'
+            session['view_mode'] = 'admin'
+            return f(*args, **kwargs)
+        
+        # If AD is configured, check if user is in admin group
+        config = get_ad_config()
+        if config:
+            try:
+                is_admin_user = is_user_in_admin_group(
+                    current_user.username,
+                    server=config['ad_server'],
+                    port=config['ad_port'],
+                    bind_user=config['ad_bind_dn'],
+                    bind_password=config['ad_password'],
+                    base_dn=config['ad_base_dn']
+                )
+                if is_admin_user:
+                    # Update session to reflect admin status
+                    session['role'] = 'admin'
+                    session['view_mode'] = 'admin'
+                    return f(*args, **kwargs)
+            except Exception as e:
+                # If AD check fails, fall back to local admin check
+                pass
+        
+        # Not an admin - deny access
+        flash('Access denied. Administrator privileges required.', 'danger')
+        return redirect(url_for('main.dashboard'))
     return decorated_function
 
 @main.route('/admin/register', methods=['GET', 'POST'])
@@ -157,6 +1655,31 @@ def setup():
         # Get password from secure storage or form
         from .credentials import get_credential
         ad_password = request.form.get('ad_password') or get_credential('ad_password') or ''
+        setup_mode = request.form.get('setup_mode', 'existing')
+        use_default_mapping = request.form.get('use_default_mapping') == 'on'
+        company_name = request.form.get('company_name', '').strip()
+        user_placement_mode = request.form.get('user_placement_mode', 'single_users_ou')
+        hierarchy_input_mode = request.form.get('hierarchy_input_mode', 'manual')
+        departments_raw = request.form.get('department_hierarchy_manual', '').strip()
+        department_structure = {}
+        parse_error = None
+        if user_placement_mode == 'department_ous':
+            if hierarchy_input_mode == 'file':
+                department_structure, parse_error = _parse_department_hierarchy_file(
+                    request.files.get('department_hierarchy_file')
+                )
+            else:
+                department_structure, parse_error = _parse_department_hierarchy_text(departments_raw)
+                # Backward compatibility: comma-separated departments from old field.
+                if not department_structure and request.form.get('department_ous', '').strip():
+                    fallback_depts = [d.strip() for d in request.form.get('department_ous', '').split(',') if d.strip()]
+                    department_structure = {_sanitize_ou_name(d): [] for d in fallback_depts if _sanitize_ou_name(d)}
+        source_is_default_admin = _is_default_ad_administrator(request.form.get('ad_bind_dn', ''))
+        clone_default_admin = request.form.get('clone_default_admin') == 'on'
+        delegated_admin_username = request.form.get('delegated_admin_username', '').strip()
+        delegated_admin_password = request.form.get('delegated_admin_password', '')
+        delegated_admin_display_name = request.form.get('delegated_admin_display_name', '').strip()
+        delegated_admin_email = request.form.get('delegated_admin_email', '').strip()
         
         # Save password to secure storage if provided
         if request.form.get('ad_password'):
@@ -173,16 +1696,16 @@ def setup():
             'groups_ou': request.form.get('groups_ou', '')
         }
         
-        # Set up organization_ous if users_ou is provided
-        if request.form.get('users_ou'):
-            if 'organization_ous' not in config_data:
-                config_data['organization_ous'] = {}
-            config_data['organization_ous']['primary_users_ou'] = request.form.get('users_ou')
-            config_data['organization_ous']['primary_users_label'] = request.form.get('users_ou').split('OU=')[-1].split(',')[0] if 'OU=' in request.form.get('users_ou') else 'Users'
-        
-        save_ad_config(config_data)
         # Get password from secure storage for testing
         test_password = get_credential('ad_password') or request.form.get('ad_password', '')
+
+        ad_args = {
+            'server': config_data['ad_server'],
+            'port': config_data['ad_port'],
+            'bind_user': config_data['ad_bind_dn'],
+            'bind_password': test_password,
+            'base_dn': config_data['ad_base_dn']
+        }
         
         ok, msg = test_ad_connection(
             server=config_data['ad_server'],
@@ -191,6 +1714,91 @@ def setup():
             bind_password=test_password
         )
         if ok:
+            if source_is_default_admin and clone_default_admin:
+                if not delegated_admin_username or not delegated_admin_password:
+                    flash('Delegated admin username and password are required when cloning Administrator.', 'danger')
+                    return render_template('setup.html', config=config_data)
+
+            if setup_mode != 'new':
+                if not request.form.get('users_ou', '').strip():
+                    flash('Existing AD setup requires manual Users OU mapping.', 'danger')
+                    return render_template('setup.html', config=config_data)
+                if not request.form.get('groups_ou', '').strip():
+                    flash('Existing AD setup requires manual Groups OU mapping.', 'danger')
+                    return render_template('setup.html', config=config_data)
+
+            if setup_mode == 'new' and use_default_mapping:
+                if user_placement_mode == 'department_ous' and parse_error:
+                    flash(parse_error, 'danger')
+                    return render_template('setup.html', config=config_data)
+                if user_placement_mode == 'department_ous' and not department_structure:
+                    flash('Please provide at least one department hierarchy entry (manual or file).', 'danger')
+                    return render_template('setup.html', config=config_data)
+
+                mapping_ok, mapping_msg, mapping_details = _ensure_default_ou_mapping(
+                    company_name,
+                    config_data['ad_base_dn'],
+                    ad_args,
+                    user_placement_mode=user_placement_mode,
+                    department_structure=department_structure
+                )
+                if mapping_details.get('mapping'):
+                    config_data['organization_ous'] = mapping_details['mapping']
+                    config_data['users_ou'] = mapping_details['mapping'].get('primary_users_ou', config_data.get('users_ou', ''))
+                    config_data['groups_ou'] = f"OU=Groups,OU={_sanitize_ou_name(company_name)},{config_data['ad_base_dn']}"
+                if mapping_ok:
+                    flash(mapping_msg, 'success')
+                else:
+                    flash(mapping_msg, 'warning')
+                    for item in mapping_details.get('errors', [])[:5]:
+                        flash(item, 'warning')
+                group_info = mapping_details.get('department_groups') or {}
+                if group_info.get('created') or group_info.get('skipped'):
+                    flash(
+                        f"Department security groups: {len(group_info.get('created', []))} created, "
+                        f"{len(group_info.get('skipped', []))} existing.",
+                        'info'
+                    )
+            elif setup_mode != 'new':
+                users_ou_dn = request.form.get('users_ou', '').strip()
+                lifecycle_ok, lifecycle_msg, lifecycle_details = _ensure_lifecycle_ous_under_users(users_ou_dn, ad_args)
+                if 'organization_ous' not in config_data:
+                    config_data['organization_ous'] = {}
+                config_data['organization_ous']['primary_users_ou'] = users_ou_dn
+                config_data['organization_ous']['disabled_users_ou'] = lifecycle_details.get('disabled_users_ou', '')
+                config_data['organization_ous']['archive_users_ou'] = lifecycle_details.get('archive_users_ou', '')
+                config_data['organization_ous']['primary_users_label'] = users_ou_dn.split('OU=')[-1].split(',')[0] if 'OU=' in users_ou_dn else 'Users'
+                if lifecycle_ok:
+                    flash(lifecycle_msg, 'success')
+                else:
+                    flash(lifecycle_msg, 'warning')
+                    for item in lifecycle_details.get('errors', [])[:5]:
+                        flash(item, 'warning')
+
+            if source_is_default_admin and clone_default_admin:
+                target_users_ou = config_data.get('users_ou') or request.form.get('users_ou') or config_data.get('ad_base_dn')
+                clone_ok, clone_msg = _provision_delegated_admin_from_bind(
+                    source_admin_dn=config_data['ad_bind_dn'],
+                    new_username=delegated_admin_username,
+                    new_password=delegated_admin_password,
+                    new_display_name=delegated_admin_display_name or delegated_admin_username,
+                    new_email=delegated_admin_email,
+                    target_users_ou=target_users_ou,
+                    ad_args=ad_args
+                )
+                if clone_ok:
+                    flash(clone_msg, 'success')
+                else:
+                    flash(clone_msg, 'warning')
+
+            # Set up organization_ous if users_ou is provided (manual/legacy path)
+            if request.form.get('users_ou') and 'organization_ous' not in config_data:
+                if 'organization_ous' not in config_data:
+                    config_data['organization_ous'] = {}
+                config_data['organization_ous']['primary_users_ou'] = request.form.get('users_ou')
+                config_data['organization_ous']['primary_users_label'] = request.form.get('users_ou').split('OU=')[-1].split(',')[0] if 'OU=' in request.form.get('users_ou') else 'Users'
+
+            save_ad_config(config_data)
             flash('Setup saved and AD connection successful!', 'success')
             return redirect(url_for('main.home'))
         else:
@@ -359,8 +1967,9 @@ def reset_password():
                                      ad_password_info=ad_password_info,
                                      policy=policy)
             
-            # Reset password in AD
-            success = reset_user_password(username, new_password, **{
+            # Reset password in AD (prefer DN from prior lookup if available)
+            user_dn = user_info.get('dn') or user_info.get('distinguishedName') or username
+            success, reset_message = reset_user_password(user_dn, new_password, **{
                 'server': config['ad_server'],
                 'port': config['ad_port'],
                 'bind_user': config['ad_bind_dn'],
@@ -372,8 +1981,8 @@ def reset_password():
                 # Log the password reset
                 reset_record = PasswordReset(
                     username=username,
-                    reset_by='self_reset',
-                    reset_method='security_question',
+                    reset_by=username,
+                    method='security_question',
                     ip_address=request.remote_addr,
                     user_agent=request.headers.get('User-Agent', ''),
                     success=True
@@ -387,9 +1996,9 @@ def reset_password():
                 session.pop('reset_ad_info', None)
                 
                 flash('Password has been reset successfully!', 'success')
-                return redirect(url_for('main.login'))
+                return redirect(url_for('main.unified_login'))
             else:
-                flash('Failed to reset password in Active Directory. Please try again or contact your administrator.', 'error')
+                flash(f'Failed to reset password in Active Directory: {reset_message}', 'error')
                 return render_template('reset_password.html', 
                                      username=username, 
                                      user_info=user_info,
@@ -576,6 +2185,18 @@ def user_search():
     
     query = request.form.get('query', '') if request.method == 'POST' else request.args.get('query', '')
     status_filter = request.form.get('status_filter', 'all') if request.method == 'POST' else request.args.get('status_filter', 'all')
+    view_mode = request.form.get('view_mode', 'active') if request.method == 'POST' else request.args.get('view_mode', 'active')
+    include_archived = request.form.get('include_archived', '0') == '1' if request.method == 'POST' else request.args.get('include_archived', '0') == '1'
+
+    include_disabled_ou = False
+    include_archive_ou = False
+    if view_mode == 'disabled':
+        status_filter = 'disabled'
+        include_disabled_ou = True
+        include_archived = False
+    elif view_mode == 'archived':
+        include_archive_ou = True
+        include_archived = True
     
     # Handle OU exclusions
     exclude_ous = []
@@ -591,12 +2212,95 @@ def user_search():
     
     # Always search for users - if no query, search for all users
     if query:
-        users = search_users(query, status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
-        log_user_action('search', query, 'success' if users else 'no_results', {'query': query, 'status_filter': status_filter, 'exclude_ous': exclude_ous, 'results_count': len(users)})
+        users = search_users(
+            query,
+            status_filter=status_filter,
+            exclude_ous=exclude_ous,
+            include_archive_ou=include_archive_ou,
+            include_disabled_ou=include_disabled_ou,
+            **ad_args
+        )
+        log_user_action(
+            'search',
+            query,
+            'success' if users else 'no_results',
+            {
+                'query': query,
+                'status_filter': status_filter,
+                'exclude_ous': exclude_ous,
+                'view_mode': view_mode,
+                'include_archived': include_archived,
+                'results_count': len(users)
+            }
+        )
     else:
         # Show all users when no query is provided
-        users = search_users('', status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
-        log_user_action('search', 'all_users', 'success' if users else 'no_results', {'query': 'all_users', 'status_filter': status_filter, 'exclude_ous': exclude_ous, 'results_count': len(users)})
+        users = search_users(
+            '',
+            status_filter=status_filter,
+            exclude_ous=exclude_ous,
+            include_archive_ou=include_archive_ou,
+            include_disabled_ou=include_disabled_ou,
+            **ad_args
+        )
+        log_user_action(
+            'search',
+            'all_users',
+            'success' if users else 'no_results',
+            {
+                'query': 'all_users',
+                'status_filter': status_filter,
+                'exclude_ous': exclude_ous,
+                'view_mode': view_mode,
+                'include_archived': include_archived,
+                'results_count': len(users)
+            }
+        )
+
+    # Constrain special views to their specific lifecycle OU containers.
+    if view_mode == 'disabled':
+        disabled_ou_dn = _resolve_existing_disabled_ou(config, ad_args)
+        users = [
+            u for u in users
+            if (
+                (disabled_ou_dn and disabled_ou_dn.lower() in (u.get('dn', '').lower()))
+                or ('ou=disabled users' in (u.get('dn', '').lower()))
+            )
+        ]
+    elif view_mode == 'archived':
+        archive_ou_dn = _resolve_existing_archive_ou(config, ad_args)
+        users = [
+            u for u in users
+            if (
+                (archive_ou_dn and archive_ou_dn.lower() in (u.get('dn', '').lower()))
+                or ('ou=archived users' in (u.get('dn', '').lower()))
+            )
+        ]
+
+    # Attach lifecycle timing so Disabled/Archived views can show age in OU.
+    usernames = [u.get('username') for u in users if u.get('username')]
+    lifecycle_by_username = {}
+    if usernames:
+        lifecycle_rows = DisabledUserLifecycle.query.filter(
+            DisabledUserLifecycle.username.in_(usernames)
+        ).all()
+        lifecycle_by_username = {row.username: row for row in lifecycle_rows}
+
+    now_utc = datetime.now(timezone.utc)
+    for user in users:
+        disabled_since = None
+        user_name = user.get('username')
+        lifecycle = lifecycle_by_username.get(user_name) if user_name else None
+
+        if lifecycle and lifecycle.disabled_at:
+            disabled_since = _to_utc_datetime(lifecycle.disabled_at)
+        elif user.get('accountStatus') == 'disabled':
+            when_changed = user.get('whenChanged')
+            if isinstance(when_changed, datetime):
+                disabled_since = _to_utc_datetime(when_changed)
+
+        user['disabled_since'] = disabled_since
+        user['disabled_days'] = (now_utc - disabled_since).days if disabled_since else None
     
     # Server-side sorting
     sort_by = request.args.get('sort_by', 'username')
@@ -693,8 +2397,313 @@ def user_search():
         total_users=total_users,
         sort_by=sort_by,
         sort_order=sort_order,
-        user_stats=user_stats
+        user_stats=user_stats,
+        include_archived=include_archived,
+        view_mode=view_mode
     )
+
+@main.route('/admin/users/disabled')
+@login_required
+@admin_required
+def disabled_users_view():
+    return redirect(url_for('main.user_search', view_mode='disabled'))
+
+@main.route('/admin/users/archived')
+@login_required
+@admin_required
+def archived_users_view():
+    return redirect(url_for('main.user_search', view_mode='archived'))
+
+@main.route('/admin/computers', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def computer_search():
+    """Computer and server management page"""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    query = request.form.get('query', '') if request.method == 'POST' else request.args.get('query', '')
+    status_filter = request.form.get('status_filter', 'all') if request.method == 'POST' else request.args.get('status_filter', 'all')
+    computer_type = request.form.get('computer_type', 'all') if request.method == 'POST' else request.args.get('computer_type', 'all')
+    
+    # Handle OU exclusions
+    exclude_ous = []
+    if request.method == 'POST':
+        exclude_ous_raw = request.form.get('exclude_ous', '')
+    else:
+        exclude_ous_raw = request.args.get('exclude_ous', '')
+    
+    if exclude_ous_raw:
+        exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+    
+    computers = []
+    
+    # Always search for computers - if no query, search for all computers
+    if query:
+        computers = search_computers(query, status_filter=status_filter, exclude_ous=exclude_ous, computer_type=computer_type, **ad_args)
+        log_user_action('search', f'computers: {query}', 'success' if computers else 'no_results', {'query': query, 'status_filter': status_filter, 'computer_type': computer_type, 'exclude_ous': exclude_ous, 'results_count': len(computers)})
+    else:
+        # Show all computers when no query is provided
+        computers = search_computers('', status_filter=status_filter, exclude_ous=exclude_ous, computer_type=computer_type, **ad_args)
+        log_user_action('search', 'all_computers', 'success' if computers else 'no_results', {'query': 'all_computers', 'status_filter': status_filter, 'computer_type': computer_type, 'exclude_ous': exclude_ous, 'results_count': len(computers)})
+    
+    # Server-side sorting
+    sort_by = request.args.get('sort_by', 'name')
+    sort_order = request.args.get('sort_order', 'asc')
+    
+    # Validate sort_by parameter
+    valid_sort_fields = ['name', 'sAMAccountName', 'dNSHostName', 'operatingSystem', 'computerType', 'ou', 'accountStatus']
+    if sort_by not in valid_sort_fields:
+        sort_by = 'name'
+    
+    # Sort computers
+    reverse_sort = sort_order.lower() == 'desc'
+    
+    # Handle empty values in sorting
+    def sort_key(computer):
+        value = computer.get(sort_by, '')
+        if value is None:
+            value = ''
+        return str(value).lower()
+    
+    computers.sort(key=sort_key, reverse=reverse_sort)
+    
+    # Pagination logic
+    page = int(request.args.get('page', 1))
+    per_page = 50
+    total_computers = len(computers)
+    total_pages = (total_computers + per_page - 1) // per_page
+    start = (page - 1) * per_page
+    end = start + per_page
+    computers_page = computers[start:end]
+    
+    # Get OUs for move computer functionality
+    ous = list_ous(**ad_args)
+    
+    # Get computer statistics
+    computer_stats = {
+        'total': len(computers),
+        'total_enabled': 0,
+        'total_disabled': 0,
+        'servers': 0,
+        'workstations': 0
+    }
+    
+    # Count computers by status and type
+    for computer in computers:
+        if computer.get('accountStatus') == 'enabled':
+            computer_stats['total_enabled'] += 1
+        else:
+            computer_stats['total_disabled'] += 1
+        
+        if computer.get('computerType') == 'server':
+            computer_stats['servers'] += 1
+        else:
+            computer_stats['workstations'] += 1
+    
+    return render_template(
+        'computer_search.html', 
+        computers=computers_page, 
+        query=query, 
+        status_filter=status_filter,
+        computer_type=computer_type,
+        exclude_ous=exclude_ous,
+        exclude_ous_str=','.join(exclude_ous),
+        ous=ous, 
+        base_dn=config['ad_base_dn'],
+        page=page,
+        total_pages=total_pages,
+        total_computers=total_computers,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        computer_stats=computer_stats
+    )
+
+@main.route('/api/computers/stats')
+@login_required
+@admin_required
+def api_get_computer_stats():
+    """API endpoint to get filtered computer statistics"""
+    try:
+        config = get_ad_config()
+        if not config:
+            return jsonify({'success': False, 'error': 'AD not configured'}), 400
+        
+        ad_args = {
+            'server': config['ad_server'],
+            'port': config['ad_port'],
+            'bind_user': config['ad_bind_dn'],
+            'bind_password': config['ad_password'],
+            'base_dn': config['ad_base_dn']
+        }
+        
+        query = request.args.get('query', '')
+        status_filter = request.args.get('status_filter', 'all')
+        computer_type = request.args.get('computer_type', 'all')
+        exclude_ous_raw = request.args.get('exclude_ous', '')
+        
+        exclude_ous = []
+        if exclude_ous_raw:
+            exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
+        
+        # Search computers
+        if query:
+            computers = search_computers(query, status_filter=status_filter, exclude_ous=exclude_ous, computer_type=computer_type, **ad_args)
+        else:
+            computers = search_computers('', status_filter=status_filter, exclude_ous=exclude_ous, computer_type=computer_type, **ad_args)
+        
+        # Calculate statistics
+        stats = {
+            'total': len(computers),
+            'total_enabled': 0,
+            'total_disabled': 0,
+            'servers': 0,
+            'workstations': 0
+        }
+        
+        for computer in computers:
+            if computer.get('accountStatus') == 'enabled':
+                stats['total_enabled'] += 1
+            else:
+                stats['total_disabled'] += 1
+            
+            if computer.get('computerType') == 'server':
+                stats['servers'] += 1
+            else:
+                stats['workstations'] += 1
+        
+        return jsonify({'success': True, 'stats': stats})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@main.route('/admin/move_computer', methods=['POST'])
+@login_required
+@admin_required
+def move_computer_route():
+    """Move a computer to a new OU"""
+    try:
+        data = request.get_json()
+        computer_dn = data.get('computer_dn')
+        new_ou_dn = data.get('new_ou_dn')
+        
+        if not computer_dn or not new_ou_dn:
+            return jsonify({'success': False, 'error': 'Computer DN and new OU DN are required'}), 400
+        
+        config = get_ad_config()
+        if not config:
+            return jsonify({'success': False, 'error': 'AD not configured'}), 400
+        
+        ad_args = {
+            'server': config['ad_server'],
+            'port': config['ad_port'],
+            'bind_user': config['ad_bind_dn'],
+            'bind_password': config['ad_password'],
+            'base_dn': config['ad_base_dn']
+        }
+        
+        success, message = move_computer_to_ou(computer_dn, new_ou_dn, **ad_args)
+        
+        if success:
+            log_user_action('move_computer', computer_dn, 'success', {'new_ou': new_ou_dn})
+            return jsonify({'success': True, 'message': message})
+        else:
+            log_user_action('move_computer', computer_dn, 'failure', {'error': message})
+            return jsonify({'success': False, 'error': message}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@main.route('/admin/bulk-move-workstations', methods=['POST'])
+@login_required
+@admin_required
+def bulk_move_workstations():
+    """Move all workstations to the Workstations OU"""
+    try:
+        config = get_ad_config()
+        if not config:
+            return jsonify({'success': False, 'error': 'AD not configured'}), 400
+        
+        ad_args = {
+            'server': config['ad_server'],
+            'port': config['ad_port'],
+            'bind_user': config['ad_bind_dn'],
+            'bind_password': config['ad_password'],
+            'base_dn': config['ad_base_dn']
+        }
+        
+        # Target OU for workstations
+        target_ou = 'OU=Workstations,OU=Sunray Computers,OU=Sunray,DC=sunray,DC=internal'
+        
+        # Search for all workstations (computers that are not servers)
+        computers = search_computers('', status_filter='all', computer_type='workstation', exclude_ous=[], **ad_args)
+        
+        moved = []
+        failed = []
+        
+        for computer in computers:
+            computer_dn = computer.get('dn') or computer.get('distinguishedName')
+            if not computer_dn:
+                continue
+            
+            # Check if already in target OU
+            if target_ou in computer_dn:
+                continue
+            
+            # Move the computer
+            success, message = move_computer_to_ou(computer_dn, target_ou, **ad_args)
+            
+            if success:
+                moved.append(computer.get('name', computer_dn))
+                log_user_action('move_computer', computer_dn, 'success', {'new_ou': target_ou, 'bulk': True})
+            else:
+                failed.append({'name': computer.get('name', computer_dn), 'error': message})
+                log_user_action('move_computer', computer_dn, 'failure', {'error': message, 'bulk': True})
+        
+        return jsonify({
+            'success': True,
+            'moved_count': len(moved),
+            'failed_count': len(failed),
+            'moved': moved,
+            'failed': failed,
+            'message': f'Moved {len(moved)} workstations to {target_ou}. {len(failed)} failed.'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@main.route('/computer_details/<path:computer_dn>', methods=['GET'])
+@login_required
+@admin_required
+def computer_details(computer_dn):
+    """Display detailed information about a computer"""
+    config = get_ad_config()
+    if not config:
+        flash('AD not configured. Please complete setup first.', 'warning')
+        return redirect(url_for('main.setup'))
+    
+    ad_args = {
+        'server': config['ad_server'],
+        'port': config['ad_port'],
+        'bind_user': config['ad_bind_dn'],
+        'bind_password': config['ad_password'],
+        'base_dn': config['ad_base_dn']
+    }
+    
+    computer = get_computer_details(computer_dn, **ad_args)
+    
+    if not computer:
+        flash('Computer not found.', 'danger')
+        return redirect(url_for('main.computer_search'))
+    
+    return render_template('computer_details.html', computer=computer, branding=get_branding_config())
 
 @main.route('/api/users/stats')
 @login_required
@@ -725,9 +2734,16 @@ def api_get_user_stats():
         include_no_email = request.args.get('include_no_email', '1') == '1'
         include_service_accounts = request.args.get('include_service_accounts', '1') == '1'
         include_internal_tools = request.args.get('include_internal_tools', '1') == '1'
+        include_archived = request.args.get('include_archived', '0') == '1'
         
         # Get all users (for accurate stats)
-        all_users = search_users(query, status_filter='all', exclude_ous=[], **ad_args)
+        all_users = search_users(
+            query,
+            status_filter='all',
+            exclude_ous=[],
+            include_archive_ou=include_archived,
+            **ad_args
+        )
         
         # Get organization OU configuration
         from .ad import get_organization_ous, get_primary_users_label
@@ -750,8 +2766,11 @@ def api_get_user_stats():
         for user in all_users:
             # Check if user is in primary users OU
             dn = user.get('distinguishedName') or user.get('dn') or ''
+            archive_users_ou = org_ous.get('archive_users_ou', '')
             if 'OU=Disabled Users' in dn or org_ous.get('disabled_users_ou', '') in dn:
                 continue  # Always exclude disabled users OU
+            if (not include_archived) and ('OU=Archived Users' in dn or archive_users_ou in dn):
+                continue
             
             # Check excluded OUs
             if exclude_ous:
@@ -809,7 +2828,10 @@ def api_get_user_stats():
             user_stats['active_users'] = 0
             for user in all_users:
                 dn = user.get('distinguishedName') or user.get('dn') or ''
+                archive_users_ou = org_ous.get('archive_users_ou', '')
                 if 'OU=Disabled Users' in dn or org_ous.get('disabled_users_ou', '') in dn:
+                    continue
+                if (not include_archived) and ('OU=Archived Users' in dn or archive_users_ou in dn):
                     continue
                 if exclude_ous:
                     should_exclude = False
@@ -1342,6 +3364,119 @@ def get_exchange_config():
     
     return config
 
+def _offboard_exchange_mailbox(email, username):
+    """
+    Export mailbox to a local archive zip and disable mailbox in Exchange.
+    Returns a result dict with status and messages.
+    """
+    result = {
+        'attempted': False,
+        'mailbox_found': False,
+        'mailbox_exported': False,
+        'mailbox_disabled': False,
+        'local_archive_path': None,
+        'message': ''
+    }
+
+    config = get_exchange_config()
+    if not config or not config.get('enabled'):
+        result['message'] = 'Exchange integration not enabled.'
+        return result
+
+    if not email:
+        result['message'] = 'No email address on user; Exchange offboarding skipped.'
+        return result
+
+    result['attempted'] = True
+
+    try:
+        exchange = ExchangeManager(
+            exchange_server=config['exchange_server'],
+            username=config['username'],
+            password=config['password'],
+            domain=config['domain']
+        )
+
+        mailbox_stats = exchange.get_mailbox_stats([email])
+        mailbox_present = bool(mailbox_stats and mailbox_stats.get(email.lower()))
+        result['mailbox_found'] = mailbox_present
+
+        if not mailbox_present:
+            result['message'] = 'No Exchange mailbox found for this email.'
+            return result
+
+        now_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+        safe_username = ''.join(c if c.isalnum() or c in ('-', '_', '.') else '_' for c in (username or 'user'))
+        remote_archive_dir = f"C:\\Temp\\ExchangeArchives\\Terminations\\{safe_username}_{now_str}"
+
+        archive_ok, archive_msg = exchange.archive_mailbox(email, remote_archive_dir, use_local_temp=True)
+        if not archive_ok:
+            current_app.logger.error(f"Mailbox export request failed for {email}: {archive_msg}")
+            # Continue to disable mailbox even if export failed.
+            disable_ok, disable_msg = exchange.remove_mailbox(email, permanent=False)
+            result['mailbox_disabled'] = disable_ok
+            result['message'] = (
+                f"Mailbox export failed ({archive_msg}); mailbox disable "
+                f"{'succeeded' if disable_ok else f'failed ({disable_msg})'}."
+            )
+            return result
+
+        export_statuses = exchange.wait_for_exports_complete([email], max_wait_minutes=60, poll_interval_seconds=20)
+        export_info = export_statuses.get(email, {})
+        if not export_info.get('completed'):
+            current_app.logger.warning(f"Mailbox export timeout for {email}: {export_info}")
+            disable_ok, disable_msg = exchange.remove_mailbox(email, permanent=False)
+            result['mailbox_disabled'] = disable_ok
+            result['message'] = (
+                f"Mailbox export timed out ({export_info.get('status', 'unknown')}); mailbox disable "
+                f"{'succeeded' if disable_ok else f'failed ({disable_msg})'}."
+            )
+            return result
+
+        zip_filename = f"{safe_username}_{now_str}.zip"
+        zip_ok, zip_path_or_error = exchange.zip_pst_files(remote_archive_dir, zip_filename=zip_filename)
+        if not zip_ok:
+            current_app.logger.error(f"Mailbox zip creation failed for {email}: {zip_path_or_error}")
+            disable_ok, disable_msg = exchange.remove_mailbox(email, permanent=False)
+            result['mailbox_disabled'] = disable_ok
+            result['message'] = (
+                f"Mailbox exported but zip creation failed ({zip_path_or_error}); mailbox disable "
+                f"{'succeeded' if disable_ok else f'failed ({disable_msg})'}."
+            )
+            return result
+
+        download_ok, zip_bytes, download_error = exchange.download_zip_file(zip_path_or_error)
+        if download_ok and zip_bytes:
+            local_export_dir = os.path.join(os.path.dirname(__file__), 'mailbox_exports')
+            os.makedirs(local_export_dir, exist_ok=True)
+            local_zip_name = f"{safe_username}_{now_str}.zip"
+            local_zip_path = os.path.join(local_export_dir, local_zip_name)
+            with open(local_zip_path, 'wb') as f:
+                f.write(zip_bytes)
+            result['local_archive_path'] = local_zip_path
+            result['mailbox_exported'] = True
+        else:
+            current_app.logger.error(f"Mailbox zip download failed for {email}: {download_error}")
+
+        disable_ok, disable_msg = exchange.remove_mailbox(email, permanent=False)
+        result['mailbox_disabled'] = disable_ok
+
+        if result['mailbox_exported'] and disable_ok:
+            result['message'] = f"Mailbox exported and disabled. Archive saved to {result['local_archive_path']}."
+        elif result['mailbox_exported'] and not disable_ok:
+            result['message'] = f"Mailbox exported, but disable failed: {disable_msg}"
+        elif (not result['mailbox_exported']) and disable_ok:
+            result['message'] = "Mailbox disable succeeded, but archive download failed."
+        else:
+            result['message'] = f"Mailbox archive download and disable both failed: {disable_msg}"
+
+        return result
+
+    except Exception as e:
+        current_app.logger.error(f"Exchange offboarding error for {email}: {e}", exc_info=True)
+        result['message'] = f"Exchange offboarding error: {str(e)}"
+        return result
+
 
 @main.route('/admin/exchange/setup')
 @login_required
@@ -1426,8 +3561,45 @@ def get_mailbox_sizes():
         query = request.args.get('query', '')
         status_filter = request.args.get('status_filter', 'all')
         exclude_ous_raw = request.args.get('exclude_ous', '')
+        force_refresh = request.args.get('force_refresh', '0') == '1'
+        all_active = request.args.get('all_active', '0') == '1'
+        emails_param = request.args.get('emails', '').strip()
         exclude_ous = [ou.strip() for ou in exclude_ous_raw.split(',') if ou.strip()]
         exclude_ous_str = exclude_ous_raw  # Keep original string for storage
+
+        cache_lookup_username = current_user.username
+        cache_lookup_query = query
+        cache_lookup_status = status_filter
+        cache_lookup_exclude = exclude_ous_str
+        if all_active:
+            cache_lookup_username = '__system__'
+            cache_lookup_query = ''
+            cache_lookup_status = 'enabled'
+            cache_lookup_exclude = '__all_active__'
+
+        # Fast path: return recent cache unless caller explicitly forces refresh.
+        cache_entry = db.session.query(MailboxSizeCache).filter_by(
+            username=cache_lookup_username,
+            query=cache_lookup_query,
+            status_filter=cache_lookup_status,
+            exclude_ous=cache_lookup_exclude
+        ).first()
+        if cache_entry and not force_refresh:
+            updated_at = cache_entry.updated_at
+            if updated_at:
+                updated_at = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+                cache_age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
+                if cache_age_seconds < 30 * 60:
+                    try:
+                        mailbox_sizes = json.loads(cache_entry.mailbox_sizes or '{}')
+                        return jsonify({
+                            'success': True,
+                            'mailbox_sizes': mailbox_sizes,
+                            'cached': True,
+                            'updated_at': cache_entry.updated_at.isoformat()
+                        })
+                    except json.JSONDecodeError:
+                        pass
         
         # Get AD config
         ad_config = get_ad_config()
@@ -1442,18 +3614,33 @@ def get_mailbox_sizes():
             'base_dn': ad_config['ad_base_dn']
         }
         
-        # Get users with emails
-        users = search_users(query, status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
-        user_emails = [user.get('mail').lower() if user.get('mail') else None for user in users if user.get('mail')]
-        user_emails = [email for email in user_emails if email]  # Remove None values
+        user_emails = []
+        if all_active:
+            users = search_users(
+                '',
+                status_filter='enabled',
+                exclude_ous=[],
+                include_disabled_ou=True,
+                include_archive_ou=True,
+                **ad_args
+            )
+            user_emails = [user.get('mail').lower() if user.get('mail') else None for user in users if user.get('mail')]
+            user_emails = [email for email in user_emails if email]
+        elif emails_param:
+            user_emails = [e.strip().lower() for e in emails_param.split(',') if e.strip() and '@' in e]
+        else:
+            # Get users with emails based on current page filter.
+            users = search_users(query, status_filter=status_filter, exclude_ous=exclude_ous, **ad_args)
+            user_emails = [user.get('mail').lower() if user.get('mail') else None for user in users if user.get('mail')]
+            user_emails = [email for email in user_emails if email]  # Remove None values
         
         if not user_emails:
             # Store empty result in cache
             cache_entry = db.session.query(MailboxSizeCache).filter_by(
-                username=current_user.username,
-                query=query,
-                status_filter=status_filter,
-                exclude_ous=exclude_ous_str
+                username=cache_lookup_username,
+                query=cache_lookup_query,
+                status_filter=cache_lookup_status,
+                exclude_ous=cache_lookup_exclude
             ).first()
             
             if cache_entry:
@@ -1461,10 +3648,10 @@ def get_mailbox_sizes():
                 cache_entry.updated_at = datetime.now(timezone.utc)
             else:
                 cache_entry = MailboxSizeCache(
-                    username=current_user.username,
-                    query=query,
-                    status_filter=status_filter,
-                    exclude_ous=exclude_ous_str,
+                    username=cache_lookup_username,
+                    query=cache_lookup_query,
+                    status_filter=cache_lookup_status,
+                    exclude_ous=cache_lookup_exclude,
                     mailbox_sizes=json.dumps({})
                 )
                 db.session.add(cache_entry)
@@ -1484,10 +3671,10 @@ def get_mailbox_sizes():
         
         # Store in database cache (overwrite existing if present)
         cache_entry = db.session.query(MailboxSizeCache).filter_by(
-            username=current_user.username,
-            query=query,
-            status_filter=status_filter,
-            exclude_ous=exclude_ous_str
+            username=cache_lookup_username,
+            query=cache_lookup_query,
+            status_filter=cache_lookup_status,
+            exclude_ous=cache_lookup_exclude
         ).first()
         
         if cache_entry:
@@ -1497,14 +3684,35 @@ def get_mailbox_sizes():
         else:
             # Create new entry
             cache_entry = MailboxSizeCache(
-                username=current_user.username,
-                query=query,
-                status_filter=status_filter,
-                exclude_ous=exclude_ous_str,
+                username=cache_lookup_username,
+                query=cache_lookup_query,
+                status_filter=cache_lookup_status,
+                exclude_ous=cache_lookup_exclude,
                 mailbox_sizes=json.dumps(mailbox_sizes)
             )
             db.session.add(cache_entry)
         
+        # Also write current user's page cache so immediate UI reload is fast.
+        if all_active and current_user.username != '__system__':
+            user_cache = db.session.query(MailboxSizeCache).filter_by(
+                username=current_user.username,
+                query=query,
+                status_filter=status_filter,
+                exclude_ous=exclude_ous_str
+            ).first()
+            if user_cache:
+                user_cache.mailbox_sizes = json.dumps(mailbox_sizes)
+                user_cache.updated_at = datetime.now(timezone.utc)
+            else:
+                user_cache = MailboxSizeCache(
+                    username=current_user.username,
+                    query=query,
+                    status_filter=status_filter,
+                    exclude_ous=exclude_ous_str,
+                    mailbox_sizes=json.dumps(mailbox_sizes)
+                )
+                db.session.add(user_cache)
+
         db.session.commit()
         current_app.logger.info(f"Stored mailbox sizes in cache for user {current_user.username}")
         
@@ -1533,15 +3741,24 @@ def get_cached_mailbox_sizes():
         query = request.args.get('query', '')
         status_filter = request.args.get('status_filter', 'all')
         exclude_ous_raw = request.args.get('exclude_ous', '')
+        all_active = request.args.get('all_active', '0') == '1'
         exclude_ous_str = exclude_ous_raw  # Keep original string for lookup
         
         # Look up cached data
-        cache_entry = db.session.query(MailboxSizeCache).filter_by(
-            username=current_user.username,
-            query=query,
-            status_filter=status_filter,
-            exclude_ous=exclude_ous_str
-        ).first()
+        if all_active:
+            cache_entry = db.session.query(MailboxSizeCache).filter_by(
+                username='__system__',
+                query='',
+                status_filter='enabled',
+                exclude_ous='__all_active__'
+            ).first()
+        else:
+            cache_entry = db.session.query(MailboxSizeCache).filter_by(
+                username=current_user.username,
+                query=query,
+                status_filter=status_filter,
+                exclude_ous=exclude_ous_str
+            ).first()
         
         if cache_entry:
             try:
@@ -2241,6 +4458,12 @@ def user_details(user_dn):
         elif action == 'reset_password':
             new_password = request.form.get('new_password')
             ok, msg = ad_set_password(user_dn, new_password, **ad_args)
+            if ok:
+                force_ok, force_msg = ad_force_password_change(user_dn, **ad_args)
+                if force_ok:
+                    msg = f"{msg} User will be required to change password at next sign-in."
+                else:
+                    msg = f"{msg} Password reset succeeded, but could not enforce next-login change: {force_msg}"
             flash(msg, 'success' if ok else 'danger')
         elif action == 'unlock':
             ok, msg = ad_unlock_user(user_dn, **ad_args)
@@ -2249,8 +4472,13 @@ def user_details(user_dn):
             ok, msg = ad_enable_user(user_dn, **ad_args)
             flash(msg, 'success' if ok else 'danger')
         elif action == 'disable':
-            ok, msg = ad_disable_user(user_dn, **ad_args)
-            flash(msg, 'success' if ok else 'danger')
+            result = _disable_user_with_lifecycle(user_dn, ad_args, config)
+            ok = result.get('success', False)
+            msg = result.get('message', 'Disable failed.')
+            if ok and result.get('partial'):
+                flash(msg, 'warning')
+            else:
+                flash(msg, 'success' if ok else 'danger')
         elif action == 'force_password_change':
             ok, msg = ad_force_password_change(user_dn, **ad_args)
             flash(msg, 'success' if ok else 'danger')
@@ -2342,6 +4570,12 @@ def user_details(user_dn):
     uac = int(user.get('userAccountControl', ['0'])[0])
     is_disabled = bool(uac & 2)
     is_locked = bool(uac & 16) # LOCKOUT bit
+    lifecycle_info = None
+    disabled_days = None
+    if user_username:
+        lifecycle_info = DisabledUserLifecycle.query.filter_by(username=user_username).first()
+        if lifecycle_info and lifecycle_info.disabled_at:
+            disabled_days = (datetime.now(timezone.utc) - lifecycle_info.disabled_at).days
 
     # Get password information
     password_info = None
@@ -2398,7 +4632,9 @@ def user_details(user_dn):
         password_expiring_soon=password_expiring_soon,
         password_never_expires=password_never_expires,
         days_until_reset=days_until_reset,
-        policy=policy
+        policy=policy,
+        lifecycle_info=lifecycle_info,
+        disabled_days=disabled_days
     )
 
 @main.route('/admin/create_user', methods=['GET', 'POST'])
@@ -2537,7 +4773,9 @@ def create_user_route():
                 if part.startswith('OU='):
                     ou_name_from_dn = part.replace('OU=', '')
                     # Skip the primary users OU itself and common structural OUs
-                    skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
+                    skip_names = ['sunray users', 'users', 'disabled users', 'disabled user',
+                                 'archived users', 'archived user', 'archive users',
+                                 'service accounts', 
                                  'internal tools', 'sunray', 'owners', 'owner', 'administrators',
                                  'admins', 'managers', 'management', 'western gaming', 'racing security',
                                  'vendor logins', 'vendor login', 'vendors']
@@ -2550,7 +4788,9 @@ def create_user_route():
                 final_name = department_name
             elif ou_name:
                 # Check if the OU name itself should be skipped
-                skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
+                skip_names = ['sunray users', 'users', 'disabled users', 'disabled user',
+                             'archived users', 'archived user', 'archive users',
+                             'service accounts', 
                              'internal tools', 'sunray', 'owners', 'owner', 'administrators',
                              'admins', 'managers', 'management', 'western gaming', 'racing security',
                              'vendor logins', 'vendor login', 'vendors']
@@ -2594,63 +4834,34 @@ def manage_managers():
         'base_dn': config['ad_base_dn']
     }
     
-    # Get departments
+    # Get departments (top-level + sub-OU entries)
     org_ous = get_organization_ous()
     primary_users_ou = org_ous.get('primary_users_ou', 'OU=Sunray Users,OU=Sunray,DC=sunray,DC=internal')
     ous = list_ous(**ad_args)
-    
-    # Filter departments (same logic as create_user)
-    departments = []
-    seen_departments = set()
-    for ou in ous:
-        ou_dn = ou.get('dn', '') if isinstance(ou, dict) else (ou.dn if hasattr(ou, 'dn') else str(ou))
-        ou_name = ou.get('name', '') if isinstance(ou, dict) else (ou.name if hasattr(ou, 'name') else '')
-        
-        if primary_users_ou.lower() in ou_dn.lower():
-            ou_parts = ou_dn.split(',')
-            department_name = None
-            for part in ou_parts:
-                part = part.strip()
-                if part.startswith('OU='):
-                    ou_name_from_dn = part.replace('OU=', '')
-                    skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
-                                 'internal tools', 'sunray', 'owners', 'owner', 'administrators',
-                                 'admins', 'managers', 'management', 'western gaming', 'racing security',
-                                 'vendor logins', 'vendor login', 'vendors']
-                    if ou_name_from_dn.lower() not in skip_names:
-                        department_name = ou_name_from_dn
-                        break
-            
-            if department_name:
-                final_name = department_name
-            elif ou_name:
-                skip_names = ['sunray users', 'users', 'disabled users', 'service accounts', 
-                             'internal tools', 'sunray', 'owners', 'owner', 'administrators',
-                             'admins', 'managers', 'management', 'western gaming', 'racing security',
-                             'vendor logins', 'vendor login', 'vendors']
-                if ou_name.lower() not in skip_names:
-                    final_name = ou_name
-                else:
-                    continue
-            else:
-                continue
-            
-            # Handle Simulcast-Racing split (if they're combined)
-            if final_name:
-                final_lower = final_name.lower()
-                if 'simulcast' in final_lower and 'racing' in final_lower:
-                    # Split into two departments
-                    if 'simulcast' not in seen_departments:
-                        departments.append({'name': 'Simulcast', 'dn': ou_dn})
-                        seen_departments.add('simulcast')
-                    if 'racing' not in seen_departments:
-                        departments.append({'name': 'Racing', 'dn': ou_dn})
-                        seen_departments.add('racing')
-                elif final_lower not in seen_departments:
-                    departments.append({'name': final_name, 'dn': ou_dn})
-                    seen_departments.add(final_lower)
-    
-    departments.sort(key=lambda x: x['name'].lower())
+    departments = _build_department_entries_from_ous(ous, primary_users_ou)
+    department_lookup = {d['key']: d for d in departments}
+    top_departments = [d for d in departments if not d.get('is_sub')]
+
+    excluded_username_tokens = {'services', 'service', 'vendor', 'vendors'}
+    excluded_dn_tokens = (
+        'ou=vendor',
+        'ou=vendors',
+        'ou=vendor logins',
+        'ou=service accounts',
+        'ou=internal tools'
+    )
+
+    def _is_report_excluded(report):
+        employee_dn_l = (report.employee_dn or '').strip().lower()
+        employee_username_l = (report.employee_username or '').strip().lower()
+        employee_display_l = (report.employee_display_name or '').strip().lower()
+        if primary_users_ou and primary_users_ou.strip().lower() not in employee_dn_l:
+            return True
+        if any(token in employee_dn_l for token in excluded_dn_tokens):
+            return True
+        if employee_username_l in excluded_username_tokens or employee_display_l in excluded_username_tokens:
+            return True
+        return False
     
     # Get existing department managers
     dept_managers = {}
@@ -2659,6 +4870,96 @@ def manage_managers():
     
     # Get all direct reports first (needed for outside managers)
     direct_reports = UserDirectReport.query.all()
+    # Safety cleanup: remove legacy self-report rows.
+    self_reports = []
+    for report in direct_reports:
+        same_username = bool(
+            report.manager_username and report.employee_username and
+            report.manager_username.strip().lower() == report.employee_username.strip().lower()
+        )
+        same_dn = bool(
+            report.manager_dn and report.employee_dn and
+            report.manager_dn.strip().lower() == report.employee_dn.strip().lower()
+        )
+        if same_username or same_dn:
+            self_reports.append(report)
+    if self_reports:
+        for report in self_reports:
+            db.session.delete(report)
+        db.session.commit()
+        current_app.logger.info(f"Removed {len(self_reports)} self-report direct-report rows")
+        direct_reports = [r for r in direct_reports if r not in self_reports]
+
+    # Normalize manager/supervisor usernames to canonical AD usernames
+    # to avoid duplicate cards caused by case or alias variants.
+    normalized_rows = 0
+    for report in direct_reports:
+        if report.manager_username and not report.is_outside_manager:
+            mgr_identity = _resolve_ad_user_identity(report.manager_username, ad_args)
+            if mgr_identity and mgr_identity.get('username') and report.manager_username != mgr_identity['username']:
+                report.manager_username = mgr_identity['username']
+                normalized_rows += 1
+            if mgr_identity and mgr_identity.get('dn') and report.manager_dn != mgr_identity['dn']:
+                report.manager_dn = mgr_identity['dn']
+                normalized_rows += 1
+
+        if report.supervisor_username and not report.is_outside_supervisor:
+            sup_identity = _resolve_ad_user_identity(report.supervisor_username, ad_args)
+            if sup_identity and sup_identity.get('username') and report.supervisor_username != sup_identity['username']:
+                report.supervisor_username = sup_identity['username']
+                normalized_rows += 1
+            if sup_identity and sup_identity.get('dn') and report.supervisor_dn != sup_identity['dn']:
+                report.supervisor_dn = sup_identity['dn']
+                normalized_rows += 1
+
+    if normalized_rows:
+        db.session.commit()
+        direct_reports = UserDirectReport.query.all()
+
+    # Cleanup out-of-scope rows: only users under primary users OU should count,
+    # and vendor/services identities should not appear in direct reports.
+    excluded_reports = [r for r in direct_reports if _is_report_excluded(r)]
+    if excluded_reports:
+        for report in excluded_reports:
+            db.session.delete(report)
+        db.session.commit()
+        direct_reports = [r for r in direct_reports if r not in excluded_reports]
+
+    # Normalize legacy/bad department values that were stored as OU DNs.
+    dept_normalized = 0
+    primary_users_ou_l = (primary_users_ou or '').strip().lower()
+    for report in direct_reports:
+        dept_val = (report.department or '').strip()
+        if not dept_val:
+            continue
+        if 'ou=' not in dept_val.lower():
+            continue
+
+        normalized_dept = None
+        employee_dn_l = (report.employee_dn or '').strip().lower()
+        if primary_users_ou_l and primary_users_ou_l in employee_dn_l:
+            suffix = ',' + primary_users_ou_l
+            idx = employee_dn_l.rfind(suffix)
+            if idx > 0:
+                relative = (report.employee_dn or '')[:idx]
+                ou_parts = [p.strip() for p in relative.split(',') if p.strip().lower().startswith('ou=')]
+                if ou_parts:
+                    # closest OU to user first; we want top-level OU under primary users OU
+                    top_ou = ou_parts[-1][3:] if len(ou_parts[-1]) > 3 else ''
+                    if top_ou:
+                        normalized_dept = top_ou
+
+        # If still not resolved and this is a management chain row, use Management.
+        if not normalized_dept and not report.is_same_department:
+            normalized_dept = 'Management'
+
+        if normalized_dept and report.department != normalized_dept:
+            report.department = normalized_dept
+            dept_normalized += 1
+
+    if dept_normalized:
+        db.session.commit()
+        direct_reports = UserDirectReport.query.all()
     
     # Get all users from AD for dropdowns
     all_ad_users = search_users('', status_filter='all', **ad_args)
@@ -2696,52 +4997,105 @@ def manage_managers():
     # Sort users by display name for dropdown
     all_ad_users.sort(key=lambda u: (u.get('displayName') or u.get('cn') or u.get('sAMAccountName') or '').lower())
     
-    # Group direct reports by manager and fetch manager display names from AD
-    reports_by_manager = {}
-    manager_display_names = {}  # Cache manager display names
-    
-    for report in direct_reports:
-        manager_username = report.manager_username
-        
-        # Fetch manager display name from AD if not already cached
-        if manager_username not in manager_display_names:
-            # Check if it's an outside manager first
-            if report.is_outside_manager and report.manager_display_name:
-                manager_display_names[manager_username] = report.manager_display_name
-            else:
-                # Try to get manager details from AD
-                managers = search_users(manager_username, **ad_args)
-                if managers:
-                    manager = managers[0]
-                    manager_display_names[manager_username] = manager.get('displayName') or manager.get('cn') or manager_username
+    manager_policy = _load_manager_policy()
+    manager_identity_cache = {}
+    manager_aliases = manager_policy.get('manager_aliases') if isinstance(manager_policy.get('manager_aliases'), dict) else {}
+
+    def _resolve_manager_identity_cached(candidate):
+        key = (candidate or '').strip()
+        if not key:
+            return None
+        cache_key = key.lower()
+        if cache_key not in manager_identity_cache:
+            identity = _resolve_ad_user_identity(key, ad_args)
+            if not identity and cache_key in manager_aliases:
+                identity = _resolve_ad_user_identity(manager_aliases[cache_key], ad_args)
+            manager_identity_cache[cache_key] = identity
+        return manager_identity_cache[cache_key]
+
+    def _canonical_manager_key(username, is_outside=False):
+        key = (username or '').strip()
+        if not key:
+            return ''
+        if is_outside or key.lower() == 'board of directors':
+            return key
+        alias_username = manager_aliases.get(key.lower())
+        if alias_username:
+            return alias_username
+        identity = _resolve_manager_identity_cached(key)
+        return identity.get('username') if identity and identity.get('username') else key
+
+    def _append_unique_report(grouped_reports, manager_key, report_obj):
+        if not manager_key:
+            return
+        bucket = grouped_reports.setdefault(manager_key, [])
+        if not any(existing.id == report_obj.id for existing in bucket):
+            bucket.append(report_obj)
+
+    def _build_reports_by_manager(report_rows):
+        grouped = {}
+        display_names = {}
+        for report in report_rows:
+            manager_key = _canonical_manager_key(report.manager_username, report.is_outside_manager)
+            if manager_key and manager_key not in display_names:
+                if report.is_outside_manager and report.manager_display_name:
+                    display_names[manager_key] = report.manager_display_name
                 else:
-                    manager_display_names[manager_username] = manager_username
-        
-        if manager_username not in reports_by_manager:
-            reports_by_manager[manager_username] = []
-        reports_by_manager[manager_username].append(report)
-    
+                    identity = _resolve_manager_identity_cached(manager_key)
+                    display_names[manager_key] = (
+                        identity.get('display') if identity and identity.get('display')
+                        else (report.manager_display_name or manager_key)
+                    )
+            _append_unique_report(grouped, manager_key, report)
+
+            # Also surface indirect reports under supervisor so they appear under both leaders.
+            if report.is_indirect_report and report.supervisor_username:
+                sup_key = _canonical_manager_key(report.supervisor_username, report.is_outside_supervisor)
+                if sup_key and sup_key not in display_names:
+                    if report.is_outside_supervisor and report.supervisor_display_name:
+                        display_names[sup_key] = report.supervisor_display_name
+                    else:
+                        sup_identity = _resolve_manager_identity_cached(sup_key)
+                        display_names[sup_key] = (
+                            sup_identity.get('display') if sup_identity and sup_identity.get('display')
+                            else (report.supervisor_display_name or sup_key)
+                        )
+                _append_unique_report(grouped, sup_key, report)
+        return grouped, display_names
+
+    # Group direct reports by manager and fetch manager display names from AD.
+    reports_by_manager, manager_display_names = _build_reports_by_manager(direct_reports)
+
     # Get all managers (people who have direct reports, are department managers, or have manager/director titles)
     all_managers = set()
-    
-    # Add managers who already have direct reports (including outside managers)
+    manager_usernames_from_reports = set()
     for report in direct_reports:
-        all_managers.add(report.manager_username)
-        # Also include employees who are managers (have their own reports)
-        if report.employee_username in [r.manager_username for r in direct_reports]:
-            all_managers.add(report.employee_username)
-    
+        manager_key = _canonical_manager_key(report.manager_username, report.is_outside_manager)
+        if manager_key:
+            manager_usernames_from_reports.add(manager_key)
+            all_managers.add(manager_key)
+
+    # Also include employees who are managers (have their own reports)
+    for report in direct_reports:
+        employee_key = _canonical_manager_key(report.employee_username, False)
+        if employee_key and employee_key in manager_usernames_from_reports:
+            all_managers.add(employee_key)
+
     # Add department managers
     for dept_mgr in dept_managers.values():
-        all_managers.add(dept_mgr.manager_username)
-    
-    # Add outside managers to the managers set
-    for report in direct_reports:
-        if report.is_outside_manager:
-            all_managers.add(report.manager_username)
-    
+        manager_key = _canonical_manager_key(dept_mgr.manager_username, False)
+        if manager_key:
+            all_managers.add(manager_key)
+
     # Add Board of Directors
     all_managers.add('Board of Directors')
+
+    # Optionally force specific leaders into management list via local policy.
+    forced_manager_candidates = manager_policy.get('forced_manager_candidates') or []
+    for candidate in forced_manager_candidates:
+        identity = _resolve_manager_identity_cached(candidate)
+        if identity and identity.get('username'):
+            all_managers.add(identity['username'])
     
     # Identify managers by title patterns in AD
     manager_title_keywords = ['manager', 'director', 'supervisor', 'lead', 'chief', 'vp', 'vice president', 'president', 'ceo', 'coo', 'cfo', 'cto', 'head', 'executive']
@@ -2750,10 +5104,45 @@ def manage_managers():
             continue  # Skip outside managers, already handled
         username = user.get('sAMAccountName') or user.get('username')
         title = (user.get('title') or '').lower()
-        
-        # Check if title contains manager keywords
         if any(keyword in title for keyword in manager_title_keywords):
-            all_managers.add(username)
+            manager_key = _canonical_manager_key(username, False)
+            if manager_key:
+                all_managers.add(manager_key)
+
+    # Auto-reconcile department direct reports on page load so list stays current.
+    if request.method == 'GET':
+        sync_result = _auto_sync_department_direct_reports(
+            ad_args,
+            top_departments,
+            dept_managers,
+            primary_users_ou=primary_users_ou
+        )
+        if sync_result.get('default_missing'):
+            flash('Default manager could not be resolved in AD. Department auto-sync used only explicitly mapped department managers.', 'warning')
+        else:
+            if sync_result.get('assigned') or sync_result.get('updated') or sync_result.get('removed'):
+                flash(
+                    f"Direct report auto-sync: {sync_result.get('assigned', 0)} added, "
+                    f"{sync_result.get('updated', 0)} updated, {sync_result.get('removed', 0)} removed.",
+                    'info'
+                )
+                # Refresh from DB so rendered tables reflect current state.
+                direct_reports = UserDirectReport.query.all()
+                reports_by_manager, manager_display_names = _build_reports_by_manager(direct_reports)
+        chain_result = _auto_sync_manager_chain(ad_args, all_managers)
+        if chain_result.get('missing') == 'default_manager':
+            flash('Manager chain auto-sync skipped: default manager from policy was not found in AD.', 'warning')
+        elif chain_result.get('missing') == 'top_manager':
+            flash('Manager chain auto-sync skipped: top manager from policy was not found in AD.', 'warning')
+        elif chain_result.get('assigned') or chain_result.get('updated'):
+            flash(
+                f"Manager chain sync: {chain_result.get('assigned', 0)} added, "
+                f"{chain_result.get('updated', 0)} updated, {chain_result.get('skipped', 0)} skipped exceptions.",
+                'info'
+            )
+            # Refresh after chain sync
+            direct_reports = UserDirectReport.query.all()
+            reports_by_manager, manager_display_names = _build_reports_by_manager(direct_reports)
     
     if request.method == 'POST':
         action = request.form.get('action')
@@ -2767,9 +5156,19 @@ def manage_managers():
             if not department:
                 flash('Department is required.', 'danger')
                 return redirect(url_for('main.manage_managers'))
-            
+
+            selected_dept = department_lookup.get(department, {'name': department, 'key': department})
+            department_label = selected_dept.get('name', department)
+
+            # Allow explicit "None" (unassigned manager) for department/sub-OU.
             if not manager_username:
-                flash('Manager is required.', 'danger')
+                existing = DepartmentManager.query.filter_by(department=department).first()
+                if existing:
+                    db.session.delete(existing)
+                    db.session.commit()
+                    flash(f'Manager cleared for {department_label}.', 'success')
+                else:
+                    flash(f'{department_label} already has no manager assigned.', 'info')
                 return redirect(url_for('main.manage_managers'))
             
             # Check if this is an outside manager (from existing records or manually entered)
@@ -2833,6 +5232,15 @@ def manage_managers():
                 dept_direct_reports = UserDirectReport.query.filter_by(department=department).all()
                 updated_count = 0
                 for report in dept_direct_reports:
+                    # Prevent manager self-assignment in backfill updates.
+                    if (
+                        report.employee_username and manager_username and
+                        report.employee_username.strip().lower() == manager_username.strip().lower()
+                    ) or (
+                        report.employee_dn and manager_dn and
+                        report.employee_dn.strip().lower() == manager_dn.strip().lower()
+                    ):
+                        continue
                     try:
                         ok, msg = set_user_manager(report.employee_dn, manager_dn, **ad_args)
                         if ok:
@@ -2844,13 +5252,13 @@ def manage_managers():
                 
                 if updated_count > 0:
                     db.session.commit()
-                    flash(f'Manager for {department} set to {manager_display}. Updated AD manager attribute for {updated_count} existing users.', 'success')
+                    flash(f'Manager for {department_label} set to {manager_display}. Updated AD manager attribute for {updated_count} existing users.', 'success')
                 else:
-                    flash(f'Manager for {department} set to {manager_display}.', 'success')
+                    flash(f'Manager for {department_label} set to {manager_display}.', 'success')
             elif is_outside_manager:
-                flash(f'Manager for {department} set to {manager_display} (Outside Manager).', 'success')
+                flash(f'Manager for {department_label} set to {manager_display} (Outside Manager).', 'success')
             else:
-                flash(f'Manager for {department} set to {manager_display}.', 'success')
+                flash(f'Manager for {department_label} set to {manager_display}.', 'success')
             
             return redirect(url_for('main.manage_managers'))
         
@@ -2872,6 +5280,11 @@ def manage_managers():
             # For regular managers, username is required
             if not is_outside_manager and not manager_username:
                 flash('Manager username is required.', 'danger')
+                return redirect(url_for('main.manage_managers'))
+
+            # Never allow self-report assignment.
+            if manager_username and employee_username and manager_username.strip().lower() == employee_username.strip().lower():
+                flash('A manager cannot be assigned as their own direct report.', 'danger')
                 return redirect(url_for('main.manage_managers'))
             
             # Get employee details from AD
@@ -3016,6 +5429,7 @@ def manage_managers():
         
         elif action == 'bulk_assign_department':
             department = request.form.get('department')
+            fallback_to_department_manager = request.form.get('fallback_to_department_manager', '1') == '1'
             
             if not department:
                 flash('Department is required.', 'danger')
@@ -3024,13 +5438,21 @@ def manage_managers():
             # Get department manager
             dept_mgr = DepartmentManager.query.filter_by(department=department).first()
             if not dept_mgr:
-                flash(f'No manager assigned for {department}. Please assign a manager first.', 'warning')
-                return redirect(url_for('main.manage_managers'))
+                fallback_mgr = _resolve_default_manager(ad_args)
+                if not fallback_mgr:
+                    flash(f'No manager assigned for {department}, and no default manager from policy could be resolved.', 'warning')
+                    return redirect(url_for('main.manage_managers'))
+                class _FallbackMgr:
+                    pass
+                dept_mgr = _FallbackMgr()
+                dept_mgr.manager_username = fallback_mgr['username']
+                dept_mgr.manager_dn = fallback_mgr['dn']
+                dept_mgr.manager_display_name = fallback_mgr['display']
             
             # Find department OU
             dept_ou = None
-            for dept in departments:
-                if dept['name'] == department:
+            for dept in top_departments:
+                if dept['key'] == department:
                     dept_ou = dept['dn']
                     break
             
@@ -3045,11 +5467,33 @@ def manage_managers():
             manager_dn = dept_mgr.manager_dn
             assigned_count = 0
             skipped_count = 0
+            coordinator_count = 0
             
             for user in dept_users:
                 user_dn = user.get('distinguishedName') or user.get('dn')
                 username = user.get('sAMAccountName') or user.get('username')
                 display_name = user.get('displayName') or user.get('cn') or username
+                is_indirect = False
+                supervisor_username = None
+                supervisor_dn = None
+                supervisor_display_name = None
+                is_outside_supervisor = False
+
+                # If a sub-OU coordinator exists, keep overall manager but set coordinator as supervisor.
+                sub_label = _extract_sub_department_label(user_dn, dept_ou)
+                if sub_label:
+                    sub_key = f"{department}::{sub_label}"
+                    coordinator = DepartmentManager.query.filter_by(department=sub_key).first()
+                    if coordinator and coordinator.manager_username:
+                        is_indirect = True
+                        supervisor_username = coordinator.manager_username
+                        supervisor_dn = coordinator.manager_dn
+                        supervisor_display_name = coordinator.manager_display_name
+                        is_outside_supervisor = not bool(coordinator.manager_dn)
+                        coordinator_count += 1
+                    elif not fallback_to_department_manager:
+                        skipped_count += 1
+                        continue
                 
                 # Prevent managers from assigning themselves as direct reports
                 if username.lower() == dept_mgr.manager_username.lower():
@@ -3077,6 +5521,11 @@ def manage_managers():
                     existing.manager_dn = manager_dn
                     existing.department = department
                     existing.is_same_department = True
+                    existing.is_indirect_report = is_indirect
+                    existing.supervisor_username = supervisor_username if is_indirect else None
+                    existing.supervisor_dn = supervisor_dn if is_indirect else None
+                    existing.supervisor_display_name = supervisor_display_name if is_indirect else None
+                    existing.is_outside_supervisor = is_outside_supervisor if is_indirect else False
                     existing.updated_at = datetime.now(timezone.utc)
                     # Update AD manager attribute
                     set_user_manager(user_dn, manager_dn, **ad_args)
@@ -3091,7 +5540,12 @@ def manage_managers():
                     employee_dn=user_dn,
                     employee_display_name=display_name,
                     department=department,
-                    is_same_department=True
+                    is_same_department=True,
+                    is_indirect_report=is_indirect,
+                    supervisor_username=supervisor_username if is_indirect else None,
+                    supervisor_dn=supervisor_dn if is_indirect else None,
+                    supervisor_display_name=supervisor_display_name if is_indirect else None,
+                    is_outside_supervisor=is_outside_supervisor if is_indirect else False
                 )
                 db.session.add(direct_report)
                 
@@ -3100,7 +5554,12 @@ def manage_managers():
                 assigned_count += 1
             
             db.session.commit()
-            flash(f'Bulk assignment complete: {assigned_count} non-managers assigned, {skipped_count} skipped (managers must be assigned manually via cross-department assignment).', 'success')
+            flash(
+                f'Bulk assignment complete: {assigned_count} non-managers assigned, '
+                f'{coordinator_count} routed via sub-OU coordinators, '
+                f'{skipped_count} skipped.',
+                'success'
+            )
             return redirect(url_for('main.manage_managers'))
         
         elif action == 'remove_direct_report':
@@ -3117,6 +5576,7 @@ def manage_managers():
     
     return render_template('manage_managers.html',
                          departments=departments,
+                         top_departments=top_departments,
                          dept_managers=dept_managers,
                          reports_by_manager=reports_by_manager,
                          manager_display_names=manager_display_names,
@@ -3922,10 +6382,15 @@ def create_ou_route():
 @login_required
 @admin_required
 def disable_user_route():
-    """Disable a user from the user search table"""
+    """Disable a user, move to Disabled OU, and start archive retention tracking."""
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json
     config = get_ad_config()
     if not config:
-        return jsonify({'success': False, 'message': 'AD not configured. Please complete setup first.'}), 400
+        message = 'AD not configured. Please complete setup first.'
+        if is_ajax:
+            return jsonify({'success': False, 'message': message}), 400
+        flash(message, 'danger')
+        return redirect(request.referrer or url_for('main.user_search'))
     
     ad_args = {
         'server': config['ad_server'],
@@ -3936,20 +6401,42 @@ def disable_user_route():
     }
     
     user_dn = request.form.get('user_dn')
+    if not user_dn and request.is_json:
+        payload = request.get_json(silent=True) or {}
+        user_dn = payload.get('user_dn')
     if not user_dn:
-        return jsonify({'success': False, 'message': 'No user specified.'}), 400
-    
-    ok, msg = ad_disable_user(user_dn, **ad_args)
-    return jsonify({'success': ok, 'message': msg})
+        if is_ajax:
+            return jsonify({'success': False, 'message': 'No user specified.'}), 400
+        flash('No user specified.', 'danger')
+        return redirect(request.referrer or url_for('main.user_search'))
+
+    result = _disable_user_with_lifecycle(user_dn, ad_args, config)
+    if not result.get('success'):
+        message = result.get('message', 'Disable failed.')
+        if is_ajax:
+            return jsonify({'success': False, 'message': message}), 400
+        flash(message, 'danger')
+        return redirect(request.referrer or url_for('main.user_search'))
+
+    if is_ajax:
+        return jsonify(result)
+
+    flash(result.get('message', 'User disabled.'), 'warning' if result.get('partial') else 'success')
+    return redirect(request.referrer or url_for('main.user_search'))
 
 @main.route('/admin/enable_user', methods=['POST'])
 @login_required
 @admin_required
 def enable_user_route():
-    """Enable a user from the user search table"""
+    """Enable a user and restore them to their original OU when available."""
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json
     config = get_ad_config()
     if not config:
-        return jsonify({'success': False, 'message': 'AD not configured. Please complete setup first.'}), 400
+        message = 'AD not configured. Please complete setup first.'
+        if is_ajax:
+            return jsonify({'success': False, 'message': message}), 400
+        flash(message, 'danger')
+        return redirect(request.referrer or url_for('main.user_search'))
     
     ad_args = {
         'server': config['ad_server'],
@@ -3960,11 +6447,54 @@ def enable_user_route():
     }
     
     user_dn = request.form.get('user_dn')
+    if not user_dn and request.is_json:
+        payload = request.get_json(silent=True) or {}
+        user_dn = payload.get('user_dn')
     if not user_dn:
-        return jsonify({'success': False, 'message': 'No user specified.'}), 400
-    
+        if is_ajax:
+            return jsonify({'success': False, 'message': 'No user specified.'}), 400
+        flash('No user specified.', 'danger')
+        return redirect(request.referrer or url_for('main.user_search'))
+
+    user_details = get_user_details(user_dn, **ad_args) or {}
+    username = _ad_attr_scalar(
+        user_details.get('sAMAccountName')
+        or user_details.get('samAccountName')
+        or user_details.get('cn')
+        or user_dn.split(',')[0].replace('CN=', '')
+    )
+
     ok, msg = ad_enable_user(user_dn, **ad_args)
-    return jsonify({'success': ok, 'message': msg})
+    if not ok:
+        if is_ajax:
+            return jsonify({'success': False, 'message': msg}), 400
+        flash(msg, 'danger')
+        return redirect(request.referrer or url_for('main.user_search'))
+
+    lifecycle = DisabledUserLifecycle.query.filter_by(username=username).first()
+    restore_msg = ''
+    updated_dn = user_dn
+    if lifecycle and lifecycle.original_ou_dn and lifecycle.original_ou_dn.lower() not in user_dn.lower():
+        restore_ok, restore_detail = move_user_to_ou(user_dn, lifecycle.original_ou_dn, **ad_args)
+        if restore_ok:
+            updated_dn = _calculate_moved_dn(user_dn, lifecycle.original_ou_dn)
+            restore_msg = ' User moved back to original OU.'
+        else:
+            restore_msg = f' Could not move back to original OU: {restore_detail}'
+
+    if lifecycle:
+        lifecycle.current_dn = updated_dn
+        lifecycle.status = 'restored'
+        lifecycle.restored_at = datetime.now(timezone.utc)
+        lifecycle.last_archive_error = None
+        db.session.commit()
+
+    log_user_action('enable_user', username, 'success', {'user_dn': user_dn, 'restored_dn': updated_dn})
+    message = f'User enabled successfully.{restore_msg}'
+    if is_ajax:
+        return jsonify({'success': True, 'message': message})
+    flash(message, 'success')
+    return redirect(request.referrer or url_for('main.user_search'))
 
 @main.route('/admin/move_user', methods=['POST'])
 @login_required
@@ -4429,19 +6959,10 @@ def unified_login():
         if not username or not password:
             error = 'Username and password are required.'
         else:
-            # First try local admin login
-            admin = Admin.query.filter_by(username=username).first()
-            if admin and admin.check_password(password):
-                login_user(admin)
-                session['role'] = 'admin'
-                session['view_mode'] = 'admin'
-                log_login(username, 'success', {'method': 'local_admin'})
-                flash('Logged in as administrator.', 'success')
-                return redirect(url_for('main.dashboard'))
-            
-            # Try AD authentication
+            # Check if AD is configured - if so, prioritize AD authentication
             config = get_ad_config()
             if config:
+                # Try AD authentication first (since AD is configured)
                 ok, msg = authenticate_user(username, password)
                 if ok:
                     # Check if user is in admin group
@@ -4485,11 +7006,21 @@ def unified_login():
                         flash('Logged in successfully.', 'success')
                         return redirect(url_for('main.dashboard'))
                 else:
-                    log_login(username, 'failure', {'reason': 'invalid_credentials'})
+                    log_login(username, 'failure', {'reason': 'invalid_credentials', 'details': msg})
                     error = msg or 'Invalid credentials.'
             else:
-                log_login(username, 'failure', {'reason': 'ad_not_configured'})
-                error = 'Active Directory not configured.'
+                # AD not configured - try local admin login only
+                admin = Admin.query.filter_by(username=username).first()
+                if admin and admin.check_password(password):
+                    login_user(admin)
+                    session['role'] = 'admin'
+                    session['view_mode'] = 'admin'
+                    log_login(username, 'success', {'method': 'local_admin'})
+                    flash('Logged in as administrator.', 'success')
+                    return redirect(url_for('main.dashboard'))
+                else:
+                    log_login(username, 'failure', {'reason': 'invalid_credentials', 'details': msg})
+                    error = msg or 'Invalid credentials.'
     
     return render_template('login.html', error=error)
 
@@ -4500,7 +7031,40 @@ def dashboard():
     role = session.get('role', 'user')
     view_mode = session.get('view_mode', role)
     
-    if view_mode == 'admin':
+    # If role/view_mode is not admin, check if user is actually an admin
+    if role != 'admin' and view_mode != 'admin':
+        # First check if user exists in Admin table (local admin)
+        admin_record = Admin.query.filter_by(username=current_user.username).first()
+        if admin_record:
+            # User is in Admin table - grant admin access
+            session['role'] = 'admin'
+            session['view_mode'] = 'admin'
+            role = 'admin'
+            view_mode = 'admin'
+        else:
+            # If AD is configured, check if user is in admin group
+            config = get_ad_config()
+            if config:
+                try:
+                    is_admin_user = is_user_in_admin_group(
+                        current_user.username,
+                        server=config['ad_server'],
+                        port=config['ad_port'],
+                        bind_user=config['ad_bind_dn'],
+                        bind_password=config['ad_password'],
+                        base_dn=config['ad_base_dn']
+                    )
+                    if is_admin_user:
+                        # Update session to reflect admin status
+                        session['role'] = 'admin'
+                        session['view_mode'] = 'admin'
+                        role = 'admin'
+                        view_mode = 'admin'
+                except Exception as e:
+                    # If AD check fails, user remains as regular user
+                    pass
+    
+    if view_mode == 'admin' or role == 'admin':
         return admin_dashboard_content()
     else:
         return user_dashboard_content()
@@ -5301,14 +7865,17 @@ def get_password_status_stats():
     from datetime import datetime, timezone, timedelta
     import ldap3
     from ldap3 import Server, Connection, ALL, SUBTREE
-    from flask import request, session
+    from flask import request, session, has_request_context
     
     config = get_ad_config()
     if not config:
         return None
     
-    # Check if debug is enabled
-    debug_enabled = request.args.get('debug') == '1' or session.get('dashboard_debug')
+    # Support callers outside HTTP request context (e.g. scripts/tests).
+    if has_request_context():
+        debug_enabled = request.args.get('debug') == '1' or session.get('dashboard_debug')
+    else:
+        debug_enabled = False
     
     try:
         # Connect to AD once
@@ -5334,13 +7901,19 @@ def get_password_status_stats():
                     max_pwd_age_days = abs(max_age) // (10**7 * 60 * 60 * 24)
         
         # Search in primary users OU (matching user search behavior)
+        base_dn = config['ad_base_dn']
         from .ad import get_organization_ous
         org_ous = get_organization_ous(base_dn)
         primary_users_base = org_ous['primary_users_ou']
         disabled_users_ou = org_ous['disabled_users_ou']
         
         # Default excluded OUs (matching user search behavior)
-        default_exclude_ous = [disabled_users_ou, org_ous['service_accounts_ou'], org_ous['internal_tools_ou']]
+        default_exclude_ous = [
+            disabled_users_ou,
+            org_ous.get('archive_users_ou', ''),
+            org_ous['service_accounts_ou'],
+            org_ous['internal_tools_ou']
+        ]
         
         # Get all users with password attributes - search only in primary users OU
         conn.search(primary_users_base, 
@@ -5530,12 +8103,18 @@ def drilldown_passwords(status):
         
         # Search in primary users OU (matching user search behavior)
         from .ad import get_organization_ous
+        base_dn = config['ad_base_dn']
         org_ous = get_organization_ous(base_dn)
         primary_users_base = org_ous['primary_users_ou']
         disabled_users_ou = org_ous['disabled_users_ou']
         
         # Default excluded OUs (matching user search behavior)
-        default_exclude_ous = [disabled_users_ou, org_ous['service_accounts_ou'], org_ous['internal_tools_ou']]
+        default_exclude_ous = [
+            disabled_users_ou,
+            org_ous.get('archive_users_ou', ''),
+            org_ous['service_accounts_ou'],
+            org_ous['internal_tools_ou']
+        ]
         
         # Get all users with password attributes - search only in primary users OU
         conn.search(primary_users_base, 

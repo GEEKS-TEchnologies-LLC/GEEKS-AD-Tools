@@ -8,6 +8,30 @@ import winrm
 
 logger = logging.getLogger(__name__)
 
+def _safe_json_loads(text: str):
+    """
+    Parse JSON from mixed PowerShell output.
+    Handles extra trailing CLIXML/progress text by decoding the first JSON object/array.
+    """
+    if not text:
+        raise json.JSONDecodeError("empty", "", 0)
+
+    stripped = text.strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(stripped):
+        if ch in '{[':
+            try:
+                obj, _end = decoder.raw_decode(stripped[i:])
+                return obj
+            except json.JSONDecodeError:
+                continue
+    raise json.JSONDecodeError("no json object found", stripped, 0)
+
 class ExchangeManager:
     def __init__(self, exchange_server: str, username: str, password: str, domain: str = None):
         """
@@ -170,7 +194,7 @@ class ExchangeManager:
         # Handle deserialized ByteQuantifiedSize objects which become strings like "30.94 GB (33,221,930,407 bytes)"
         email_list = "','".join(user_emails)
         # Use % formatting to avoid brace escaping issues with format()
-        command = "$r=@();foreach($x in @('%s')){try{$m=Get-Mailbox -Identity $x -EA Stop;$s=Get-MailboxStatistics -Identity $m.Identity -EA Stop;$b=0;if($s.TotalItemSize){$ts=$s.TotalItemSize.ToString();if($ts -match '\\((\\d+(?:,\\d+)*)\\s+bytes\\)'){$b=[int64]($matches[1] -replace ',','')}elseif($ts -match '([\\d.]+)\\s*(GB|MB|KB)'){$v=[double]$matches[1];$u=$matches[2].ToUpper();switch($u){'GB'{$b=[int64]($v*1GB)}'MB'{$b=[int64]($v*1MB)}'KB'{$b=[int64]($v*1KB)}}}};$r+=@{Email=$x;PrimarySmtpAddress=$m.PrimarySmtpAddress;DisplayName=$m.DisplayName;TotalItemSize=$b;TotalItemCount=$s.ItemCount;LastLogonTime=$s.LastLogonTime;Database=$m.Database};}catch{$r+=@{Email=$x;Error=$_.Exception.Message}}};$r|ConvertTo-Json -Depth 3" % email_list
+        command = "$r=@();foreach($x in @('%s')){try{$m=Get-Mailbox -Identity $x -EA Stop;$s=Get-MailboxStatistics -Identity $m.Identity -EA Stop;$b=0;if($s.TotalItemSize){$ts=$s.TotalItemSize.ToString();if($ts -match '\\((\\d+(?:,\\d+)*)\\s+bytes\\)'){$b=[int64]($matches[1] -replace ',','')}elseif($ts -match '([\\d.]+)\\s*(GB|MB|KB)'){$v=[double]$matches[1];$u=$matches[2].ToUpper();switch($u){'GB'{$b=[int64]($v*1GB)}'MB'{$b=[int64]($v*1MB)}'KB'{$b=[int64]($v*1KB)}}}};$ll=$null;if($s.LastLogonTime){$ll=$s.LastLogonTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')};$r+=@{Email=$x;PrimarySmtpAddress=$m.PrimarySmtpAddress;DisplayName=$m.DisplayName;TotalItemSize=$b;TotalItemCount=$s.ItemCount;LastLogonTime=$ll;Database=$m.Database};}catch{$r+=@{Email=$x;Error=$_.Exception.Message}}};$r|ConvertTo-Json -Depth 3" % email_list
         logger.debug(f"Requesting mailbox sizes for batch of {len(user_emails)} emails: {user_emails[:3]}...")
         success, stdout, stderr = self._run_powershell_command(command)
         
@@ -190,7 +214,7 @@ class ExchangeManager:
         if (success or has_valid_output) and stdout.strip():
             try:
                 # Parse JSON output
-                data = json.loads(stdout.strip())
+                data = _safe_json_loads(stdout.strip())
                 # Convert to case-insensitive dictionary (lowercase keys)
                 # Use both Email and PrimarySmtpAddress for matching
                 result = {}
@@ -430,7 +454,7 @@ class ExchangeManager:
             
             if success and stdout.strip():
                 try:
-                    batch_stats = json.loads(stdout.strip())
+                    batch_stats = _safe_json_loads(stdout.strip())
                     if isinstance(batch_stats, dict):
                         for email, stat_data in batch_stats.items():
                             if stat_data:

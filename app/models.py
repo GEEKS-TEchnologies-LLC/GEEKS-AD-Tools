@@ -3,6 +3,7 @@ from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from . import db
 from datetime import datetime, timedelta, timezone
+import json
 
 class Admin(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -13,6 +14,9 @@ class Admin(UserMixin, db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
+        # If password_hash is empty, this is an AD-only user - local auth won't work
+        if not self.password_hash:
+            return False
         return check_password_hash(self.password_hash, password)
 
 class AuditLog(db.Model):
@@ -168,6 +172,44 @@ class Task(db.Model):
         """Store task data as JSON string"""
         import json
         self.task_data = json.dumps(data)
+
+
+class DisabledUserLifecycle(db.Model):
+    """Tracks disable -> retention -> archive lifecycle for terminated users."""
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    display_name = db.Column(db.String(256), nullable=True)
+    email = db.Column(db.String(256), nullable=True)
+    original_dn = db.Column(db.String(512), nullable=False)
+    current_dn = db.Column(db.String(512), nullable=False)
+    original_ou_dn = db.Column(db.String(512), nullable=True)
+    disabled_ou_dn = db.Column(db.String(512), nullable=True)
+    archive_ou_dn = db.Column(db.String(512), nullable=True)
+    original_groups_json = db.Column(db.Text, nullable=True)
+    disabled_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False, index=True)
+    archive_after = db.Column(db.DateTime, nullable=False, index=True)
+    archived_at = db.Column(db.DateTime, nullable=True, index=True)
+    restored_at = db.Column(db.DateTime, nullable=True, index=True)
+    status = db.Column(db.String(32), nullable=False, default='disabled', index=True)
+    last_archive_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=False)
+    updated_at = db.Column(
+        db.DateTime,
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
+        nullable=False
+    )
+
+    def set_original_groups(self, group_dns):
+        self.original_groups_json = json.dumps(group_dns or [])
+
+    def get_original_groups(self):
+        if not self.original_groups_json:
+            return []
+        try:
+            return json.loads(self.original_groups_json)
+        except Exception:
+            return []
 
 # Helper functions for password reset tracking
 def get_password_policy():
