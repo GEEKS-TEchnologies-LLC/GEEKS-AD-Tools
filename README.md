@@ -2,6 +2,13 @@
 
 A comprehensive Linux-based web application for Active Directory password management and user administration. This system provides a secure, self-updating portal that integrates directly with Active Directory for password resets, user management, and administrative tasks. It includes a Windows Credential Provider for seamless lock screen integration.
 
+## Recent Updates (2026-05-11)
+
+- **Credential Security Hardening:**
+  - **Removed Hardcoded Secrets**: `restore_credentials.py` no longer contains embedded AD/Exchange passwords.
+  - **Interactive Restore Flow**: Credential restore now uses secure prompts (`getpass`) and never prints password values.
+  - **Encrypted Local Storage**: Credentials are written to `.credentials.enc` via `app/credentials.py` (with local key material), not committed in source files.
+
 ## Recent Updates (2025-10-30)
 
 - **Exchange Server Integration (New):**
@@ -483,6 +490,22 @@ The build system creates:
 ```
 
 - If you clone the repository, `config.json` will be automatically created from `config.example.json` on first run.
+
+### Credential Storage (Recommended)
+
+Use secure credential helpers instead of placing passwords in tracked files.
+
+```bash
+# Initial secure credential setup (prompts for values)
+python3 setup_credentials.py
+
+# Restore/update AD and Exchange credentials interactively
+python3 restore_credentials.py
+```
+
+- `restore_credentials.py` is interactive-only and does not contain hardcoded passwords.
+- Credential values are stored in encrypted local files (`.credentials.enc` and `.credentials.key`).
+- Do not commit local credential files or plaintext secrets.
 
 ### Active Directory Setup
 1. Copy `app/ad_config.example.json` to `app/ad_config.json`
