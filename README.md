@@ -493,11 +493,18 @@ The build system creates:
   "admin_groups": ["Domain Admins"],
   "debug": false,
   "secret_key": "",
-  "portal_url": "http://localhost:5000"
+  "portal_url": "https://portal.example.com"
 }
 ```
 
 - If you clone the repository, `config.json` will be automatically created from `config.example.json` on first run.
+
+### Secure Portal URL
+
+- Use HTTPS for any password reset or credential provider portal URL.
+- The Windows credential provider install and GPO deployment scripts require an explicit HTTPS `PortalURL`.
+- Local HTTP reset URLs are not accepted by the production credential provider path.
+- For staging, use a valid certificate chain that clients trust so Exchange, LDAP, and reset workflows validate CA and hostname checks.
 
 ### Credential Storage (Recommended)
 
@@ -647,6 +654,9 @@ cat build.log
 
 # Verify installation
 python3 build.py test
+
+# Reproduce the release test bootstrap without make
+bash scripts/bootstrap_test_env.sh
 
 # Install system dependencies manually
 python3 build.py system-deps

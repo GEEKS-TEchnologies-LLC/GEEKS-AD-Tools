@@ -10,6 +10,11 @@ echo "GEEKS-AD-Plus Linux/macOS Build Script"
 echo "========================================"
 echo
 
+if [[ "${1:-}" == "install-service" ]]; then
+    print_status "Installing systemd service via setup_service.sh..."
+    exec ./setup_service.sh
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -116,35 +121,4 @@ else
     exit 1
 fi
 
-# --- Systemd Service Setup ---
-SERVICE_NAME=geeksadplus
-SERVICE_FILE=/etc/systemd/system/$SERVICE_NAME.service
-WORKING_DIR=$(pwd)
-USER=$(whoami)
-
-set -e
-trap 'echo "[ERROR] Service setup failed."; exit 1' ERR
-
-echo "[INFO] Writing systemd service file to $SERVICE_FILE ..."
-echo "[Unit]
-Description=GEEKS-AD-Plus Flask App
-After=network.target
-
-[Service]
-Type=simple
-User=$USER
-WorkingDirectory=$WORKING_DIR
-ExecStart=/usr/bin/make start
-Restart=always
-RestartSec=5
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target" | sudo tee $SERVICE_FILE > /dev/null
-
-sudo systemctl daemon-reload
-sudo systemctl enable $SERVICE_NAME
-sudo systemctl restart $SERVICE_NAME
-
-echo "[SUCCESS] Service $SERVICE_NAME installed and started."
-trap - ERR 
+print_warning "Service installation is not automatic. Run './build.sh install-service' only after reviewing service changes."

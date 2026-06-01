@@ -445,8 +445,8 @@ class GEEKSBuildSystem:
             "ad_bind_password": "",
             "admin_groups": ["Domain Admins"],
             "debug": False,
-            "secret_key": "",
-            "portal_url": f"http://localhost:{port}"
+            "secret_key": secrets.token_urlsafe(48),
+            "portal_url": f"https://localhost:{port}"
         }
         
         if not config_file.exists():
@@ -457,10 +457,11 @@ class GEEKSBuildSystem:
         # Create .env file
         env_file = self.project_root / ".env"
         if not env_file.exists():
-            env_content = """# GEEKS-AD-Plus Environment Configuration
+            env_secret = secrets.token_urlsafe(48)
+            env_content = f"""# GEEKS-AD-Plus Environment Configuration
 FLASK_APP=app.py
 FLASK_ENV=development
-SECRET_KEY=your-secret-key-here
+SECRET_KEY={env_secret}
 DEBUG=False
 """
             with open(env_file, "w") as f:

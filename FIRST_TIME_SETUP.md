@@ -301,6 +301,12 @@ If you have Exchange Server 2019:
 
 ### Build Issues
 
+**Problem**: Fresh test environment needs a reproducible bootstrap
+```bash
+# Creates/updates venv, installs requirements, runs scanner, compile checks, pytest, and build.py test
+bash scripts/bootstrap_test_env.sh
+```
+
 **Problem**: Python dependencies fail to install
 ```bash
 # Upgrade pip, then retry build
