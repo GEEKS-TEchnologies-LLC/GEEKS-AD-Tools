@@ -49,6 +49,12 @@ bug_reports/*.json
 config.json
 .env
 
+# Generated exports may contain directory PII
+migration_ready_by_department_*.csv
+migration_ready_by_department_*.xlsx
+*_migration_ready*.csv
+*_migration_ready*.xlsx
+
 # Instance folder contents (but keep directory)
 instance/*
 !instance/.gitkeep

@@ -17,6 +17,14 @@ migrate = Migrate()
 login_manager = LoginManager()
 login_manager.login_view = 'main.admin_login'
 
+def require_env_secret(name):
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} environment variable must be set")
+    if len(value) < 32:
+        raise RuntimeError(f"{name} must be at least 32 characters")
+    return value
+
 def ensure_config_json():
     config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
     example_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.example.json')
@@ -32,7 +40,7 @@ def create_app():
     base_dir = os.path.abspath(os.path.dirname(__file__))
 
     app.config.from_mapping(
-        SECRET_KEY=os.environ.get('SECRET_KEY', 'dev'),
+        SECRET_KEY=require_env_secret('SECRET_KEY'),
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{os.path.join(base_dir, 'database.db')}",
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         MAIL_SERVER='localhost',

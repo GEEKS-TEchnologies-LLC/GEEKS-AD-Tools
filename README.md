@@ -12,6 +12,10 @@ A comprehensive Linux-based web application for Active Directory password manage
   - **No Org-Specific Chain Rules in Source**: Manager-chain exceptions now load from local policy file instead of hardcoded identities.
   - **Gitignored Local Policy**: Put private org rules in `instance/manager_policy.json` (ignored by git).
   - **Portable Defaults**: Repo ships a generic `manager_policy.example.json` template for clean installs and non-Sunray environments.
+- **Sensitive Data Guardrails:**
+  - **Generated Directory Exports Ignored**: Migration-ready CSV/XLSX exports are ignored because they may contain names, usernames, emails, and AD DNs.
+  - **Required Runtime Secrets**: `SECRET_KEY`, `DB_PASSWORD`, and `GRAFANA_PASSWORD` must be supplied through the environment for Docker Compose deployments.
+  - **Security Scan Hook**: `scripts/security_scan.py` is available for CI and pre-commit checks to block obvious directory PII exports and weak secret fallbacks.
 
 ## Recent Updates (2025-10-30)
 

@@ -2,11 +2,14 @@ name: GEEKS-AD-Plus CI/CD
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, Dev ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, Dev ]
   release:
     types: [ published ]
+
+env:
+  SECRET_KEY: ci-only-secret-key-for-automated-tests
 
 jobs:
   # Test job
@@ -187,6 +190,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install safety bandit
+
+    - name: Run repository security scan
+      run: |
+        python scripts/security_scan.py
 
     - name: Run safety check
       run: |

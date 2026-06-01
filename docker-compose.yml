@@ -10,7 +10,7 @@ services:
     environment:
       - FLASK_APP=app.py
       - FLASK_ENV=production
-      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set}
       - DEBUG=False
     volumes:
       - ./config.json:/app/config.json:ro
@@ -29,7 +29,7 @@ services:
     environment:
       - POSTGRES_DB=geeks_ad_plus
       - POSTGRES_USER=geeks
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-geeks_password}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -93,7 +93,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set}
     volumes:
       - grafana_data:/var/lib/grafana
     depends_on:
