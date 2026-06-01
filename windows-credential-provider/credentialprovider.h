@@ -57,8 +57,8 @@
 #define GEEKS_REGISTRY_VALUE_ENABLED L"Enabled"
 #define GEEKS_REGISTRY_VALUE_DEBUG L"Debug"
 
-// Default portal URL
-#define GEEKS_DEFAULT_PORTAL_URL L"http://localhost:5000/reset-password"
+// Default portal URL. Production deployments must configure an HTTPS portal URL.
+#define GEEKS_DEFAULT_PORTAL_URL L"https://portal.example.com/reset-password"
 
 // Class forward declarations
 class CGEEKSProvider;

@@ -301,13 +301,11 @@ If you have Exchange Server 2019:
 
 ### Build Issues
 
-**Problem**: `python-ldap` installation fails
+**Problem**: Python dependencies fail to install
 ```bash
-# Install system dependencies first
-sudo apt-get install python3-dev libldap2-dev libsasl2-dev libssl-dev  # Ubuntu/Debian
-sudo yum install python3-devel openldap-devel  # CentOS/RHEL
-
-# Then retry build
+# Upgrade pip, then retry build
+source venv/bin/activate
+pip install --upgrade pip
 python3 build.py
 ```
 

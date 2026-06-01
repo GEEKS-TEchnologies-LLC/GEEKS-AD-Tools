@@ -5811,10 +5811,13 @@ def gpo_deployment():
 def generate_gpo_script():
     domain_controller = request.form.get('domain_controller', '')
     gpo_name = request.form.get('gpo_name', 'GEEKS-CredentialProvider')
-    portal_url = request.form.get('portal_url', 'http://localhost:5000/reset-password')
+    portal_url = request.form.get('portal_url', '').strip()
     
     if not domain_controller:
         flash('Domain Controller is required', 'danger')
+        return redirect(url_for('main.gpo_deployment'))
+    if not portal_url.startswith('https://'):
+        flash('Portal URL must use HTTPS.', 'danger')
         return redirect(url_for('main.gpo_deployment'))
     
     # Generate the GPO deployment script
@@ -6104,7 +6107,7 @@ try {{
         
         # Configure GPO startup script
         Write-Log "Configuring GPO startup script..."
-        Set-GPOStartupScript -Name $GPO -Command "powershell.exe" -Arguments "-ExecutionPolicy Bypass -File `"$installScriptPath`" -PortalURL `"$PortalURL`""
+        Set-GPOStartupScript -Name $GPO -Command "powershell.exe" -Arguments "-NoProfile -File `"$installScriptPath`" -PortalURL `"$PortalURL`""
         
         # Configure GPO settings
         Write-Log "Configuring GPO settings..."

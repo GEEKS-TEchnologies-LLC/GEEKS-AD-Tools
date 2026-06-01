@@ -1,6 +1,5 @@
 Flask
 Flask-Mail
-python-ldap
 Flask-Login
 Flask-WTF
 Flask-Bootstrap
@@ -13,3 +12,4 @@ requests
 Flask-Session
 cryptography
 distro 
+pytest

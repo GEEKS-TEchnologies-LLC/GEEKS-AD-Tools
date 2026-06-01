@@ -179,7 +179,7 @@ def ad_connection(**kwargs):
             reused_from_pool = False
 
     if conn is None:
-        tls_config = ldap3.Tls(validate=ssl.CERT_NONE) if use_ssl else None
+        tls_config = ldap3.Tls(validate=ssl.CERT_REQUIRED, version=ssl.PROTOCOL_TLS_CLIENT) if use_ssl else None
         server_obj = ldap3.Server(
             raw_server,
             port=port_int,
@@ -817,7 +817,7 @@ def set_password(user_dn, new_password, **ad_args):
         # attempt one secure fallback on 636 before returning failure.
         if not use_ssl:
             try:
-                tls_config = ldap3.Tls(validate=ssl.CERT_NONE)
+                tls_config = ldap3.Tls(validate=ssl.CERT_REQUIRED, version=ssl.PROTOCOL_TLS_CLIENT)
                 secure_server = ldap3.Server(raw_server, port=636, use_ssl=True, tls=tls_config, get_info=ldap3.ALL)
                 secure_conn = ldap3.Connection(
                     secure_server,

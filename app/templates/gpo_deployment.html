@@ -279,8 +279,10 @@
                         <label for="portal_url" class="form-label">
                             <i class="fas fa-globe me-2"></i>Portal URL
                         </label>
-                        <input type="url" class="form-control" name="portal_url" id="portal_url" 
-                               value="http://localhost:5000/reset-password">
+                        <input type="url" class="form-control" name="portal_url" id="portal_url"
+                               placeholder="https://portal.example.com/reset-password"
+                               pattern="https://.*"
+                               required>
                         <div class="form-text">URL where users will be directed for password reset</div>
                     </div>
                     

@@ -62,6 +62,22 @@ PROHIBITED_CONTENT_PATTERNS = [
         "Active Directory DN plus email export",
         re.compile(r"(?=.*\bDC=)(?=.*\bOU=)(?=.*@)", re.IGNORECASE),
     ),
+    (
+        "TLS certificate validation disabled",
+        re.compile(r"\b(?:CERT_NONE|SkipCACheck|SkipCNCheck|ServerCertificateValidationCallback)\b"),
+    ),
+    (
+        "PowerShell execution policy bypass",
+        re.compile(r"-ExecutionPolicy\s+Bypass", re.IGNORECASE),
+    ),
+    (
+        "Credential provider HTTP reset URL",
+        re.compile(r"http://localhost:5000/reset-password", re.IGNORECASE),
+    ),
+    (
+        "Native python-ldap dependency",
+        re.compile(r"^python-ldap\b", re.IGNORECASE),
+    ),
 ]
 
 
@@ -93,6 +109,8 @@ def main() -> int:
         rel = path.relative_to(ROOT).as_posix()
         if any(pattern.search(rel) for pattern in PROHIBITED_FILE_PATTERNS):
             findings.append(f"{rel}: prohibited generated export artifact")
+            continue
+        if rel == "scripts/security_scan.py":
             continue
 
         if not is_text_file(path):

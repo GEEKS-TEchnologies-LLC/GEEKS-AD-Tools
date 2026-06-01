@@ -11,9 +11,9 @@ import subprocess
 import shutil
 import json
 import platform
+import secrets
 from pathlib import Path
 from datetime import datetime
-import getpass
 
 class GEEKSBuildSystem:
     def __init__(self):
@@ -309,13 +309,7 @@ class GEEKSBuildSystem:
                     self.log(f"Installing {package}...", "INFO", "blue")
                     self.run_command(f"{pip_cmd} install {package}", check=False)
                 
-                # Try python-ldap separately with more detailed error handling
-                self.log("Attempting to install python-ldap...", "INFO", "blue")
-                ldap_result = self.run_command(f"{pip_cmd} install python-ldap", check=False)
-                if ldap_result.returncode != 0:
-                    self.log("python-ldap installation failed. This may require system dependencies.", "WARNING", "yellow")
-                    self.log("Please install manually: sudo apt-get install python3-dev libldap2-dev libsasl2-dev libssl-dev", "WARNING", "yellow")
-                    self.log("Then run: pip install python-ldap", "WARNING", "yellow")
+                return False
         else:
             self.log("requirements.txt not found, installing basic dependencies", "WARNING", "yellow")
             basic_deps = [
@@ -484,30 +478,35 @@ DEBUG=False
             else:
                 python_cmd = "venv/bin/python"
             
-            # Test imports
-            test_script = """
-import sys
-sys.path.insert(0, '.')
+            env = os.environ.copy()
+            env.setdefault("SECRET_KEY", secrets.token_urlsafe(48))
 
-try:
-    from app import create_app
-    from app.models import User, AdminUser, AuditLog
-    from app.ad import load_ad_config, test_ad_connection
-    from app.audit import log_admin_action
-    from app.bug_report import generate_bug_report
-    print("All imports successful")
-except Exception as e:
-    print(f"Import error: {e}")
-    sys.exit(1)
-"""
-            
-            result = self.run_command(f"{python_cmd} -c \"{test_script}\"")
-            if result.returncode == 0:
-                self.log("Basic tests passed", "INFO", "green")
-                return True
-            else:
-                self.log("Basic tests failed", "ERROR", "red")
-                return False
+            checks = [
+                [python_cmd, "-m", "py_compile", "app/__init__.py", "app/ad.py", "app/exchange.py", "app/views.py"],
+                [python_cmd, "scripts/security_scan.py"],
+                [python_cmd, "-m", "pytest", "-q"],
+            ]
+
+            for command in checks:
+                self.log(f"Running: {' '.join(command)}", "DEBUG", "cyan")
+                result = subprocess.run(
+                    command,
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
+                if result.stdout:
+                    self.log(f"Output: {result.stdout.strip()}", "DEBUG", "cyan")
+                if result.stderr:
+                    self.log(f"Error output: {result.stderr.strip()}", "DEBUG", "cyan")
+                if result.returncode != 0:
+                    self.log(f"Test command failed: {' '.join(command)}", "ERROR", "red")
+                    return False
+
+            self.log("Basic tests passed", "INFO", "green")
+            return True
                 
         except Exception as e:
             self.log(f"Error running tests: {e}", "ERROR", "red")
@@ -728,9 +727,12 @@ def main():
             
         elif command == "test":
             # Run tests only
-            builder.check_prerequisites()
-            builder.install_dependencies()
-            builder.run_tests()
+            success = builder.check_prerequisites()
+            if success:
+                success = builder.install_dependencies() is not False
+            if success:
+                success = builder.run_tests()
+            sys.exit(0 if success else 1)
             
         elif command == "package":
             # Create package only
@@ -755,44 +757,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-SERVICE_NAME = "geeksadplus"
-SERVICE_FILE = f"/etc/systemd/system/{SERVICE_NAME}.service"
-WORKING_DIR = os.path.abspath(os.path.dirname(__file__))
-USER = getpass.getuser()  # Or hardcode 'bphillips' if needed
-
-service_content = f"""[Unit]
-Description=GEEKS-AD-Plus Flask App
-After=network.target
-
-[Service]
-Type=simple
-User={USER}
-WorkingDirectory={WORKING_DIR}
-ExecStart=/usr/bin/make start
-Restart=always
-RestartSec=5
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-def setup_service():
-    try:
-        print(f"[INFO] Writing systemd service file to {SERVICE_FILE} ...")
-        with open("temp_service.service", "w") as f:
-            f.write(service_content)
-        subprocess.run(["sudo", "mv", "temp_service.service", SERVICE_FILE], check=True)
-        subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
-        subprocess.run(["sudo", "systemctl", "enable", SERVICE_NAME], check=True)
-        subprocess.run(["sudo", "systemctl", "restart", SERVICE_NAME], check=True)
-        print(f"[SUCCESS] Service {SERVICE_NAME} installed and started.")
-    except subprocess.CalledProcessError as e:
-        print(f"[ERROR] Command failed: {e.cmd}\nReturn code: {e.returncode}")
-    except Exception as e:
-        print(f"[ERROR] Failed to set up systemd service: {e}")
-
-if __name__ == "__main__":
-    # ... your existing build logic ...
-    setup_service() 

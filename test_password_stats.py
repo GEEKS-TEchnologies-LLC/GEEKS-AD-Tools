@@ -4,12 +4,19 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+import pytest
 from app.views import get_password_status_stats
 from app.ad import get_ad_config
 from datetime import datetime, timezone, timedelta
 import ldap3
 from ldap3 import Server, Connection, ALL, SUBTREE
 import time
+
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_AD_INTEGRATION_TESTS") != "1",
+    reason="Live AD diagnostic; set RUN_AD_INTEGRATION_TESTS=1 to run.",
+)
 
 def test_password_stats():
     print("Testing password statistics...")

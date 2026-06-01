@@ -72,11 +72,12 @@ class ExchangeManager:
             Tuple of (success, stdout, stderr)
         """
         try:
-            # Create WinRM session
+            # Create WinRM session over HTTPS and validate the server certificate.
             session = winrm.Session(
-                f'http://{self.exchange_server}:5985/wsman',
+                f'https://{self.exchange_server}:5986/wsman',
                 auth=(f'{self.domain}\\{self.username}', self.password),
-                transport='ntlm'
+                transport='ntlm',
+                server_cert_validation='validate'
             )
             
             # Exchange Management Shell initialization must be included with each command
@@ -87,7 +88,7 @@ class ExchangeManager:
             # Wrap Remove-PSSession in try-catch to avoid failures when session is already closed
             # Suppress progress messages from Import-PSSession by redirecting to $null
             # CLIXML progress messages are informational, not errors
-            full_command = f"$p='{self.password}';$u='{username_with_domain}';$h='{self.exchange_server}';$c=[System.Management.Automation.PSCredential]::new($u,(ConvertTo-SecureString -AsPlainText -String $p -Force));[System.Net.ServicePointManager]::ServerCertificateValidationCallback={{$true}};$so=New-PSSessionOption -SkipCACheck -SkipCNCheck;$ProgressPreference='SilentlyContinue';try{{$s=New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri \"https://$h/PowerShell/\" -Credential $c -Authentication Basic -SessionOption $so -AllowRedirection -ErrorAction Stop}}catch{{try{{$s=New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri \"https://$h/PowerShell/\" -Credential $c -Authentication Kerberos -SessionOption $so -AllowRedirection -ErrorAction Stop}}catch{{throw \"Failed: $_\"}}}};Import-PSSession $s -DisableNameChecking -AllowClobber|Out-Null;$r={command};try{{Remove-PSSession $s -EA SilentlyContinue}}catch{{}};$r"
+            full_command = f"$p='{self.password}';$u='{username_with_domain}';$h='{self.exchange_server}';$c=[System.Management.Automation.PSCredential]::new($u,(ConvertTo-SecureString -AsPlainText -String $p -Force));$ProgressPreference='SilentlyContinue';try{{$s=New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri \"https://$h/PowerShell/\" -Credential $c -Authentication Basic -AllowRedirection -ErrorAction Stop}}catch{{try{{$s=New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri \"https://$h/PowerShell/\" -Credential $c -Authentication Kerberos -AllowRedirection -ErrorAction Stop}}catch{{throw \"Failed: $_\"}}}};Import-PSSession $s -DisableNameChecking -AllowClobber|Out-Null;$r={command};try{{Remove-PSSession $s -EA SilentlyContinue}}catch{{}};$r"
             
             # Execute the combined command
             result = session.run_ps(full_command)

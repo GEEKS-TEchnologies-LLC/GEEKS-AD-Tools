@@ -2,7 +2,9 @@
 # Run as Administrator
 
 param(
-    [string]$PortalURL = "http://localhost:5000/reset-password",
+    [Parameter(Mandatory=$true)]
+    [ValidatePattern('^https://')]
+    [string]$PortalURL,
     [switch]$Force,
     [switch]$Debug
 )

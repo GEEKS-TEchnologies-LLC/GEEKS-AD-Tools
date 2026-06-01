@@ -8,7 +8,9 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$GPO,
     
-    [string]$PortalURL = "http://localhost:5000/reset-password",
+    [Parameter(Mandatory=$true)]
+    [ValidatePattern('^https://')]
+    [string]$PortalURL,
     [string]$SourcePath = "\\$DomainController\SYSVOL\$env:USERDNSDOMAIN\Policies\GEEKS-CredentialProvider",
     [switch]$Force,
     [switch]$Debug
@@ -283,7 +285,7 @@ try {
         
         # Configure GPO startup script
         Write-Log "Configuring GPO startup script..."
-        Set-GPOStartupScript -Name $GPO -Command "powershell.exe" -Arguments "-ExecutionPolicy Bypass -File `"$installScriptPath`" -PortalURL `"$PortalURL`""
+        Set-GPOStartupScript -Name $GPO -Command "powershell.exe" -Arguments "-NoProfile -File `"$installScriptPath`" -PortalURL `"$PortalURL`""
         
         # Configure GPO settings
         Write-Log "Configuring GPO settings..."

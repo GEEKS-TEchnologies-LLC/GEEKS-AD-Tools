@@ -651,10 +651,10 @@ python3 build.py test
 # Install system dependencies manually
 python3 build.py system-deps
 
-# If python-ldap fails to install
-sudo apt-get install python3-dev libldap2-dev libsasl2-dev libssl-dev
+# If dependencies fail to install
 source venv/bin/activate
-pip install python-ldap
+pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
 ## Starting the System
