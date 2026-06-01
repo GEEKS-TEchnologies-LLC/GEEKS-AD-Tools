@@ -9,10 +9,12 @@ def test_requirements_do_not_include_native_ldap_package():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
 
     assert "python" + "-ldap" not in requirements
+    assert "pywinrm" in requirements
 
 
 def test_exchange_path_keeps_certificate_validation_enabled():
     exchange_source = (ROOT / "app" / "exchange.py").read_text(encoding="utf-8")
+    ad_source = (ROOT / "app" / "ad.py").read_text(encoding="utf-8")
 
     disabled_validation_tokens = [
         "ServerCertificate" + "ValidationCallback",
@@ -20,8 +22,11 @@ def test_exchange_path_keeps_certificate_validation_enabled():
         "SkipCN" + "Check",
     ]
     assert "server_cert_validation='validate'" in exchange_source
+    assert "server_cert_validation='validate'" in ad_source
+    assert "http://{winrm_host}:5985/wsman" not in ad_source
     for token in disabled_validation_tokens:
         assert token not in exchange_source
+        assert token not in ad_source
 
 
 def test_build_script_does_not_install_systemd_service_on_import():

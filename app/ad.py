@@ -849,9 +849,10 @@ def set_password(user_dn, new_password, **ad_args):
             winrm_user = _resolve_bind_upn(bind_user, base_dn, **ad_args)
             winrm_host = raw_server
             winrm_session = winrm.Session(
-                f'http://{winrm_host}:5985/wsman',
+                f'https://{winrm_host}:5986/wsman',
                 auth=(winrm_user, bind_password),
-                transport='ntlm'
+                transport='ntlm',
+                server_cert_validation='validate'
             )
             user_dn_ps = _ps_quote(user_dn)
             new_pw_ps = _ps_quote(new_password)

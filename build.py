@@ -12,6 +12,7 @@ import shutil
 import json
 import platform
 import secrets
+import shlex
 from pathlib import Path
 from datetime import datetime
 
@@ -96,12 +97,16 @@ class GEEKSBuildSystem:
     
     def run_command(self, command, cwd=None, check=True):
         """Run a shell command with error handling"""
-        self.log(f"Running: {command}", "DEBUG", "cyan")
+        if isinstance(command, (list, tuple)):
+            command_args = list(command)
+        else:
+            command_args = shlex.split(command, posix=platform.system() != "Windows")
+
+        self.log(f"Running: {' '.join(command_args)}", "DEBUG", "cyan")
         
         try:
             result = subprocess.run(
-                command,
-                shell=True,
+                command_args,
                 cwd=cwd or self.project_root,
                 capture_output=True,
                 text=True,
@@ -133,13 +138,14 @@ class GEEKSBuildSystem:
         
         self.log(f"Python version: {python_version.major}.{python_version.minor}.{python_version.micro}", "INFO", "green")
         
-        # Check if pip is available
+        # Check if pip is available through this interpreter. Some clean images
+        # do not provide a standalone `pip` command.
         try:
-            result = self.run_command("pip --version", check=False)
+            result = self.run_command(f"{sys.executable} -m pip --version", check=False)
             if result.returncode == 0:
                 self.log("pip is available", "INFO", "green")
             else:
-                self.log("pip not found", "ERROR", "red")
+                self.log("pip module not found for the active Python interpreter", "ERROR", "red")
                 return False
         except Exception as e:
             self.log(f"Error checking pip: {e}", "ERROR", "red")
@@ -147,7 +153,7 @@ class GEEKSBuildSystem:
         
         # Check if virtual environment tools are available
         try:
-            result = self.run_command("python -m venv --help", check=False)
+            result = self.run_command(f"{sys.executable} -m venv --help", check=False)
             if result.returncode == 0:
                 self.log("venv module is available", "INFO", "green")
             else:
@@ -255,10 +261,10 @@ class GEEKSBuildSystem:
                 if platform.system() == "Linux":
                     # Try different package managers
                     install_commands = [
-                        "sudo apt-get update && sudo apt-get install -y python3-venv",
-                        "sudo yum install -y python3-venv",
-                        "sudo dnf install -y python3-venv",
-                        "sudo zypper install -y python3-venv"
+                    ["sudo", "apt-get", "install", "-y", "python3-venv"],
+                    ["sudo", "yum", "install", "-y", "python3-venv"],
+                    ["sudo", "dnf", "install", "-y", "python3-venv"],
+                    ["sudo", "zypper", "install", "-y", "python3-venv"]
                     ]
                     
                     for cmd in install_commands:

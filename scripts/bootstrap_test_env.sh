@@ -15,6 +15,7 @@ fi
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 "$VENV_DIR/bin/python" -m pip install -r requirements.txt
+"$VENV_DIR/bin/python" -m pip install bandit
 
 export SECRET_KEY
 SECRET_KEY="$("$VENV_DIR/bin/python" - <<'PY'
@@ -26,4 +27,5 @@ PY
 "$VENV_DIR/bin/python" scripts/security_scan.py
 "$VENV_DIR/bin/python" -m py_compile app/__init__.py app/ad.py app/exchange.py app/views.py build.py scripts/security_scan.py
 "$VENV_DIR/bin/python" -m pytest -q
+"$VENV_DIR/bin/python" -m bandit -r app scripts build.py restore_credentials.py -x app/templates --severity-level high
 "$VENV_DIR/bin/python" build.py test

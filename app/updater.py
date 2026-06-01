@@ -260,10 +260,10 @@ class Updater:
             
             if archive_path.endswith('.zip'):
                 with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                    zip_ref.extractall(extract_to)
+                    self._safe_extract_zip(zip_ref, extract_to)
             elif archive_path.endswith('.tar.gz'):
                 with tarfile.open(archive_path, 'r:gz') as tar_ref:
-                    tar_ref.extractall(extract_to)
+                    self._safe_extract_tar(tar_ref, extract_to)
             else:
                 logger.error(f"Unsupported archive format: {archive_path}")
                 return None
@@ -281,6 +281,24 @@ class Updater:
         except Exception as e:
             logger.error(f"Error extracting archive: {e}")
             return None
+
+    def _is_safe_archive_target(self, extract_to, member_name):
+        """Ensure archive members cannot escape the intended extraction directory."""
+        base_dir = os.path.realpath(extract_to)
+        target_path = os.path.realpath(os.path.join(extract_to, member_name))
+        return os.path.commonpath([base_dir, target_path]) == base_dir
+
+    def _safe_extract_zip(self, zip_ref, extract_to):
+        for member in zip_ref.infolist():
+            if not self._is_safe_archive_target(extract_to, member.filename):
+                raise ValueError(f"Unsafe archive member path: {member.filename}")
+            zip_ref.extract(member, extract_to)
+
+    def _safe_extract_tar(self, tar_ref, extract_to):
+        for member in tar_ref.getmembers():
+            if not self._is_safe_archive_target(extract_to, member.name):
+                raise ValueError(f"Unsafe archive member path: {member.name}")
+            tar_ref.extract(member, extract_to)
     
     def run_database_migrations(self):
         """
